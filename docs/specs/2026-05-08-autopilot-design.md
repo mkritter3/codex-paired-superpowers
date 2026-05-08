@@ -107,7 +107,7 @@ Subagents executing Phase B receive these conventions in their dispatch prompt a
 
 Primary enforcement is the **docs-update phase (Phase D)** itself, not the hook. The phase explicitly inspects the slice's diff and asks Codex: "Given this diff, what doc files need updates?" Codex's reply lists required updates; if Claude's draft doesn't cover them, the round REVISEs. Both must double-SHIP that the docs are complete before the slice is marked shipped (sidecar state change).
 
-The hook is a **provenance check** — it verifies commits made during an active autopilot session conform to the commit conventions. PostToolUse on `Bash` matching `git commit`, runs `${CLAUDE_PLUGIN_ROOT}/hooks/check-slice-docs.sh`:
+The hook is a **provenance check** — it verifies commits made during an active autopilot session conform to the commit conventions. PostToolUse on `Bash` matching `git commit`, runs `${CLAUDE_PLUGIN_ROOT}/hooks/check-commit-provenance.sh`:
 
 - Reads the active spec path from a deterministic anchor file at `<repo-root>/.codex-paired/active.json`, which contains `{ "specPath": "<absolute path to spec.md>" }`. The autopilot writes this file when starting a run and removes it when halting/completing. The hook reads `specPath` from it, then loads the sidecar at `<specPath>.codex.json`. If the anchor file doesn't exist, the hook treats this as "no active autopilot run" and allows everything.
 - If `autopilot.current_slice` is set (autopilot is running):
@@ -178,7 +178,9 @@ The `autopilot` block is the resumption anchor for ralph-loop.
 
 **State invariants (required before reading any recovery rule):**
 - When a phase starts, the orchestrator writes `phase_start_sha = HEAD` AND `last_commit_sha = HEAD` to the sidecar atomically. This makes `last_commit_sha..HEAD` an empty range at phase start, and any later commit in the phase becomes the first commit in that range.
-- After every autopilot-owned commit (whether by the orchestrator directly or by a subagent), the orchestrator updates `last_commit_sha = HEAD` in the sidecar before any further work. If the orchestrator crashes between commit and sidecar update, recovery (below) handles it via the `last_commit_sha != HEAD` branch.
+- After every **orchestrator-direct** commit, the orchestrator updates `last_commit_sha = HEAD` in the sidecar before any further work.
+- After every **subagent return**, the orchestrator walks `last_commit_sha..HEAD`, verifies every commit conforms to Commit Conventions §, then updates `last_commit_sha = HEAD`. (Subagents commit per task without invoking the bridge themselves; the orchestrator reconciles in batch.)
+- If the orchestrator crashes between a commit and the sidecar update, recovery handles it via the `last_commit_sha != HEAD` branch (which performs the same range walk).
 - `current_slice` and `current_phase` are written together with `phase_start_sha` to keep the recovery view consistent.
 
 **Subagent durability assumption:** background subagents are session-local. After a Claude-session crash, the subagent is gone; ralph cannot query it. Cross-session recovery uses git state + sidecar markers ONLY. The `inflight_subagent_id` field is meaningful WITHIN a Claude session as a single-writer guard against double-dispatch; it is treated as `null` after a session boundary.
@@ -218,7 +220,7 @@ The `autopilot` block is the resumption anchor for ralph-loop.
 
 1. **`skills/autopilot/SKILL.md`** — orchestrator instructions Claude follows when invoked.
 2. **`skills/autopilot/codex-via-subagent-prompt.md`** — template for non-blocking Codex calls via background subagents.
-3. **`hooks/check-slice-docs.sh`** — docs-freshness hook script.
+3. **`hooks/check-commit-provenance.sh`** — provenance hook script (verifies commits during active runs follow Commit Conventions). Renamed from earlier draft `check-slice-docs.sh` since the role evolved from docs-freshness to provenance during the spec review.
 4. **`hooks/hooks.json`** — hook registration in plugin.
 5. **`commands/autopilot.md`** — slash command `/autopilot <plan-path>` (optional convenience; ralph-loop can also drive it directly).
 6. **Update `lib/codex-bridge/prompts/system-rubric.md`** — pre-SHIP checklist.
