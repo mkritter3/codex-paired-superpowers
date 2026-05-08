@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { execSync } from 'node:child_process';
 import {
   initSidecar,
   loadSidecar,
@@ -207,4 +209,123 @@ test('setPhase preserves other phases when adding a new one', () => {
   assert.equal(sc.slice_reviews['slice-1'].phases.implement.subagent_status, 'DONE');
   assert.equal(sc.slice_reviews['slice-1'].phases['review-slice'].shipped, true);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Slice 3: sidecar auto-discovery + hidden-dir layout ---
+
+test('in-git-repo: hidden-dir layout', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-repo-'));
+  const repo = realpathSync(dir);
+  execSync('git init -q', { cwd: repo });
+  const specDir = join(repo, 'docs', 'specs');
+  mkdirSync(specDir, { recursive: true });
+  const spec = join(specDir, 'foo.md');
+  writeFileSync(spec, '# foo');
+  const p = sidecarPathFor(spec);
+  assert.match(p, /\.superpowers-codex-paired\/docs\/specs\/foo\.md\.json$/);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('outside-git-repo: legacy fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-nogit-'));
+  const repo = realpathSync(dir);
+  const spec = join(repo, 'spec.md');
+  writeFileSync(spec, '# spec');
+  const p = sidecarPathFor(spec);
+  assert.equal(p, spec + '.codex.json');
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('sibling-prefix safety: /repo vs /repo-old', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'cps-sibling-')));
+  const repo1 = join(base, 'repo');
+  const repo2 = join(base, 'repo-old');
+  mkdirSync(repo1, { recursive: true });
+  mkdirSync(repo2, { recursive: true });
+  execSync('git init -q', { cwd: repo1 });
+  execSync('git init -q', { cwd: repo2 });
+  const spec1 = join(repo1, 'spec.md');
+  const spec2 = join(repo2, 'spec.md');
+  writeFileSync(spec1, '# spec1');
+  writeFileSync(spec2, '# spec2');
+  const path1 = sidecarPathFor(spec1);
+  const path2 = sidecarPathFor(spec2);
+  assert.ok(path1.startsWith(repo1), `path1 should start with repo1: ${path1}`);
+  assert.ok(path2.startsWith(repo2), `path2 should start with repo2: ${path2}`);
+  assert.match(path1, /\.superpowers-codex-paired[/\\]spec\.md\.json$/);
+  assert.match(path2, /\.superpowers-codex-paired[/\\]spec\.md\.json$/);
+  rmSync(base, { recursive: true, force: true });
+});
+
+test('first-write nested mkdir: initSidecar creates hidden parent dirs', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-mkdir-'));
+  const repo = realpathSync(dir);
+  execSync('git init -q', { cwd: repo });
+  const specDir = join(repo, 'docs', 'a', 'b', 'c');
+  mkdirSync(specDir, { recursive: true });
+  const spec = join(specDir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  // initSidecar must mkdir-p the hidden parent before writing — no pre-mkdir of hidden parent
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  const sidecarPath = sidecarPathFor(spec);
+  assert.match(sidecarPath, /\.superpowers-codex-paired[/\\]docs[/\\]a[/\\]b[/\\]c[/\\]spec\.md\.json$/);
+  assert.ok(existsSync(sidecarPath), `sidecar should exist at hidden path: ${sidecarPath}`);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('stale-shadow warning: legacy-only emits deprecation to stderr', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-stale-'));
+  const repo = realpathSync(dir);
+  execSync('git init -q', { cwd: repo });
+  const spec = join(repo, 'spec.md');
+  writeFileSync(spec, '# spec');
+  const legacy = spec + '.codex.json';
+  writeFileSync(legacy, JSON.stringify({ version: 1, rounds: [] }));
+  // Do NOT create the hidden sidecar — only legacy exists
+
+  const orig = process.stderr.write.bind(process.stderr);
+  let captured = '';
+  process.stderr.write = (s) => { captured += s; return true; };
+  let p;
+  try {
+    p = sidecarPathFor(spec);
+  } finally {
+    process.stderr.write = orig;
+  }
+  assert.equal(p, legacy);
+  assert.match(captured, /deprecat/i);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('hidden-wins-over-legacy: when both exist, hidden path is returned', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-hidden-wins-'));
+  const repo = realpathSync(dir);
+  execSync('git init -q', { cwd: repo });
+  const spec = join(repo, 'spec.md');
+  writeFileSync(spec, '# spec');
+  const legacy = spec + '.codex.json';
+  writeFileSync(legacy, JSON.stringify({ version: 1, rounds: [] }));
+  // Create the hidden sidecar too
+  const hiddenDir = join(repo, '.superpowers-codex-paired');
+  mkdirSync(hiddenDir, { recursive: true });
+  const hidden = join(hiddenDir, 'spec.md.json');
+  writeFileSync(hidden, JSON.stringify({ version: 1, rounds: [] }));
+  const p = sidecarPathFor(spec);
+  assert.equal(p, hidden);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('mkdtemp legacy back-compat: non-repo mkdtemp path uses legacy layout', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-backcompat-'));
+  const repo = realpathSync(dir);
+  const spec = join(repo, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  const sidecarPath = sidecarPathFor(spec);
+  // In a non-git temp dir, should use legacy .codex.json layout
+  assert.equal(sidecarPath, spec + '.codex.json');
+  assert.ok(existsSync(sidecarPath), `legacy sidecar should exist: ${sidecarPath}`);
+  const sc = loadSidecar(spec);
+  assert.equal(sc.version, 1);
+  rmSync(repo, { recursive: true, force: true });
 });
