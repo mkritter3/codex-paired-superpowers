@@ -57,7 +57,7 @@ After install, the six skills auto-trigger via Claude's normal skill dispatching
 - Tough bug? → `systematic-debugging` runs hypothesis review.
 - Designing tests? → `test-driven-development` reviews the test list.
 
-Per-feature state lives in `<spec-path>.codex.json` next to the spec. Don't commit it (already in `.gitignore`).
+Per-feature state lives in `.superpowers-codex-paired/` at the repo root; the CLI auto-discovers the sidecar from `--specPath` so you never need to compute the path manually. Don't commit sidecars (already in `.gitignore`).
 
 ## Configuration
 
@@ -176,6 +176,7 @@ v0.4.0 — validation rubric. Autopilot now enforces structured per-slice valida
 
 ### Changelog
 
+- **v0.4.1** — parser-as-code + sidecar relocation. Validation-coverage parser extracted to `lib/codex-bridge/validation-coverage.js` with full defect taxonomy + 16 unit tests + 5 CLI tests. Three-way CLI exit codes (0=success, 2=parser defect, 1=infrastructure failure). Sidecars relocated to `<repo-root>/.superpowers-codex-paired/<relative-spec-path>.json` with auto-discovery via `git rev-parse`; legacy `<spec>.codex.json` falls back outside repos and emits one-time deprecation warning when stale. Migration script with two-phase state machine (preflight halts on ambiguity; Phase 2 executes only if clean) + 5 fixture-based shell tests. Spec hardened across 4 Codex review rounds; plan across 5.
 - **v0.4.0** — validation rubric. Adds `lib/codex-bridge/prompts/validation-rubric.md` enforcing structured per-slice validation coverage. Phase A enumerates Tier-1 (10 subcategories) + Tier-2 (3 triggers) + optional Tier-3 (residual-risk for critical-tier slices) with evidence-backed N/A required. Phase C verifies Phase A's locked commitments via 4 keyed `rubric.*` bullets. Plan slices declare `Validation: light|standard|critical`. Loop's serialize() preserves SHIP critique for audit trail. Sidecar gains structured `validation_coverage` per phase. Hook fix: PostToolUse exits 2 (not 1) so stderr surfaces as system reminder; hooks.json schema corrected; stdin filter for git-commit-only. Backfill: 7 edge-case unit tests (malformed JSON in sidecar/anchor, regression guards) + autopilot structural smoke (re-runnable). Rubric hardened across 4 Codex review rounds.
 - **v0.3.0** — autopilot. Multi-tier loop drives plans slice-by-slice unattended; per-slice phases (plan-slice + test-list review, implement, review-slice, docs-update); cross-session continuity via ralph-loop; provenance hook enforces Commit Conventions during active runs; sidecar gains nested phase state + autopilot block + atomic writes; system rubric gains pre-SHIP checklist. Spec hardened across 6 Codex review rounds; plan hardened across 6 Codex review rounds.
 - **v0.2.0** — switched from `codex exec` subprocess transport to bundled `codex mcp-server` MCP transport. Long-lived process, native JSON-RPC, faster (no spawn-per-call, no session-log replay). Removed `lib/codex-bridge/invoke.js` and the `session-start`/`session-resume`/`run-loop` CLI subcommands. Skills now invoke `mcp__plugin_codex-paired-superpowers_codex__*` tools directly.

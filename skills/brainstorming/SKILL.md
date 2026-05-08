@@ -51,7 +51,7 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-init \
   --threadId "<threadId from MCP response>"
 ```
 
-The sidecar lives at `<spec-path>.codex.json` and now records the threadId, model, and reasoning effort.
+The bridge stores the sidecar in `.superpowers-codex-paired/`; you don't need to compute the path — the CLI auto-discovers it from `--specPath`. The sidecar records the threadId, model, and reasoning effort.
 
 ## Phase 3 — Revision loop (counted, max 7 rounds)
 

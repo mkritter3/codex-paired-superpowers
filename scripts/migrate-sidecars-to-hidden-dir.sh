@@ -44,7 +44,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 # Discover all legacy sidecar candidates.
-mapfile -t CANDIDATES < <(
+CANDIDATES=()
+while IFS= read -r line; do
+  CANDIDATES+=("$line")
+done < <(
   find . -name '*.codex.json' \
     -not -path './node_modules/*' \
     -not -path './.superpowers-codex-paired/*' \

@@ -5,3 +5,6 @@ node_modules/
 docs/specs/*.codex.json
 # autopilot active-run anchor (transient)
 .codex-paired/
+# v0.4.1+ sidecar location (transient runtime state by default;
+# explicit `git mv` from slice 4 preserved tracked audit trails)
+.superpowers-codex-paired/

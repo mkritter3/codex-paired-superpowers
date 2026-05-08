@@ -104,26 +104,20 @@ Three artifacts reviewed in one phase: the task list, the test list, AND the val
      Critique with L11 rigor. Apply the validation rubric. SHIP only if every Tier-1 subcategory has an explicit entry in your verdict's critique array AND every Tier-2 trigger is stated as fired-or-not. If validation tier is `critical`, also answer Tier 3.
      ```
 5. Send via `codex-reply`. Run the standard 7-round loop. Append rounds to sidecar via `sidecar-append-round` with phase `plan-slice:<slice-N>`.
-6. **On double-SHIP, parse and validate structured rubric coverage, then persist.** The verdict's `critique` array contains the rubric coverage bullets. Parse them out (each starts with `<key>:`) into a map. Validate the map BEFORE writing it:
-   - **Required Tier-1 keys** (must all be present): `happy`, `edge.zero-null-empty`, `edge.boundary`, `edge.large-input`, `edge.concurrent`, `edge.adversarial`, `fail.dependency`, `fail.malformed-input`, `fail.exception-path`, `integration.cross-module`.
-   - **Required Tier-2 keys** (must all be present): `stress.scale`, `perf.slo`, `compat.breaking`.
-   - **Required metadata key**: `tier` (one of `light`, `standard`, `critical`).
-   - **If `tier == critical`**: also require `critical.residual-risk`.
-   - **No duplicates**, **no unknown keys**, **no malformed bullets** (must be `key: text`).
-
-   Failure handling: any of the above defects causes autopilot to halt with `halt_reason: "validation-coverage-malformed"`, citing the specific defect (missing key X / duplicate key Y / unknown key Z / malformed bullet at index N). Do NOT advance to Phase B; do NOT write a partial map. Phase A must re-emit a conforming verdict to ship.
-
-   On valid map, write to `slice_reviews[slice-N].phases.plan-slice.validation_coverage`:
+6. **On double-SHIP, parse and validate structured rubric coverage via the bridge CLI, then persist.** The verdict's `critique` array contains the rubric coverage bullets. Pipe it as JSON to the `validation-parse` subcommand and dispatch on the exit code:
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-phase \
-     --specPath "<spec-path>" \
-     --sliceId slice-<N> \
-     --phase plan-slice \
-     --state '{"shipped":true,"rounds":[...],"validation_coverage":{"tier":"standard","happy":"covered by ...","edge.zero-null-empty":"covered by ...", ...all Tier-1 + Tier-2 keys...}}'
+   echo '<JSON array of critique bullets>' | \
+     node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js validation-parse \
+     --tier <slice-tier-from-frontmatter>
    ```
 
-   Then advance to Phase B.
+   Three-way exit-code dispatch:
+   - **Exit 0**: success. Stdout is `{"tier": ..., "coverage": {...}}` JSON. Parse it; merge `tier` into the coverage map; write to `slice_reviews[slice-N].phases.plan-slice.validation_coverage`. Advance to Phase B.
+   - **Exit 2**: parser defect. Stderr is `{"defect": "<code>", "detail": "..."}` JSON. Halt with `halt_reason: "validation-coverage-malformed:<defect>"`. The next /autopilot tick must re-prompt Codex; this is NOT a retry path autopilot handles automatically — escalate to user.
+   - **Exit 1**: CLI infrastructure failure (parser crashed, fs error, etc.). Stderr is the raw error message. Halt with `halt_reason: "cli-infrastructure-error"`. Do NOT retry — escalate to user.
+
+   The orchestrator no longer interprets the rubric — it shells out to a deterministic parser whose behavior is unit-tested.
 
 The system rubric only needs to be sent on the first plan-slice round of the feature's lifetime (it persists in Codex's thread context). The verdict-format and validation-rubric should be re-sent whenever phase changes, since the role they play differs per phase.
 
