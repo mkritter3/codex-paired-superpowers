@@ -7,7 +7,9 @@
 # verifies the most recent commit conforms to Commit Conventions §:
 #   subject:  (feat|test|fix|docs|refactor|chore)\(slice:<current_slice>\):
 #   trailer:  Co-Authored-By: Claude
-# Both must be present. If either is missing, exit 1 (signal non-conforming).
+# Both must be present. If either is missing, exit 2 (PostToolUse blocking
+# error; Claude Code surfaces stderr as a system reminder so the autopilot
+# can see and halt). Other nonzero codes are logged but not surfaced.
 # If no anchor exists (autopilot not running), exit 0 (no-op).
 set -euo pipefail
 
@@ -82,14 +84,14 @@ if ! echo "$SUBJECT" | grep -Eq "$SUBJECT_RX"; then
   echo "[provenance hook] NON-CONFORMING: most recent commit subject doesn't match expected slice:$CURRENT_SLICE prefix (commit already landed; signaling autopilot to halt)" >&2
   echo "  subject: $SUBJECT" >&2
   echo "  expected pattern: $SUBJECT_RX" >&2
-  exit 1
+  exit 2
 fi
 
 # Check Co-Authored-By trailer.
 if ! echo "$BODY" | grep -Eq '^Co-Authored-By: Claude'; then
   echo "[provenance hook] NON-CONFORMING: commit missing 'Co-Authored-By: Claude' trailer (commit already landed; signaling autopilot to halt)" >&2
   echo "  subject: $SUBJECT" >&2
-  exit 1
+  exit 2
 fi
 
 exit 0
