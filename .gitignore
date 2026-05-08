@@ -3,3 +3,5 @@ node_modules/
 *.log
 # sidecar files generated during real runs (not test fixtures)
 docs/specs/*.codex.json
+# autopilot active-run anchor (transient)
+.codex-paired/
