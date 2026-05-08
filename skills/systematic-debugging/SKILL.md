@@ -61,4 +61,4 @@ The fix is a slice (even a one-task slice). Run it through `subagent-driven-deve
 - **7-round deadlock on hypothesis:** halt; bring to user with both positions and the symptom.
 
 ## Sidecar usage
-If this debug session belongs to an in-flight feature, reuse that feature's sidecar. If the bug is standalone, create a new spec stub at `docs/superpowers/specs/YYYY-MM-DD-debug-<bug-id>.md` and run `session-start` against it. Either way, all hypothesis rounds get logged in the sidecar.
+If this debug session belongs to an in-flight feature, reuse that feature's sidecar (its threadId is the same Codex thread that drafted the spec and approved the plan — Codex remembers all prior context). If the bug is standalone, create a new spec stub at `docs/superpowers/specs/YYYY-MM-DD-debug-<bug-id>.md`, open a fresh Codex thread by invoking `mcp__plugin_codex-paired-superpowers_codex__codex` (with the L11 rubric + verdict-format prompts prepended), and persist the threadId via `sidecar-init`. Either way, all hypothesis rounds get logged in the sidecar.

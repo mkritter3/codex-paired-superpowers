@@ -33,29 +33,23 @@ The plan MUST include in its frontmatter the spec path:
 This makes sidecar discovery deterministic for downstream slice-review.
 
 ## Phase 2 — Codex plan review (counted, max 7 rounds)
-Round 1 prompt (resume the same session):
+
+Look up the existing threadId from the sidecar:
 
 ```bash
-PROMPT=$(cat <<'EOF'
-Phase: plan-review
-Round: 1
-The spec we shipped together is at <spec-path>. I have drafted the implementation plan at <plan-path>.
-Review the plan against this spec. Critique with L11 rigor. Specifically check:
-  1. Slice boundaries: does each slice produce something testable on its own?
-  2. Task granularity: are steps 2-5 minutes each?
-  3. Missing tasks: any spec requirement without a covering task?
-  4. TDD adequacy: is the red-green-refactor explicit?
-  5. File decomposition: any file growing too large?
-  6. Type/name consistency across tasks?
-
-End with the required verdict block.
-<<<PLAN>>>
-$(cat <plan-path>)
-<<<END_PLAN>>>
-EOF
-)
-echo "$PROMPT" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-resume --specPath "<spec-path>"
+THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>")
 ```
+
+Round 1 prompt: build the plan-review prompt and invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`**:
+
+```json
+{
+  "threadId": "<THREAD_ID>",
+  "prompt": "Phase: plan-review\nRound: 1\nThe spec we shipped together is at <spec-path>. I have drafted the implementation plan at <plan-path>.\nReview the plan against this spec. Critique with L11 rigor. Specifically check:\n  1. Slice boundaries: does each slice produce something testable on its own?\n  2. Task granularity: are steps 2-5 minutes each?\n  3. Missing tasks: any spec requirement without a covering task?\n  4. TDD adequacy: is the red-green-refactor explicit?\n  5. File decomposition: any file growing too large?\n  6. Type/name consistency across tasks?\n\nEnd with the required verdict block.\n<<<PLAN>>>\n<full plan text>\n<<<END_PLAN>>>"
+}
+```
+
+The response's `content` is Codex's review + verdict block.
 
 Subsequent rounds: send the revised plan + both prior critiques. Same anti-yes-man rules as brainstorming. Same sidecar round logging (`phase: "plan"`).
 
@@ -64,7 +58,7 @@ After each round, append:
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round \
   --specPath "<spec-path>" \
-  --round '{"phase":"plan","round":N,"claude":"…","codex":"…"}'
+  --round '{"phase":"plan","round":N,"claude":"...","codex":"..."}'
 ```
 
 ## Phase 3 — User sign-off (uncounted)

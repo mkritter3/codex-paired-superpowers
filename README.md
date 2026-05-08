@@ -77,13 +77,12 @@ CODEX_PAIRED_MODEL=gpt-5.5 CODEX_PAIRED_REASONING=high claude
 
 ```
 codex-paired-superpowers/
-├── .claude-plugin/plugin.json         # plugin manifest
+├── .claude-plugin/plugin.json         # plugin manifest + bundled codex MCP server
 ├── lib/codex-bridge/                  # shared bridge (zero npm deps)
-│   ├── invoke.js                      # spawn `codex exec`, parse session UUID
 │   ├── sidecar.js                     # per-feature JSON state
 │   ├── verdict.js                     # parse <<<VERDICT>>>...<<<END>>> blocks
-│   ├── loop.js                        # 7-round Claude↔Codex orchestration
-│   ├── cli.js                         # subcommand dispatcher
+│   ├── loop.js                        # 7-round Claude<->Codex orchestration
+│   ├── cli.js                         # subcommand dispatcher (sidecar only)
 │   └── prompts/                       # L11 rubric + verdict format
 ├── skills/
 │   ├── brainstorming/
@@ -98,22 +97,34 @@ codex-paired-superpowers/
     └── plans/                         # implementation plans
 ```
 
-## Bridge CLI (for skills)
+## Codex transport: bundled MCP server
 
-All skills shell out to:
+As of v0.2.0, the plugin bundles `codex mcp-server` as an MCP server (registered in `plugin.json`). Two tools become available to Claude when the plugin is loaded:
+
+- `mcp__plugin_codex-paired-superpowers_codex__codex` — open a Codex thread; returns `{ threadId, content }`.
+- `mcp__plugin_codex-paired-superpowers_codex__codex-reply` — continue a thread by `threadId`; returns `{ threadId, content }`.
+
+This replaces the v0.1.x `codex exec` subprocess transport. The MCP server is long-lived; there is no per-call process spawn or session-log replay, so latency matches zen's `clink`.
+
+## Bridge CLI (sidecar persistence only)
+
+All skills shell out for sidecar operations:
 
 ```
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js <subcommand> ...
 ```
 
-| Subcommand | Stdin | Effect |
-|---|---|---|
-| `session-start --specPath <p> --feature <name>` | prompt | spawn codex, capture UUID, write sidecar |
-| `session-resume --specPath <p>` | prompt | resume session from sidecar |
-| `sidecar-show --specPath <p>` | — | print sidecar JSON |
-| `sidecar-append-round --specPath <p> --round <json>` | — | append a round entry |
-| `sidecar-set-slice --specPath <p> --sliceId <id> --state <json>` | — | record slice review state |
-| `sidecar-add-contention --specPath <p> --contention <json>` | — | append open contention |
+| Subcommand | Effect |
+|---|---|
+| `sidecar-init --specPath <p> --feature <name> --threadId <id>` | write sidecar at `<p>.codex.json` |
+| `sidecar-show --specPath <p>` | print sidecar JSON |
+| `sidecar-thread-id --specPath <p>` | print just the threadId (for shell capture) |
+| `sidecar-path --specPath <p>` | print the sidecar file path |
+| `sidecar-append-round --specPath <p> --round <json>` | append a round entry |
+| `sidecar-set-slice --specPath <p> --sliceId <id> --state <json>` | record slice review state |
+| `sidecar-add-contention --specPath <p> --contention <json>` | append open contention |
+
+The CLI does NOT spawn codex anymore. All codex traffic goes through the MCP tools above.
 
 ## Development
 
@@ -127,4 +138,10 @@ Plan: `docs/plans/2026-05-07-codex-paired-superpowers.md`
 
 ## Status
 
-v0.1.0 — first working release.
+v0.2.0 — codex transport via bundled MCP server. v0.1.x used `codex exec` subprocess and is preserved on the `v0.1.x` branch if you want the older transport.
+
+### Changelog
+
+- **v0.2.0** — switched from `codex exec` subprocess transport to bundled `codex mcp-server` MCP transport. Long-lived process, native JSON-RPC, faster (no spawn-per-call, no session-log replay). Removed `lib/codex-bridge/invoke.js` and the `session-start`/`session-resume`/`run-loop` CLI subcommands. Skills now invoke `mcp__plugin_codex-paired-superpowers_codex__*` tools directly.
+- **v0.1.1** — clarified round semantics in brainstorming SKILL.md; removed dead `initialArtifact` parameter from `runRoundLoop`.
+- **v0.1.0** — first working release.

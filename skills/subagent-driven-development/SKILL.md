@@ -25,11 +25,15 @@ Resume the session. Build the prompt from `slice-review-prompt.md` (in this skil
 The prompt explicitly states:
 > Review only what is in this slice's scope. Out-of-slice issues = note for later in `## Deferred`, do not block on them. If you find an out-of-slice critical bug, name it in `## Deferred` with severity, but ship the slice.
 
-Send via `session-resume`:
+Look up the threadId and send the prompt via the bundled MCP `codex-reply` tool:
 
 ```bash
-echo "$PROMPT" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-resume --specPath "<spec-path>"
+THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>")
 ```
+
+Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is Codex's review + verdict block.
+
+For slice-review specifically, you may pass `config: { model_reasoning_effort: "medium" }` to speed up small-diff reviews; reserve `high` for slices that touch core architecture.
 
 ### Step D: 7-round loop
 Same as brainstorming. Both must SHIP. Sidecar phase is `slice:<slice-id>` (e.g., `slice:2`). On double-SHIP, mark slice shipped:
@@ -38,7 +42,7 @@ Same as brainstorming. Both must SHIP. Sidecar phase is `slice:<slice-id>` (e.g.
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-slice \
   --specPath "<spec-path>" \
   --sliceId "<slice-id>" \
-  --state '{"rounds":[…],"shipped":true,"deferred":[…]}'
+  --state '{"rounds":[...],"shipped":true,"deferred":[...]}'
 ```
 
 ### Step E: surface deferred items

@@ -20,28 +20,46 @@ Read relevant files. Build a short context note: existing patterns, conventions,
 ## Phase 2 — Open Codex session (uncounted)
 Pick a spec path: `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` (or user override).
 
-Compose the initial Codex prompt:
-- Prepend `lib/codex-bridge/prompts/system-rubric.md`.
-- Prepend `lib/codex-bridge/prompts/verdict-format.md`.
-- Append: "Phase: spec-draft. Here is the user intent (verbatim) and the codebase context. Draft a complete L11-grade spec. End with the required verdict block."
+Compose the initial Codex prompt by concatenating, in order:
+1. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/system-rubric.md`
+2. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/verdict-format.md`
+3. `Phase: spec-draft. Here is the user intent (verbatim) and the codebase context. Draft a complete L11-grade spec. End with the required verdict block.`
+4. The user intent + codebase context.
 
-Run:
+Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with:
 
-```bash
-mkdir -p $(dirname "<spec-path>") && touch "<spec-path>"
-echo "<prompt>" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-start \
-  --specPath "<spec-path>" --feature "<feature-name>"
+```json
+{
+  "prompt": "<the composed prompt>",
+  "model": "gpt-5.5",
+  "config": { "model_reasoning_effort": "high" }
+}
 ```
 
-This writes the sidecar at `<spec-path>.codex.json` and returns Codex's first draft (with verdict).
+The response is `{ threadId, content }`. `content` is Codex's draft + its verdict block. Capture both fields.
+
+Then create the spec file (write the draft into it) and initialize the sidecar:
+
+```bash
+mkdir -p $(dirname "<spec-path>")
+# Write Codex's content to the spec file (use Edit/Write tool, not bash):
+#   <spec-path> ← Codex content (strip the verdict block from the spec body
+#                 if you don't want it in the doc)
+node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-init \
+  --specPath "<spec-path>" \
+  --feature "<feature-name>" \
+  --threadId "<threadId from MCP response>"
+```
+
+The sidecar lives at `<spec-path>.codex.json` and now records the threadId, model, and reasoning effort.
 
 ## Phase 3 — Revision loop (counted, max 7 rounds)
 
 ### Round semantics (read this once, then never confuse it again)
 **One round = one Codex artifact + one Claude verdict on it.**
 
-- Phase 2's initial draft IS round 1's Codex turn. `session-start` produced Codex's draft + Codex's verdict. Round 1 is therefore not a fresh Codex call — round 1's Codex side is already in hand.
-- Round N (N ≥ 2) means: send Claude's critique back via `session-resume` → Codex returns a revised draft + new verdict → Claude verdicts on the revision. Both verdicts logged together as round N.
+- Phase 2's initial draft IS round 1's Codex turn. The first MCP call (`codex`) produced Codex's draft + Codex's verdict. Round 1 is therefore not a fresh Codex call — round 1's Codex side is already in hand.
+- Round N (N ≥ 2) means: send Claude's critique back via `codex-reply` → Codex returns a revised draft + new verdict → Claude verdicts on the revision. Both verdicts logged together as round N.
 - The loop exits when **both** verdicts within the same round are `SHIP`.
 
 ### Per-round procedure
@@ -62,12 +80,22 @@ For each round N starting at 1:
 
 4. **Otherwise, send round N+1 to Codex.** Build the prompt: phase header, round number, the current draft (or a reference to it), `## Critique from previous round` listing Claude's REVISE items and Codex's REVISE items (whichever were non-SHIP), and instruction to revise.
 
+   Read the threadId from the sidecar:
+
    ```bash
-   echo "<round-(N+1)-prompt>" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-resume \
-     --specPath "<spec-path>"
+   THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>")
    ```
 
-   This returns Codex's new draft + new verdict. Goto step 1 with N := N+1.
+   Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with:
+
+   ```json
+   {
+     "threadId": "<THREAD_ID>",
+     "prompt": "<round-(N+1)-prompt>"
+   }
+   ```
+
+   The response's `content` is Codex's new draft + new verdict. Goto step 1 with N := N+1.
 
 (See `codex-pairing.md` in this skill folder for full bridge protocol.)
 
