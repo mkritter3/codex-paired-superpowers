@@ -82,22 +82,50 @@ Ralph re-invokes `/autopilot <plan-path>` on each tick. The plan path is the aut
 ## Per-phase procedures
 
 ### Phase A: plan-slice + test-list review
-Two artifacts reviewed in one phase:
+Three artifacts reviewed in one phase: the task list, the test list, AND the validation rubric coverage for this slice.
 
 1. **Task list extraction.** Parse the plan's slice-N section. Extract the bullet list of tasks. Format as markdown.
 2. **Test list extraction.** From the same slice section, extract every `Write the failing test` or test-creation step. Format as a numbered list with: invariant pinned, inputs, expected outcome, mock/integration choice.
-3. Send both to Codex in one prompt via `codex-reply`:
+3. **Validation tier extraction.** Look for `validation: critical` (or `light` / `standard`) in the slice's frontmatter or section header in the plan. If absent, default to `standard`. Pass this tier into the prompt so Codex knows whether to apply Tier 3 (residual-risk question).
+4. Compose the prompt by concatenating:
+   - Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/system-rubric.md`
+   - Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/verdict-format.md`
+   - Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/validation-rubric.md`
+   - Phase header + slice content:
+     ```
+     Phase: plan-slice + test-list review
+     Round: <N>
+     Slice: <slice-N>
+     Validation tier: <light|standard|critical>
+     ## Task list
+     <task list>
+     ## Test list
+     <test list>
+     Critique with L11 rigor. Apply the validation rubric. SHIP only if every Tier-1 subcategory has an explicit entry in your verdict's critique array AND every Tier-2 trigger is stated as fired-or-not. If validation tier is `critical`, also answer Tier 3.
+     ```
+5. Send via `codex-reply`. Run the standard 7-round loop. Append rounds to sidecar via `sidecar-append-round` with phase `plan-slice:<slice-N>`.
+6. **On double-SHIP, parse and validate structured rubric coverage, then persist.** The verdict's `critique` array contains the rubric coverage bullets. Parse them out (each starts with `<key>:`) into a map. Validate the map BEFORE writing it:
+   - **Required Tier-1 keys** (must all be present): `happy`, `edge.zero-null-empty`, `edge.boundary`, `edge.large-input`, `edge.concurrent`, `edge.adversarial`, `fail.dependency`, `fail.malformed-input`, `fail.exception-path`, `integration.cross-module`.
+   - **Required Tier-2 keys** (must all be present): `stress.scale`, `perf.slo`, `compat.breaking`.
+   - **Required metadata key**: `tier` (one of `light`, `standard`, `critical`).
+   - **If `tier == critical`**: also require `critical.residual-risk`.
+   - **No duplicates**, **no unknown keys**, **no malformed bullets** (must be `key: text`).
+
+   Failure handling: any of the above defects causes autopilot to halt with `halt_reason: "validation-coverage-malformed"`, citing the specific defect (missing key X / duplicate key Y / unknown key Z / malformed bullet at index N). Do NOT advance to Phase B; do NOT write a partial map. Phase A must re-emit a conforming verdict to ship.
+
+   On valid map, write to `slice_reviews[slice-N].phases.plan-slice.validation_coverage`:
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-phase \
+     --specPath "<spec-path>" \
+     --sliceId slice-<N> \
+     --phase plan-slice \
+     --state '{"shipped":true,"rounds":[...],"validation_coverage":{"tier":"standard","happy":"covered by ...","edge.zero-null-empty":"covered by ...", ...all Tier-1 + Tier-2 keys...}}'
    ```
-   Phase: plan-slice + test-list review
-   Round: <N>
-   Slice: <slice-N>
-   ## Task list
-   <task list>
-   ## Test list
-   <test list>
-   Critique with L11 rigor. SHIP only if both lists are L11-grade.
-   ```
-4. Run the standard 7-round loop. Append rounds to sidecar via `sidecar-append-round` with phase `plan-slice:<slice-N>`. On double-SHIP, set the phase state via `sidecar-set-phase` and advance to Phase B.
+
+   Then advance to Phase B.
+
+The system rubric only needs to be sent on the first plan-slice round of the feature's lifetime (it persists in Codex's thread context). The verdict-format and validation-rubric should be re-sent whenever phase changes, since the role they play differs per phase.
 
 ### Phase B: implement
 1. Dispatch implementing subagent (NOT in background — autopilot waits). Subagent prompt MUST include the Commit Conventions: every commit uses `(feat|test|fix|docs|refactor|chore)(slice:<N>):` subject + `Co-Authored-By: Claude` trailer.
@@ -113,18 +141,26 @@ This reconciliation step matters because if a Claude session crashes mid-subagen
 
 ### Phase C: review-slice
 1. Compute the diff: `git diff <slice_start_sha>..HEAD`.
-2. Send to Codex via `codex-reply` (or via background subagent if the orchestrator has unrelated prep to do):
+2. Read Phase A's structured `validation_coverage` from the sidecar:
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-show --specPath "<spec-path>" \
+     | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const sc=JSON.parse(d);console.log(JSON.stringify(sc.slice_reviews['slice-<N>'].phases['plan-slice'].validation_coverage,null,2))})"
+   ```
+3. Compose the prompt: prepend `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/validation-rubric.md` (and verdict-format.md) so Codex applies the rubric to the implementation, not just the plan. Send to Codex via `codex-reply` (or via background subagent if the orchestrator has unrelated prep to do):
    ```
    Phase: review-slice
    Round: <N>
    Slice: <slice-N>
+   Validation tier: <light|standard|critical>
    ## Slice scope
    <task list from Phase A>
+   ## Phase A's structured validation coverage (the contract you are verifying)
+   <JSON from step 2>
    ## Diff
    <diff>
    ## Test output
    <last test run>
-   Review only what is in this slice's scope. Out-of-slice issues = `## Deferred`. End with verdict.
+   Review only what is in this slice's scope. Out-of-slice issues = `## Deferred`. Apply the validation rubric in Phase C mode (rubric.diff-vs-plan / rubric.test-results / rubric.uncovered-paths / rubric.new-triggers). End with verdict.
    ```
 3. **On Codex REVISE:**
    a. Apply anti-yes-man discipline: verify each critique against actual code before accepting. If a critique is wrong, push back via the next round; don't act on it.

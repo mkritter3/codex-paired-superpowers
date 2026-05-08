@@ -32,6 +32,23 @@ The plan MUST include in its frontmatter the spec path:
 
 This makes sidecar discovery deterministic for downstream slice-review.
 
+### Per-slice validation tier (optional, v0.4+)
+Each slice MAY declare a validation tier in its section header (default `standard`):
+
+```markdown
+## Slice 3: Auth token refresh
+**Validation:** critical
+
+[task list...]
+```
+
+Allowed values:
+- **light** — for trivial slices (docs-only, single-line tweak). Tier-1 happy path required; other Tier-1 subcategories may be N/A with evidence.
+- **standard** (default) — full Tier-1 prescriptive baseline + applicable Tier-2 triggers.
+- **critical** — Tier 1+2 plus Tier 3 (paranoid-senior-engineer residual-risk question). Use for security-sensitive slices, breaking changes, or anything where a missed edge case has high blast radius.
+
+Codex applies the validation rubric (`lib/codex-bridge/prompts/validation-rubric.md`) at the declared tier in Phase A and Phase C of autopilot. If autopilot is not used, this declaration is informational.
+
 ## Phase 2 — Codex plan review (counted, max 7 rounds)
 
 Look up the existing threadId from the sidecar:
