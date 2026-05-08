@@ -36,35 +36,60 @@ echo "<prompt>" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-sta
 This writes the sidecar at `<spec-path>.codex.json` and returns Codex's first draft (with verdict).
 
 ## Phase 3 — Revision loop (counted, max 7 rounds)
-Each round:
-1. Read the current Codex draft + verdict.
-2. Apply the L11 rubric independently. Form your own verdict (SHIP or REVISE).
-3. Write your verdict to a control file the bridge can read:
 
-   ```bash
-   cat > "<spec-path>.codex-claude-turn.json" <<EOF
-   {"status": "REVISE", "critique": ["..."], "rationale": "..."}
-   EOF
-   ```
+### Round semantics (read this once, then never confuse it again)
+**One round = one Codex artifact + one Claude verdict on it.**
 
-4. Send the next round to Codex with both critiques:
+- Phase 2's initial draft IS round 1's Codex turn. `session-start` produced Codex's draft + Codex's verdict. Round 1 is therefore not a fresh Codex call — round 1's Codex side is already in hand.
+- Round N (N ≥ 2) means: send Claude's critique back via `session-resume` → Codex returns a revised draft + new verdict → Claude verdicts on the revision. Both verdicts logged together as round N.
+- The loop exits when **both** verdicts within the same round are `SHIP`.
 
-   ```bash
-   echo "<round-N-prompt>" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-resume \
-     --specPath "<spec-path>"
-   ```
+### Per-round procedure
 
-   Round-N prompt: phase header, round number, the artifact (current draft), `## Critique from previous round` containing both Claude's and Codex's prior critique items, and instruction to revise.
+For each round N starting at 1:
 
-5. Append the round to the sidecar:
+1. **Form Claude's verdict** on the current Codex draft. Apply the L11 rubric independently. Verify any specific claim against actual code/files before accepting.
+
+2. **Append the round to the sidecar** with both verdicts:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round \
      --specPath "<spec-path>" \
-     --round '{"phase":"spec","round":N,"claude":"...","codex":"..."}'
+     --round '{"phase":"spec","round":N,"claude":"SHIP|REVISE: ...","codex":"SHIP|REVISE: ..."}'
    ```
 
-   (See `codex-pairing.md` in this skill folder for full bridge protocol.)
+3. **If both shipped, exit.** Move to Phase 4.
+
+4. **Otherwise, send round N+1 to Codex.** Build the prompt: phase header, round number, the current draft (or a reference to it), `## Critique from previous round` listing Claude's REVISE items and Codex's REVISE items (whichever were non-SHIP), and instruction to revise.
+
+   ```bash
+   echo "<round-(N+1)-prompt>" | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js session-resume \
+     --specPath "<spec-path>"
+   ```
+
+   This returns Codex's new draft + new verdict. Goto step 1 with N := N+1.
+
+(See `codex-pairing.md` in this skill folder for full bridge protocol.)
+
+### Worked example (2-round flow)
+Codex's initial draft from Phase 2 SHIP'd. Claude evaluates and finds two real gaps (language + test runner unspecified).
+
+```
+sidecar.rounds = [
+  {"phase": "spec", "round": 1, "claude": "REVISE: language unspecified; test runner unspecified", "codex": "SHIP"}
+]
+```
+
+Round 1 does not exit (Claude REVISE, Codex SHIP — not double-SHIP). Claude sends critique via `session-resume`. Codex returns a revision pinning POSIX sh + bash smoke test, with a new SHIP verdict. Claude evaluates the revision and genuinely SHIPs.
+
+```
+sidecar.rounds = [
+  {"phase": "spec", "round": 1, "claude": "REVISE: language unspecified; test runner unspecified", "codex": "SHIP"},
+  {"phase": "spec", "round": 2, "claude": "SHIP", "codex": "SHIP"}
+]
+```
+
+Round 2 is double-SHIP. Loop exits. `result.rounds === 2`.
 
 Loop exits when **both** Claude and Codex emit SHIP in the same round, OR after round 7.
 

@@ -21,7 +21,6 @@ test('runRoundLoop exits on double-SHIP', async () => {
   const result = await runRoundLoop({
     specPath: spec,
     phase: 'spec',
-    initialArtifact: 'draft v0',
     codexFn,
     claudeFn,
   });
@@ -39,7 +38,6 @@ test('runRoundLoop hits 7-round cap and returns deadlock', async () => {
   const result = await runRoundLoop({
     specPath: spec,
     phase: 'spec',
-    initialArtifact: 'draft',
     codexFn,
     claudeFn,
     maxRounds: 7,
@@ -63,7 +61,7 @@ test('runRoundLoop ships when both flip to SHIP mid-loop', async () => {
   const claudeFn = async (round) => round < 3
     ? { status: 'REVISE', critique: ['x'], rationale: 'y' }
     : { status: 'SHIP', critique: [], rationale: 'ok' };
-  const result = await runRoundLoop({ specPath: spec, phase: 'spec', initialArtifact: 'd', codexFn, claudeFn });
+  const result = await runRoundLoop({ specPath: spec, phase: 'spec', codexFn, claudeFn });
   assert.equal(result.outcome, 'shipped');
   assert.equal(result.rounds, 3);
   rmSync(dir, { recursive: true, force: true });
