@@ -73,25 +73,59 @@ Overrides (env var, per-invocation):
 CODEX_PAIRED_MODEL=gpt-5.5 CODEX_PAIRED_REASONING=high claude
 ```
 
+## Autopilot (v0.3.0+)
+
+Run a double-SHIP'd implementation plan to completion unattended. The autopilot drives four phases per slice (plan-slice + test-list review, implement, review-slice, docs-update), each with its own 7-round Claude↔Codex budget. State persists in the sidecar; `ralph-loop` provides cross-session continuity.
+
+### Usage
+
+```bash
+# One-shot in current session:
+/autopilot docs/superpowers/plans/<plan>.md
+
+# Or wrapped in ralph-loop for cross-session continuity:
+/ralph-loop /autopilot docs/superpowers/plans/<plan>.md --completion-promise "autopilot completed"
+```
+
+### Prerequisites
+- A double-SHIP'd plan (run through `codex-paired-superpowers:writing-plans` first).
+- The plan's frontmatter references the spec path.
+- The spec has a sidecar with a `codex_session` threadId.
+
+### Provenance hook
+While autopilot is running, a PostToolUse hook on `git commit` checks the Commit Conventions: subject must match `(feat|test|fix|docs|refactor|chore)(slice:N):` and include `Co-Authored-By: Claude`. The hook fires AFTER the commit (PostToolUse can't prevent it) — non-conforming commits land but the hook exits non-zero, signaling the autopilot to halt with `external-commit-detected`. The user can then `git reset` to remove the offending commit. The hook is silent when autopilot isn't running.
+
+### Active anchor file
+`<repo>/.codex-paired/active.json` (auto-gitignored) tells the hook which sidecar to consult. Created on autopilot start, removed on halt/completion.
+
 ## Architecture
 
 ```
 codex-paired-superpowers/
 ├── .claude-plugin/plugin.json         # plugin manifest + bundled codex MCP server
 ├── lib/codex-bridge/                  # shared bridge (zero npm deps)
-│   ├── sidecar.js                     # per-feature JSON state
+│   ├── sidecar.js                     # per-feature JSON state (atomic writes)
+│   ├── active-anchor.js               # .codex-paired/active.json lifecycle
 │   ├── verdict.js                     # parse <<<VERDICT>>>...<<<END>>> blocks
 │   ├── loop.js                        # 7-round Claude<->Codex orchestration
-│   ├── cli.js                         # subcommand dispatcher (sidecar only)
-│   └── prompts/                       # L11 rubric + verdict format
+│   ├── cli.js                         # subcommand dispatcher
+│   └── prompts/                       # L11 rubric + verdict format + pre-SHIP checklist
+├── hooks/                             # provenance hook (PostToolUse on git commit)
+│   ├── hooks.json
+│   └── check-commit-provenance.sh
 ├── skills/
+│   ├── autopilot/                     # the multi-tier loop orchestrator
 │   ├── brainstorming/
 │   ├── writing-plans/
 │   ├── subagent-driven-development/
 │   ├── receiving-code-review/
 │   ├── systematic-debugging/
 │   └── test-driven-development/
-├── tests/codex-bridge/                # node --test
+├── commands/
+│   └── autopilot.md                   # /autopilot slash command
+├── tests/
+│   ├── codex-bridge/                  # node --test
+│   └── hooks/                         # bash test harness
 └── docs/
     ├── specs/                         # design docs
     └── plans/                         # implementation plans
@@ -138,10 +172,11 @@ Plan: `docs/plans/2026-05-07-codex-paired-superpowers.md`
 
 ## Status
 
-v0.2.0 — codex transport via bundled MCP server. v0.1.x used `codex exec` subprocess and is preserved on the `v0.1.x` branch if you want the older transport.
+v0.3.0 — autopilot. Multi-tier loop drives plans slice-by-slice unattended.
 
 ### Changelog
 
+- **v0.3.0** — autopilot. Multi-tier loop drives plans slice-by-slice unattended; per-slice phases (plan-slice + test-list review, implement, review-slice, docs-update); cross-session continuity via ralph-loop; provenance hook enforces Commit Conventions during active runs; sidecar gains nested phase state + autopilot block + atomic writes; system rubric gains pre-SHIP checklist. Spec hardened across 6 Codex review rounds; plan hardened across 6 Codex review rounds.
 - **v0.2.0** — switched from `codex exec` subprocess transport to bundled `codex mcp-server` MCP transport. Long-lived process, native JSON-RPC, faster (no spawn-per-call, no session-log replay). Removed `lib/codex-bridge/invoke.js` and the `session-start`/`session-resume`/`run-loop` CLI subcommands. Skills now invoke `mcp__plugin_codex-paired-superpowers_codex__*` tools directly.
 - **v0.1.1** — clarified round semantics in brainstorming SKILL.md; removed dead `initialArtifact` parameter from `runRoundLoop`.
 - **v0.1.0** — first working release.
