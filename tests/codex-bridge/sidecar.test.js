@@ -155,3 +155,56 @@ test('setAutopilot is atomic (temp file + rename)', () => {
   }
   rmSync(dir, { recursive: true, force: true });
 });
+
+// --- malformed-input edge cases ---
+
+test('loadSidecar throws on malformed JSON (loud failure)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  writeFileSync(`${spec}.codex.json`, '{not json');
+  // The orchestrator must surface this as a halt reason; silent-default is wrong.
+  assert.throws(() => loadSidecar(spec), /JSON/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('loadSidecar throws on empty sidecar file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  writeFileSync(`${spec}.codex.json`, '');
+  assert.throws(() => loadSidecar(spec));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendRound preserves prior rounds on subsequent appends (no overwrite)', () => {
+  // Regression guard: the read-modify-write pattern must not lose history.
+  const dir = mkdtempSync(join(tmpdir(), 'cps-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  for (let i = 1; i <= 7; i++) {
+    appendRound(spec, { phase: 'spec', round: i, claude: 'REVISE', codex: 'REVISE' });
+  }
+  const sc = loadSidecar(spec);
+  assert.equal(sc.rounds.length, 7);
+  assert.equal(sc.rounds[0].round, 1);
+  assert.equal(sc.rounds[6].round, 7);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('setPhase preserves other phases when adding a new one', () => {
+  // Regression guard: setPhase must not clobber sibling phases.
+  const dir = mkdtempSync(join(tmpdir(), 'cps-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  setPhase(spec, 'slice-1', 'plan-slice', { shipped: true });
+  setPhase(spec, 'slice-1', 'implement', { subagent_status: 'DONE' });
+  setPhase(spec, 'slice-1', 'review-slice', { shipped: true });
+  const sc = loadSidecar(spec);
+  assert.equal(sc.slice_reviews['slice-1'].phases['plan-slice'].shipped, true);
+  assert.equal(sc.slice_reviews['slice-1'].phases.implement.subagent_status, 'DONE');
+  assert.equal(sc.slice_reviews['slice-1'].phases['review-slice'].shipped, true);
+  rmSync(dir, { recursive: true, force: true });
+});
