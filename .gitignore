@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+*.log
+# sidecar files generated during real runs (not test fixtures)
+docs/specs/*.codex.json
