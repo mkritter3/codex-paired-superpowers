@@ -11,6 +11,24 @@
 # If no anchor exists (autopilot not running), exit 0 (no-op).
 set -euo pipefail
 
+# Filter: PostToolUse fires on every Bash call. We only care about `git commit`.
+# Read the JSON payload Claude Code passes on stdin and check tool_input.command.
+# If stdin has no JSON (direct invocation, e.g., from tests), the test harness
+# must opt in via CPS_HOOK_FORCE=1.
+if [ -z "${CPS_HOOK_FORCE:-}" ]; then
+  STDIN_JSON=$(cat 2>/dev/null || echo '')
+  if [ -z "$STDIN_JSON" ]; then
+    exit 0  # no stdin context, nothing to check
+  fi
+  CMD=$(echo "$STDIN_JSON" | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{ try { const o=JSON.parse(d); const t=o.tool_name||''; const c=(o.tool_input && o.tool_input.command) || ''; if (t!=='Bash') process.exit(0); console.log(c); } catch(e) { process.exit(0); } })")
+  if [ -z "$CMD" ]; then
+    exit 0  # not Bash, or no command
+  fi
+  if ! echo "$CMD" | grep -Eq '(^|[^a-zA-Z])git[[:space:]]+commit([[:space:]]|$)'; then
+    exit 0  # Bash call wasn't a git commit
+  fi
+fi
+
 # Resolve repo root. Priority:
 #   1. CLAUDE_PROJECT_DIR (set by Claude Code; the authoritative project root)
 #   2. `git rev-parse --show-toplevel` from cwd (handles subdirectory commits)

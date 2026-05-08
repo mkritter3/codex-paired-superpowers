@@ -1,12 +1,15 @@
 {
+  "description": "codex-paired-superpowers provenance hook: verifies commit conventions during active autopilot runs",
   "hooks": {
     "PostToolUse": [
       {
         "matcher": "Bash",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-commit-provenance.sh",
-        "matcher_args": {
-          "command": ".*git\\s+commit.*"
-        }
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/check-commit-provenance.sh\""
+          }
+        ]
       }
     ]
   }
