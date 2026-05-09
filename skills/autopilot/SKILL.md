@@ -124,20 +124,62 @@ The system rubric only needs to be sent on the first plan-slice round of the fea
 
 ### Phase B: implement
 
-> **v0.7.0 — routing dispatch.** Phase B is no longer a hard-coded Sonnet subagent. It is a routing dispatch over two plugin subagents (`slice-implementer-codex`, `slice-implementer-sonnet`) defined in the plugin's `agents/` directory, with worktree isolation, optional parallel batching for consecutive slices with non-overlapping `**Files:**` sets, and Node-mechanical worktree/reconciler/integration primitives. Decisions live in this prose. Mechanics live in the `lib/codex-bridge/` Node modules. Subagent JSON status is advisory; git state via the reconciler is authoritative.
+> **v0.7.1 — domain-aware routing dispatch.** Phase B routes implementation work to one of two plugin subagents (`slice-implementer-codex`, `slice-implementer-sonnet`) defined in the plugin's `agents/` directory, gated by a domain policy declared in `agents/dispatchers.json`. UI/UX and AI-harness slices route to Sonnet (Codex `forbidden` for those domains). Backend slices route to Codex by default. Other v0.7.0 properties carry forward: worktree isolation, optional parallel batching for non-overlapping `**Files:**` sets, Node-mechanical worktree/reconciler/integration primitives, subagent JSON advisory + reconciler authoritative.
 
-Phase B has eight steps, executed in order:
+Phase B has nine steps, executed in order:
 
-1. **Pre-dispatch checklist** — Claude inspects the slice section directly.
-2. **Conflict comparison** — Claude compares Files sets across consecutive parallel-candidate slices.
-3. **Worktree setup per batch** — create + bootstrap + verify (two-tier gate).
-4. **Dispatch** — invoke the routed subagent(s); parallel batches dispatch in a SINGLE assistant turn.
-5. **Reconcile** — call `reconcileWorktree` from `lib/codex-bridge/reconciler.js`.
-6. **Apply routing rules** — preferred → fallback → halt; map fallback triggers vs. blocker halts.
-7. **Persist** — sidecar `setImplementMeta` / `setImplementBootstrap` / `appendImplementDispatch`.
-8. **Integration** — ordered cherry-pick via `lib/codex-bridge/worktree-integrate.js`; clean up worktrees.
+1. **Resolve domain** — Claude reads `**Domain:**` directive or infers from `**Files:**` paths.
+2. **Pre-dispatch checklist** — Claude inspects the slice section directly; enforces domain policy via the registry.
+3. **Conflict comparison** — Claude compares Files sets across consecutive parallel-candidate slices.
+4. **Worktree setup per batch** — create + bootstrap + verify (two-tier gate).
+5. **Dispatch** — invoke the routed subagent(s); parallel batches dispatch in a SINGLE assistant turn.
+6. **Reconcile** — call `reconcileWorktree` from `lib/codex-bridge/reconciler.js`.
+7. **Apply routing rules** — preferred → fallback → halt; fallback respects domain policy.
+8. **Persist** — sidecar `setImplementMeta` / `setImplementBootstrap` / `appendImplementDispatch` (now includes resolved domain).
+9. **Integration** — ordered cherry-pick via `lib/codex-bridge/worktree-integrate.js`; clean up worktrees.
 
 The rest of this section spells each step out verbatim.
+
+#### Phase B.0 — Domain resolution (v0.7.1)
+
+Before the implementer checklist, resolve the slice's domain. The domain governs which implementers are `forbidden` / `allowed` / `preferred` per `agents/dispatchers.json`.
+
+**Step 1: Look for a `**Domain:**` directive in the slice section.**
+
+| Slice line content (after trimming) | Action |
+|---|---|
+| `**Domain:** ui` (exact, lower-case) | domain = `ui` |
+| `**Domain:** ai-harness` | domain = `ai-harness` |
+| `**Domain:** backend` | domain = `backend` |
+| `**Domain:** general` | domain = `general` |
+| `**Domain:**` with empty value | halt `domain-directive-malformed` |
+| `**Domain:** Backend` / mixed case / any other value | halt `domain-directive-malformed` |
+| line absent entirely | proceed to step 2 (inference) |
+
+**Step 2: If no directive, infer from `**Files:**` paths.**
+
+Path-based heuristics, applied to every entry in the slice's Files block:
+
+- A path matching any of these signals → `ui`:
+  - `web/`, `app/`, `frontend/`
+  - `*.tsx`, `*.css`, `*.html`, `*.scss`, `*.svelte`, `*.vue`
+- A path matching any of these signals → `ai-harness`:
+  - `skills/`, `agents/`, `hooks/`
+  - `lib/codex-bridge/`
+  - `*.skill.md`
+- All other paths → `backend` if they look like server/data/runtime code (`lib/server/`, `db/`, `api/`, `*.sql`, etc.), else `general`.
+
+If multiple paths in the same slice yield different domain signals, pick the strongest match in this priority order: `ui` > `ai-harness` > `backend` > `general`. (Rationale: a slice that touches BOTH a UI file and a backend file is still UI work in spirit — Codex must not write the React component even if it also touches an API endpoint in the same slice.)
+
+If the slice has no `**Files:**` block (single-slice serial batch where Files isn't required), inspect the slice's `### Tasks` body for path mentions and apply the same heuristics. If still ambiguous, default to `general`.
+
+**Step 3: Ambiguity rule.**
+
+If inference yields multiple plausible domains AND the slice has an `**Implementer:**` directive selecting an implementer that is `forbidden` for any of those plausible domains, halt `domain-policy-ambiguous`. The user must add an explicit `**Domain:**` directive to disambiguate.
+
+In all other ambiguous cases (no implementer directive or all plausible domains share the same policy for the chosen implementer), pick the highest-priority plausible domain per the order above and continue.
+
+**Smart-parallelization implication.** Two consecutive slices with different inferred domains should be inspected for tight coupling before parallelizing them. A `ui` slice and an `ai-harness` slice that touch independent files can still parallel-batch (different domains, both safe for Sonnet). A `ui` slice and a `backend` slice cross domain boundaries — verify the `**Files:**` are genuinely disjoint and the slices aren't logically joined (e.g., a UI component slice that imports a type from a backend slice should NOT parallelize even if the Files don't overlap, because the backend slice's exports are the UI slice's contract).
 
 #### Phase B.1 — Pre-dispatch checklist (Claude reads the slice section)
 
@@ -145,17 +187,35 @@ Before any worktree work, read the current slice section directly from the plan 
 
 **Implementer directive (`**Implementer:**` line in the slice section):**
 
+First, parse the directive itself:
+
 | Slice line content (after trimming) | Action |
 |---|---|
-| line absent entirely | preferred = `codex` |
-| `**Implementer:** codex` (exact, lower-case) | preferred = `codex` |
-| `**Implementer:** sonnet` (exact, lower-case) | preferred = `sonnet` |
+| line absent entirely | proceed to registry-default selection |
+| `**Implementer:** codex` (exact, lower-case) | candidate preferred = `codex` |
+| `**Implementer:** sonnet` (exact, lower-case) | candidate preferred = `sonnet` |
 | `**Implementer:** auto` | halt `implementer-directive-malformed` |
 | `**Implementer:**` with empty value | halt `implementer-directive-malformed` |
 | `**Implementer:** Codex` / `**Implementer:** SONNET` / any mixed case | halt `implementer-directive-malformed` |
 | any other value | halt `implementer-directive-malformed` |
 
-Fallback implementer is the other one of {codex, sonnet}. There is exactly one fallback per slice.
+**Then enforce domain policy via the dispatcher registry (v0.7.1):**
+
+Use the resolved domain from Phase B.0 and the candidate preferred implementer from the table above. Look up `enforceDomainPolicy(implementer, domain)` from `lib/codex-bridge/dispatchers.js` (returns `forbidden` | `allowed` | `preferred`).
+
+| Directive state | Domain policy result | Action |
+|---|---|---|
+| Line absent (registry-default selection) | — | preferred = the implementer in the registry whose domain policy for this domain is `preferred`; if none is `preferred`, the first whose policy is `allowed`. If none is allowed, halt `implementer-unavailable`. |
+| Directive selected `codex` or `sonnet` | `forbidden` | halt `domain-policy-violation` |
+| Directive selected `codex` or `sonnet` | `allowed` or `preferred` | preferred = directive value |
+
+For the v0.7.1 registry shipped in `agents/dispatchers.json`:
+- `Domain: ui` → registry-default preferred = `sonnet`. Codex is `forbidden`.
+- `Domain: ai-harness` → registry-default preferred = `sonnet`. Codex is `forbidden`.
+- `Domain: backend` → registry-default preferred = `codex`. Sonnet is `allowed`.
+- `Domain: general` → registry-default preferred = `sonnet`. Codex is `allowed`.
+
+**Fallback implementer** is the other one of {codex, sonnet} — but only if the registry permits the fallback for this domain. If the only fallback is `forbidden` for the resolved domain and the preferred dispatch fails, halt `implementer-unavailable` (NOT `domain-policy-violation` — the user didn't pick the forbidden combo; policy blocked the fallback after the preferred-fail).
 
 **Files block (only validated when this slice is a parallel candidate):**
 
