@@ -123,16 +123,328 @@ Three artifacts reviewed in one phase: the task list, the test list, AND the val
 The system rubric only needs to be sent on the first plan-slice round of the feature's lifetime (it persists in Codex's thread context). The verdict-format and validation-rubric should be re-sent whenever phase changes, since the role they play differs per phase.
 
 ### Phase B: implement
-1. Dispatch implementing subagent (NOT in background — autopilot waits). Subagent prompt MUST include the Commit Conventions: every commit uses `(feat|test|fix|docs|refactor|chore)(slice:<N>):` subject + `Co-Authored-By: Claude` trailer.
-2. Subagent reports DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT.
-3. **Reconcile sidecar with git after subagent returns.** Walk every commit in `last_commit_sha..HEAD`:
-   - Verify each commit's subject matches `(feat|test|fix|docs|refactor|chore)(slice:<N>):` AND has the `Co-Authored-By: Claude` trailer.
-   - If all conform: update `last_commit_sha = HEAD` in the autopilot block (atomic write via `sidecar-set-autopilot`). Move on.
-   - If any commit doesn't conform (subagent violated conventions): halt with `halt_reason: "subagent-broke-commit-conventions"`, cite the offending SHA, ping user. Don't try to auto-fix.
-4. On DONE / DONE_WITH_CONCERNS (post-reconciliation): write phase state via `sidecar-set-phase`, advance to Phase C.
-5. On BLOCKED / NEEDS_CONTEXT: halt per Spec § failure modes (and still reconcile any commits the subagent did make before bailing).
 
-This reconciliation step matters because if a Claude session crashes mid-subagent, the subagent may have committed several tasks. Without this step, `last_commit_sha` would stay at `phase_start_sha` and the recovery range walk on next tick would have the same effect — but doing it eagerly here keeps the sidecar honest.
+> **v0.7.0 — routing dispatch.** Phase B is no longer a hard-coded Sonnet subagent. It is a routing dispatch over two plugin subagents (`slice-implementer-codex`, `slice-implementer-sonnet`) defined in the plugin's `agents/` directory, with worktree isolation, optional parallel batching for consecutive slices with non-overlapping `**Files:**` sets, and Node-mechanical worktree/reconciler/integration primitives. Decisions live in this prose. Mechanics live in the `lib/codex-bridge/` Node modules. Subagent JSON status is advisory; git state via the reconciler is authoritative.
+
+Phase B has eight steps, executed in order:
+
+1. **Pre-dispatch checklist** — Claude inspects the slice section directly.
+2. **Conflict comparison** — Claude compares Files sets across consecutive parallel-candidate slices.
+3. **Worktree setup per batch** — create + bootstrap + verify (two-tier gate).
+4. **Dispatch** — invoke the routed subagent(s); parallel batches dispatch in a SINGLE assistant turn.
+5. **Reconcile** — call `reconcileWorktree` from `lib/codex-bridge/reconciler.js`.
+6. **Apply routing rules** — preferred → fallback → halt; map fallback triggers vs. blocker halts.
+7. **Persist** — sidecar `setImplementMeta` / `setImplementBootstrap` / `appendImplementDispatch`.
+8. **Integration** — ordered cherry-pick via `lib/codex-bridge/worktree-integrate.js`; clean up worktrees.
+
+The rest of this section spells each step out verbatim.
+
+#### Phase B.1 — Pre-dispatch checklist (Claude reads the slice section)
+
+Before any worktree work, read the current slice section directly from the plan markdown. Apply these checks **literally** — paraphrase or guesswork is non-conforming.
+
+**Implementer directive (`**Implementer:**` line in the slice section):**
+
+| Slice line content (after trimming) | Action |
+|---|---|
+| line absent entirely | preferred = `codex` |
+| `**Implementer:** codex` (exact, lower-case) | preferred = `codex` |
+| `**Implementer:** sonnet` (exact, lower-case) | preferred = `sonnet` |
+| `**Implementer:** auto` | halt `implementer-directive-malformed` |
+| `**Implementer:**` with empty value | halt `implementer-directive-malformed` |
+| `**Implementer:** Codex` / `**Implementer:** SONNET` / any mixed case | halt `implementer-directive-malformed` |
+| any other value | halt `implementer-directive-malformed` |
+
+Fallback implementer is the other one of {codex, sonnet}. There is exactly one fallback per slice.
+
+**Files block (only validated when this slice is a parallel candidate):**
+
+A slice is a "parallel candidate" iff Claude is considering dispatching it concurrently with one or more consecutive slices in the current candidate window. A single-slice batch is NOT a parallel candidate and the Files block is NOT required.
+
+For every parallel candidate, locate the `**Files:**` block. The block:
+
+- Starts at a line equal to `**Files:**` after trimming.
+- Continues through consecutive `- <path>` bullet lines.
+- Ends at a blank line, a heading, or another bold directive.
+
+Apply these checks in order. The first failure halts the entire candidate window:
+
+| Condition | Halt reason |
+|---|---|
+| `**Files:**` block missing on a parallel candidate | `parallel-files-missing` |
+| `**Files:**` block exists but contains zero bullets | `parallel-files-malformed` |
+| Inline form like `**Files:** lib/foo.js` (no bullet list under it) | `parallel-files-malformed` |
+| Any path contains a glob character (`*`, `?`, `[`) | `parallel-files-malformed` |
+| Any path contains a `.` or `..` traversal segment | `parallel-files-malformed` |
+| Any absolute path (starts with `/`) | `parallel-files-malformed` |
+| Any backslash separator (`\`) | `parallel-files-malformed` |
+| Duplicate path inside the same slice | `parallel-files-malformed` |
+| Directory-only path with trailing `/` | `parallel-files-malformed` |
+
+**Candidate-window halt rule:** if any of the above halts fire on any candidate slice, halt **before creating or bootstrapping any worktree** in that window. Do not partially set up worktrees and roll back. The halt summary must surface the exact offending slice id, path, and value.
+
+#### Phase B.2 — Conflict comparison
+
+Once every candidate's directive and Files block is valid, compute parallelism.
+
+1. For each candidate, build the Files set: trim each bullet, normalize as repo-relative path strings (no normalization beyond trim — paths are already validated).
+2. Compare every pair of candidates' Files sets for exact path overlap.
+3. Decision:
+   - **No overlap across all candidates** → form one parallel batch containing all candidates. Mixed Codex/Sonnet implementers are allowed in the same parallel batch.
+   - **Any overlap** → force serial execution. Drop back to single-slice batches; record `parallel_suppressed_reason: "files-overlap"` in the sidecar implement meta for each affected slice. Process the slices one at a time in order.
+
+Conflict detection runs only on Files sets, never on implementer choice. Two Sonnet slices may run in parallel if their Files sets are disjoint; a Codex slice and a Sonnet slice may run in parallel if their Files sets are disjoint.
+
+#### Phase B.3 — Worktree setup per batch
+
+For each slice in the batch, build an isolated worktree using the `worktree.js` primitives from slice 2:
+
+1. Resolve the slice's `slice_start_sha` (from the autopilot block; for parallel candidates this is the same SHA across the batch — they all branch from the same starting point).
+2. Call:
+   ```js
+   import { create, bootstrap, verifyBootstrap } from '<plugin>/lib/codex-bridge/worktree.js';
+   const c = create(repoRoot, sliceId, sliceStartSha);
+   ```
+   `create` enforces the `.git-worktrees/` gitignore, the path-conflict check, and runs `git worktree add -b <slice-id>-impl <repo>/.git-worktrees/<slice-id> <slice_start_sha>`. Surface its halt unchanged (e.g., `worktree-gitignore-missing`, `worktree-path-conflict`, `worktree-create-failed`).
+3. Resolve the configured symlinks via `loadProjectConfig(repoRoot)` — the `worktree_bootstrap.symlinks` array of `{path, required}` entries, with v0.7.0 defaults applied (slice 1).
+4. Call:
+   ```js
+   const b = bootstrap(repoRoot, c.worktreePath, symlinks);
+   ```
+   On halt, surface unchanged (e.g., `worktree-bootstrap-failed`).
+5. Persist the bootstrap record before dispatch:
+   ```bash
+   cli sidecar-set-implement-bootstrap --specPath <spec> --sliceId <slice-N> \
+     --bootstrap '{"symlinks":[<recorded paths>],"completed_at":"<ISO now>"}'
+   ```
+   Recorded symlinks are the paths that were actually linked (skipped optional missing entries are not recorded).
+
+**Two-tier bootstrap gate (run immediately before dispatching the implementer for that worktree):**
+
+- **Tier 1 — sidecar marker.** Read the sidecar. Confirm `slice_reviews[slice-N].phases.implement.bootstrap.completed_at` is a non-empty string. Missing → halt `worktree-bootstrap-failed`.
+- **Tier 2 — symlink reality check.** Call `verifyBootstrap(worktreePath, recordedSymlinks, repoRoot)`. Each recorded path must `lstat` as a symlink and `readlink` to `<repoRoot>/<path>`. If `{ok:false}`, halt `worktree-bootstrap-stale`. Diagnostics include the per-symlink `{symlink, expected, actual}` triples returned by `verifyBootstrap`.
+
+Both tiers must pass for every worktree in the batch before any subagent dispatch fires. A single Tier-1/Tier-2 failure in a parallel batch halts the whole batch — do not dispatch the other slice(s) while one worktree is broken.
+
+#### Phase B.4 — Dispatch (subagent files, single-turn parallel)
+
+For each slice in the batch, dispatch the routed subagent. The subagents are the markdown files in the plugin's `agents/` directory:
+
+- `agents/slice-implementer-codex.md` — invokes Codex MCP in a fresh thread inside the worktree. Tool name: `slice-implementer-codex`.
+- `agents/slice-implementer-sonnet.md` — implements directly with `Read/Edit/Write/Bash`. Tool name: `slice-implementer-sonnet`.
+
+Choice is mechanical: directive `codex` (or absent) → `slice-implementer-codex`; directive `sonnet` → `slice-implementer-sonnet`.
+
+Every dispatch's prompt includes:
+
+- Slice id (e.g., `slice-3`).
+- Full slice section text from the plan, verbatim.
+- Worktree absolute path (the subagent's `cwd`).
+- `slice_start_sha`.
+- Phase A's structured `validation_coverage` for this slice if available.
+- Commit Conventions (subject-only, slice number = current slice; trailer not required, presence does not break compliance).
+- Required test/verification commands.
+- Instruction to leave all changes committed in the worktree before reporting `DONE`.
+- Reminder of the final-message JSON contract: `{"status":"DONE"|"BLOCKED"|"NEEDS_CONTEXT","concerns":[]}`.
+
+**Single-turn parallel dispatch (load-bearing).** When the batch contains more than one slice, dispatch ALL implementer subagents in a SINGLE assistant turn using Claude's parallel-tool-call mechanism — i.e., emit multiple `Agent` tool calls in the same response. Issuing them across separate turns is non-conforming: it serializes the work and breaks the wall-clock assertion in the empirical parallel smoke (`tests/smoke/implementer-routing-parallel.sh`, slice 9). The structural smoke (`tests/smoke/phase-b-routing-structural.sh`) verifies orchestrator output contains all parallel `Agent` calls in one turn for the non-overlap path.
+
+Do not begin reconciliation for any slice until all parallel subagents in the batch have returned. Single-slice batches use a single subagent call as usual.
+
+**Subagent return contract.** The subagent's final message ends with a fenced JSON block. Read its `status` field. The orchestrator only consults this status for `BLOCKED` and `NEEDS_CONTEXT` halts; for everything else the reconciler is authoritative (Phase B.5). If the JSON is missing or malformed, treat it as `missing-or-malformed-json` and route into the fallback rules in Phase B.6 — unless the message is an unambiguous blocker phrased as natural language ("blocked: X"), in which case record `BLOCKED` and halt without fallback.
+
+#### Phase B.5 — Reconcile (reconciler is truth)
+
+For each returned subagent, call:
+
+```js
+import { reconcileWorktree } from '<plugin>/lib/codex-bridge/reconciler.js';
+const r = reconcileWorktree({
+  worktreePath: <worktree absolute path>,
+  sliceStartSha: <slice_start_sha>,
+  sliceId: <slice-N>,
+});
+```
+
+The reconciler reads `git -C <worktree> log <slice_start_sha>..HEAD` and verifies every subject against `^(feat|test|fix|docs|refactor|chore)\(slice:<N>\): <description>`. It returns:
+
+```js
+{
+  ok: true,
+  commits: [{sha, subject}, ...],     // oldest → newest
+  head_sha,
+  commit_count,
+  non_conforming_subjects: [{sha, subject, reason}, ...],
+}
+```
+
+or `{ok:false, halt:{reason:"reconciler-failed", detail}}` on git failure.
+
+**Reconciler is the source of truth.** Subagent JSON `status` is advisory — never use it to populate `commit_count`, `head_sha`, or `commits`. The orchestrator trusts what git says. Specifically:
+
+- Subagent reports `DONE` but reconciler says `commit_count == 0` → fallback trigger (zero-commits).
+- Subagent reports `DONE` but `non_conforming_subjects` is non-empty → fallback trigger (non-conforming-commits). Cite the SHA in diagnostics.
+- Subagent reports `DONE` and reconciler returns ≥1 commits with empty `non_conforming_subjects` → success.
+- Subagent reports `BLOCKED` → halt with `codex-blocked` (Codex implementer) or `subagent-blocked` (Sonnet implementer). Do **not** fall back. Reconcile commits the subagent made before bailing for the audit trail, but do not advance.
+- Subagent reports `NEEDS_CONTEXT` → halt with `codex-needs-context` or `subagent-needs-context`. Same no-fallback rule.
+- `reconcileWorktree` returns `{ok:false}` (e.g., bad sha, broken worktree) → fallback trigger (treated as a dispatch failure: the worktree is unreliable).
+
+#### Phase B.6 — Apply routing rules
+
+The routing sequence is:
+
+```text
+preferred implementer
+  -> fallback implementer on implementation-dispatch failure
+  -> halt with implementer-unavailable only if both fail
+```
+
+**Failure triggers fallback** (any one of these from the preferred dispatch):
+
+1. MCP error from the subagent (Codex MCP tool error for `slice-implementer-codex`; subagent dispatch error for either).
+2. Subagent dispatch error (the `Agent` tool call itself failed).
+3. 10-minute implementation timeout.
+4. Zero commits produced (`commit_count == 0`).
+5. Non-conforming commits emitted (`non_conforming_subjects` non-empty).
+6. Missing or malformed final-message JSON, when there is no clear blocker signal.
+
+**NOT fallback triggers** (these halt without trying the other implementer):
+
+- `BLOCKED` (real blocker — spec is unclear, missing dependency, etc.).
+- `NEEDS_CONTEXT` (real blocker — agent needs information the orchestrator does not have).
+
+**Fallback procedure** (per spec §9):
+
+1. Append the failed dispatch to sidecar with `outcome: "failed-fallback-pending"` (see B.7).
+2. Reset the worktree to `slice_start_sha`:
+   ```js
+   import { reset } from '<plugin>/lib/codex-bridge/worktree.js';
+   reset(worktreePath, sliceStartSha);
+   ```
+   On halt, surface `worktree-reset-failed`.
+3. Re-run worktree bootstrap (`bootstrap(repoRoot, worktreePath, symlinks)`), update sidecar bootstrap marker, re-verify with `verifyBootstrap`. Halt with `worktree-bootstrap-failed` or `worktree-bootstrap-stale` on tier failure.
+4. Dispatch the fallback subagent fresh. Do not salvage partial work. Do not pass any context from the failed attempt other than the slice section, worktree path, and sha.
+5. Reconcile only the fallback's commits (range is still `slice_start_sha..HEAD` because the reset moved HEAD back).
+
+**Both implementers fail** → halt `implementer-unavailable`. Record both dispatch failures in the sidecar. Leave the worktree in place for inspection.
+
+For parallel batches, fallback is per-slice. One slice failing the preferred implementer does not trigger fallback or halt for the other slice in the batch. Each slice's reconcile/fallback/halt decision is independent.
+
+#### Phase B.7 — Persist (sidecar)
+
+Use the slice-3 implement-phase persistence CLI/methods (sidecar.js):
+
+- **Before the first dispatch in this slice's Phase B**, write routing meta:
+  ```bash
+  cli sidecar-set-implement-meta --specPath <spec> --sliceId <slice-N> --meta '{
+    "preferred_implementer":"codex|sonnet",
+    "fallback_implementer":"sonnet|codex",
+    "parallel_group":"<batch id or null>",
+    "parallel_suppressed_reason":"files-overlap|null",
+    "worktree":"<absolute worktree path>"
+  }'
+  ```
+  Use a single batch id (e.g., `parallel-<ISO>-<slice-from>-<slice-to>`) for all slices in a parallel batch. For serial single-slice batches, `parallel_group: null`.
+
+- **After bootstrap completes** (per Phase B.3, before dispatch), write the bootstrap record (already shown above):
+  ```bash
+  cli sidecar-set-implement-bootstrap --specPath <spec> --sliceId <slice-N> \
+    --bootstrap '{"symlinks":[...],"completed_at":"<ISO now>"}'
+  ```
+
+- **After each reconcile** (whether successful, fallback-pending, or halted), append a dispatch record:
+  ```bash
+  cli sidecar-append-implement-dispatch --specPath <spec> --sliceId <slice-N> --dispatch '{
+    "slice_id":"<slice-N>",
+    "agent":"codex|sonnet",
+    "thread_id":"<codex thread id or null>",
+    "dispatched_at":"<ISO>",
+    "completed_at":"<ISO>",
+    "worktree":"<absolute worktree path>",
+    "head_sha":"<reconciler.head_sha>",
+    "commit_count":<reconciler.commit_count>,
+    "outcome":"shipped|failed-fallback-pending|failed-halted"
+  }'
+  ```
+  Dispatch entries are append-only. If fallback ships, both records persist: the failed preferred dispatch and the shipped fallback dispatch.
+
+- **After successful integration** (Phase B.8), update `last_commit_sha` via `sidecar-set-autopilot` and write `slice_reviews[slice-N].phases.implement` shipped/commits via `sidecar-set-phase`.
+
+#### Phase B.8 — Integration (ordered cherry-pick)
+
+Once every slice in the batch has a successful reconcile (Phase B.5 returned commits with no non-conforming subjects, no halt, no fallback pending), integrate the worktree branches onto the integration branch (the autopilot's primary working branch).
+
+Use the slice-6 module:
+
+```js
+import { integrate } from '<plugin>/lib/codex-bridge/worktree-integrate.js';
+const r = integrate({
+  repoRoot,
+  integrationBranch: '<current branch>',
+  slices: [
+    { sliceId: 'slice-3', branchName: 'slice-3-impl', sliceStartSha: <sha> },
+    { sliceId: 'slice-4', branchName: 'slice-4-impl', sliceStartSha: <sha> },
+  ],
+});
+```
+
+The module:
+- Enumerates each slice's source commits with `git patch-id --stable`.
+- Runs resume detection: if all source commits already appear in order on the integration branch, the slice is `resumed-already-integrated` and skipped. Partial / order-broken matches halt with `worktree-resume-ambiguous` (diagnostics include `slice_id`, `branch_name`, `integrated_subjects`, `missing_subjects`, `integration_branch_head`).
+- Otherwise cherry-picks each commit in order. Conflict → `git cherry-pick --abort`, halt with `worktree-merge-conflict` (diagnostics include `slice_id`, `branch_name`, `conflicting_paths`).
+- Empty source range after a supposedly shipped dispatch halts with `worktree-integration-empty` (broken upstream invariant).
+
+Always integrate slices in **ascending slice order**, regardless of which subagent reconciled first. The plan order is the integration order.
+
+**On success:**
+1. Read the integration branch HEAD; this is the new `last_commit_sha`.
+2. Update `sidecar.autopilot.last_commit_sha = <new HEAD>` atomically.
+3. For each slice, write `phases.implement` shipped state via `sidecar-set-phase` with the reconciler's `commits` and `head_sha`.
+4. Remove each slice's worktree:
+   ```js
+   import { remove, removeBranch } from '<plugin>/lib/codex-bridge/worktree.js';
+   remove(repoRoot, worktreePath);
+   removeBranch(repoRoot, branchName); // only after commits are reachable from integration branch
+   ```
+   Cleanup failures are warnings, not halts (`worktree-cleanup-failed` / `worktree-branch-cleanup-failed` recorded but execution continues).
+5. Advance each slice's `current_phase` to `review-slice` per the main loop (note: only after integration is complete for the whole batch).
+
+**On halt (any of the worktree-* reasons above):** leave the worktrees and branches in place for inspection. Record the halt summary with absolute worktree paths and branch names. Do not delete diagnostic worktrees.
+
+#### Phase B.9 — Worked example: slices 3 + 4 in parallel
+
+Slice 3 declares `**Implementer:** codex` and `**Files:** [lib/codex-bridge/foo.js, tests/codex-bridge/foo.test.js]`. Slice 4 declares `**Implementer:** sonnet` and `**Files:** [lib/codex-bridge/bar.js, tests/codex-bridge/bar.test.js]`. Both are Phase B-ready (Phase A double-SHIP'd). The autopilot has just shipped slice 2's docs-update; HEAD is `abc123`.
+
+1. **B.1 checklist.** Slice 3 directive valid (`codex`). Slice 3 Files block valid (4 paths, no globs/traversal/abs/dups). Slice 4 directive valid (`sonnet`). Slice 4 Files block valid.
+2. **B.2 conflict.** `{lib/codex-bridge/foo.js, tests/codex-bridge/foo.test.js}` ∩ `{lib/codex-bridge/bar.js, tests/codex-bridge/bar.test.js}` = ∅. Form parallel batch `parallel-2026-05-08T12:00:00.000Z-3-4`. Persist `parallel_group` for both slices via `sidecar-set-implement-meta`.
+3. **B.3 worktree setup.** `slice_start_sha = abc123` for both. Create `.git-worktrees/slice-3` (branch `slice-3-impl`) and `.git-worktrees/slice-4` (branch `slice-4-impl`). Bootstrap each with the project's symlinks (`node_modules` etc.). Persist bootstrap records. Verify both worktrees with `verifyBootstrap`. Both Tier 1 and Tier 2 pass.
+4. **B.4 dispatch.** In a SINGLE assistant turn, emit two `Agent` tool calls — one for `slice-implementer-codex` with slice 3's prompt, one for `slice-implementer-sonnet` with slice 4's prompt. Each `cwd` is the slice's worktree path. Wait for both to return.
+5. **B.5 reconcile.** Call `reconcileWorktree` for each. Slice 3 returns `commit_count: 2, non_conforming_subjects: []`. Slice 4 returns `commit_count: 1, non_conforming_subjects: []`. No fallback needed. Append dispatch records with `outcome: "shipped"` for each.
+6. **B.8 integration.** Call `integrate({ repoRoot, integrationBranch: <branch>, slices: [{slice-3, slice-3-impl, abc123}, {slice-4, slice-4-impl, abc123}] })` in slice-ascending order. Cherry-pick slice 3's two commits onto the integration branch, then slice 4's one commit. Update `last_commit_sha`. Mark each slice's `phases.implement` shipped. `remove` both worktrees and `removeBranch` both slice-impl branches. Advance both slices to `review-slice` (which still runs serially in slice order, per spec §10).
+
+#### Phase B reference: failure modes (cross-reference spec §17)
+
+| Halt reason | Trigger |
+|---|---|
+| `implementer-directive-malformed` | Bad/empty/mixed-case/`auto` Implementer directive |
+| `parallel-files-missing` | Parallel candidate has no `**Files:**` block |
+| `parallel-files-malformed` | Parallel candidate has invalid `**Files:**` block (per B.1 table) |
+| `worktree-gitignore-missing` | `.git-worktrees/` not in `.gitignore` |
+| `worktree-path-conflict` | `.git-worktrees/slice-N` exists and isn't a clean same-slice worktree |
+| `worktree-create-failed` | `git worktree add` exited nonzero |
+| `worktree-bootstrap-failed` | Bootstrap symlink failure OR sidecar bootstrap marker missing (Tier 1) |
+| `worktree-bootstrap-stale` | `verifyBootstrap` symlink reality check failed (Tier 2) |
+| `worktree-reset-failed` | `git reset --hard` failed before fallback |
+| `codex-blocked` / `codex-needs-context` | Codex implementer reported BLOCKED/NEEDS_CONTEXT |
+| `subagent-blocked` / `subagent-needs-context` | Sonnet implementer reported BLOCKED/NEEDS_CONTEXT |
+| `implementer-unavailable` | Both preferred and fallback failed |
+| `worktree-merge-conflict` | Cherry-pick conflict during integration |
+| `worktree-resume-ambiguous` | Partial / order-broken patch-id match on integration branch |
+| `worktree-integration-empty` | Empty source range after supposedly-shipped dispatch (broken invariant) |
+
+Cleanup-only warnings (not halts): `worktree-cleanup-failed`, `worktree-branch-cleanup-failed`.
+
+This reconciliation discipline matters because if a Claude session crashes mid-subagent, the subagent may have committed several tasks already. The reconciler-as-truth invariant means the next tick's Phase B.5 call will pick up exactly the commits in the worktree, regardless of what the subagent self-reported. Sidecar dispatch records are append-only so the audit trail survives every retry.
 
 ### Phase C: review-slice
 1. Compute the diff: `git diff <slice_start_sha>..HEAD`.
