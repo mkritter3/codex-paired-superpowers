@@ -123,17 +123,19 @@ test('sonnet agent frontmatter has required keys', async () => {
   assert.equal(frontmatter.model, 'sonnet');
 });
 
-test('codex agent tools list includes the Codex MCP tool', async () => {
+test('codex agent tools list does NOT include the Codex MCP tool (v0.7.0 fix: shell codex exec)', async () => {
+  // v0.7.0 release validation found MCP-mediated dispatch serializes (~1.73x ratio).
+  // The fix switched the codex implementer to shell-spawned `codex exec` for true
+  // parallelism. The MCP tool was dropped from the codex agent's allowlist.
   const text = await readFile(CODEX_AGENT_PATH, 'utf8');
   const { frontmatter } = parseFrontmatter(text);
   const tools = parseToolsList(frontmatter.tools);
   assert.ok(
-    tools.includes(CODEX_MCP_TOOL),
-    `codex agent tools list missing ${CODEX_MCP_TOOL}; got: ${JSON.stringify(tools)}`,
+    !tools.includes(CODEX_MCP_TOOL),
+    `codex agent tools list must NOT include ${CODEX_MCP_TOOL} (v0.7.0+ uses shell codex exec); got: ${JSON.stringify(tools)}`,
   );
-  // Also must include the basic implementation tools so it can sanity-check
-  // inputs before dispatching Codex.
-  for (const t of ['Read', 'Edit', 'Write', 'Bash']) {
+  // Codex agent is a thin wrapper that shells out via Bash; it does not edit files.
+  for (const t of ['Read', 'Bash']) {
     assert.ok(tools.includes(t), `codex agent tools missing ${t}`);
   }
 });
