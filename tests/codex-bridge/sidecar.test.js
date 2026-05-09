@@ -392,3 +392,69 @@ test('setLiveVerification preserves sibling phases (lazy-init does not clobber)'
   assert.equal(sc.slice_reviews['slice-6'].phases['live-verification'].shipped, false);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ─── Slice 10: appendLiveVerificationRound + recordScenarioResult ─────────────
+
+import { appendLiveVerificationRound, recordScenarioResult } from '../../lib/codex-bridge/sidecar.js';
+
+test('appendLiveVerificationRound preserves prior rounds — append 3 rounds; all 3 present in order', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lvr-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  appendLiveVerificationRound(spec, 'slice-10', { round: 1, outcome: 'failed', scenarios_failed: ['lv-001'] });
+  appendLiveVerificationRound(spec, 'slice-10', { round: 2, outcome: 'failed', scenarios_failed: ['lv-001'] });
+  appendLiveVerificationRound(spec, 'slice-10', { round: 3, outcome: 'shipped', scenarios_failed: [] });
+  const lv = getLiveVerification(spec, 'slice-10');
+  assert.ok(Array.isArray(lv.rounds), 'rounds should be an array');
+  assert.equal(lv.rounds.length, 3);
+  assert.equal(lv.rounds[0].round, 1);
+  assert.equal(lv.rounds[1].round, 2);
+  assert.equal(lv.rounds[2].round, 3);
+  assert.equal(lv.rounds[2].outcome, 'shipped');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('recordScenarioResult persists to sidecar and is retrievable via getLiveVerification', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-scr-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  recordScenarioResult(spec, 'slice-10', 'lv-001', 'attempt-1', {
+    status: 'failed',
+    assertions_failed: ['Displayed name did not update'],
+  });
+  const lv = getLiveVerification(spec, 'slice-10');
+  assert.ok(lv !== null, 'live-verification block should exist');
+  assert.ok(lv.scenarios?.['lv-001']?.['attempt-1'], 'scenario result should be stored');
+  assert.equal(lv.scenarios['lv-001']['attempt-1'].status, 'failed');
+  assert.deepEqual(lv.scenarios['lv-001']['attempt-1'].assertions_failed, ['Displayed name did not update']);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('setLiveVerification + appendLiveVerificationRound + recordScenarioResult coexist on same slice', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-coexist-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  // Set initial phase state
+  setLiveVerification(spec, 'slice-10', 'shipped', false);
+  setLiveVerification(spec, 'slice-10', 'skipped', false);
+  // Record a scenario result
+  recordScenarioResult(spec, 'slice-10', 'lv-001', 'attempt-1', { status: 'failed' });
+  // Append a round
+  appendLiveVerificationRound(spec, 'slice-10', { round: 1, outcome: 'failed', codex_diagnosis: 'Bug in save handler' });
+  // Record a fixed scenario result
+  recordScenarioResult(spec, 'slice-10', 'lv-001', 'attempt-2', { status: 'passed' });
+  // Update shipped after fix
+  setLiveVerification(spec, 'slice-10', 'shipped', true);
+  const lv = getLiveVerification(spec, 'slice-10');
+  // Verify all state is present and coherent
+  assert.equal(lv.shipped, true);
+  assert.equal(lv.skipped, false);
+  assert.equal(lv.scenarios['lv-001']['attempt-1'].status, 'failed');
+  assert.equal(lv.scenarios['lv-001']['attempt-2'].status, 'passed');
+  assert.equal(lv.rounds.length, 1);
+  assert.equal(lv.rounds[0].codex_diagnosis, 'Bug in save handler');
+  rmSync(dir, { recursive: true, force: true });
+});
