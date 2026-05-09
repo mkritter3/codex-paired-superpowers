@@ -186,9 +186,62 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.7.0 — implementer routing.
+v0.7.1 — domain-aware routing via dispatchers registry.
 
 ### Changelog
+
+- **v0.7.1** — domain-aware routing. Adds `agents/dispatchers.json` registry
+  declaring which implementers are `forbidden` / `allowed` / `preferred` for
+  each slice domain (`ui`, `ai-harness`, `backend`, `general`).
+  `lib/codex-bridge/dispatchers.js` exposes `getDispatcher(implementer)` and
+  `enforceDomainPolicy(implementer, domain)` for orchestrator lookup. The
+  loader also validates that registry tools/agent-name exactly match agent
+  frontmatter — drift throws at load time.
+
+  **Domain policy as data.** The shipped policy:
+
+  | | UI | AI-harness | Backend | General |
+  |---|---|---|---|---|
+  | **Codex** | forbidden | forbidden | preferred | allowed |
+  | **Sonnet** | preferred | preferred | allowed | preferred |
+
+  Codex is forbidden for UI/UX work (visual judgment) and AI-harness work
+  (skills, agents, hooks, `lib/codex-bridge/` — the systems that govern Codex
+  itself). Backend stays Codex-default. Mixed/unclear stays Sonnet-default.
+
+  **New plan frontmatter:** `**Domain:**` directive (optional). Allowed values:
+  `ui`, `ai-harness`, `backend`, `general`. If absent, Claude infers from the
+  slice's `**Files:**` paths via heuristics (`web/`, `app/`, `*.tsx`, `*.css`
+  → ui; `skills/`, `agents/`, `hooks/`, `lib/codex-bridge/`, `*.skill.md` →
+  ai-harness; otherwise backend or general). Strongest signal wins on
+  multi-signal slices, in priority order: ui > ai-harness > backend > general.
+
+  **Behavior change vs. v0.7.0:** the `**Implementer:**` directive is no
+  longer "honored unconditionally". It is honored only when the registry
+  permits the (implementer, domain) pair. `**Implementer:** codex` on a
+  `**Domain:** ui` slice now halts `domain-policy-violation` before any
+  worktree setup. The user must change either the directive or the slice's
+  domain. v0.6.0 / v0.7.0 plans without `**Domain:**` directives are
+  inferred — most existing plans will continue to work, but plans that
+  explicitly set `**Implementer:** codex` for slices that infer to `ui` will
+  halt under v0.7.1. Fix by adding `**Domain:** backend` if the slice is
+  genuinely backend, or by removing the implementer directive.
+
+  **New halt reasons:**
+
+  - `domain-policy-violation` — directive selects a forbidden implementer
+    for the slice's domain. User explicitly picked the forbidden combo.
+  - `domain-policy-ambiguous` — domain inference can't pick between
+    plausible domains AND the chosen implementer is forbidden in some.
+    User must add `**Domain:**`.
+  - `domain-directive-malformed` — bad value in `**Domain:**` line.
+  - `dispatcher-registry-malformed` — registry/agent-frontmatter drift or
+    schema violation. Caught at load time.
+
+  Distinction from `implementer-unavailable`: a `domain-policy-violation`
+  means the user picked the forbidden combo. `implementer-unavailable` means
+  the user didn't pick it; policy blocked the fallback after the preferred
+  implementer failed.
 
 - **v0.7.0** — implementer routing. Phase B becomes a routing dispatch instead
   of a hard-coded Sonnet subagent path. Default implementer is Codex; Sonnet is

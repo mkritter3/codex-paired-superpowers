@@ -1,0 +1,24 @@
+{
+  "codex": {
+    "agent": "slice-implementer-codex",
+    "transport": "codex-exec",
+    "tools": ["Read", "Bash"],
+    "domains": {
+      "ui": "forbidden",
+      "ai-harness": "forbidden",
+      "backend": "preferred",
+      "general": "allowed"
+    }
+  },
+  "sonnet": {
+    "agent": "slice-implementer-sonnet",
+    "transport": "claude-subagent",
+    "tools": ["Read", "Edit", "Write", "Bash"],
+    "domains": {
+      "ui": "preferred",
+      "ai-harness": "preferred",
+      "backend": "allowed",
+      "general": "preferred"
+    }
+  }
+}
