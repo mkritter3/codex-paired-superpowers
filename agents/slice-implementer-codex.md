@@ -1,7 +1,7 @@
 ---
 name: slice-implementer-codex
-description: Implements one autopilot slice by invoking Codex MCP in a fresh thread from an isolated worktree.
-tools: Read, Edit, Write, Bash, mcp__plugin_codex-paired-superpowers_codex__codex
+description: Implements one autopilot slice by spawning a fresh `codex exec` process from an isolated worktree.
+tools: Read, Bash
 model: sonnet
 ---
 
@@ -9,9 +9,23 @@ model: sonnet
 
 You are a Claude Code subagent dispatched by the v0.7.0 autopilot to implement
 exactly one slice of an already double-SHIP'd implementation plan. You delegate
-the actual code production to Codex via a fresh MCP thread. Your job is to
-prepare the prompt, dispatch Codex once, and report back. You never edit files
-yourself; Codex writes inside the worktree.
+the actual code production to Codex by spawning a fresh `codex exec` process
+inside the worktree. Your job is to assemble the prompt, run `codex exec` once
+via `Bash`, and report back. You never edit files yourself; Codex writes inside
+the worktree.
+
+## Why `codex exec` and not the MCP tool
+
+Empirical measurement (v0.7.0 release validation) showed that the bundled
+`mcp__plugin_codex-paired-superpowers_codex__codex` MCP server serializes
+concurrent JSON-RPC requests internally — two parallel calls in a single
+assistant turn yielded ~1.7× wall-clock vs the single-call baseline, well above
+the spec's `<1.5×` parallelism assertion. Spawning two `codex exec` processes
+via `Bash` from two parallel slice-implementer-codex subagents bypasses that
+serialization and yields the expected ~1× ratio (true parallelism). The MCP
+tool remains the right transport for review/brainstorming threads where
+parallelism is not required; for unattended implementation dispatch we use
+`codex exec`.
 
 ## Input you receive
 
@@ -36,49 +50,66 @@ Each dispatch hands you a single message containing:
 
 ## What you do
 
-1. Compose a single implementation prompt for Codex. Include the slice section
+1. **Verify the worktree base before doing anything else.** Run
+   `git -C <worktree> rev-parse HEAD` and confirm it matches the
+   `slice_start_sha` you were given. If they differ, halt immediately with
+   `"status": "BLOCKED"` and a concern listing both SHAs. Proceeding from a
+   stale base will produce a giant diff (rebuilds prior slices from scratch)
+   and corrupt the integration branch when cherry-picked. This check catches
+   the orchestrator-side bug where `slice_start_sha` was captured before later
+   slices shipped.
+2. Compose a single implementation prompt for Codex. Include the slice section
    text verbatim, the worktree path, the `slice_start_sha`, the validation
    coverage, the verification commands, and the commit conventions. Tell Codex
    to leave all changes committed inside the worktree before returning.
-2. Invoke `mcp__plugin_codex-paired-superpowers_codex__codex` with the locked
-   parameters listed below. **Use a fresh thread.** Call `codex`, never
-   `codex-reply`. Do not reuse the persistent feature-review thread — that
-   thread is owned by Phase A / C / E review loops and must stay clean.
-3. Wait for Codex to return. If Codex reports it is finished and the worktree
-   has the expected commits, emit the final-message JSON block with
+3. Invoke `codex exec` via the `Bash` tool with the locked parameters listed
+   below. Each invocation gets a fresh process — there is no persistent thread
+   to reuse.
+4. Wait for the `codex exec` process to exit. **Sanity-check the diff size**
+   before reporting `DONE`: run
+   `git -C <worktree> diff --shortstat <slice_start_sha>..HEAD` and inspect
+   line/file counts. If the diff exceeds 2000 lines or 10 files for a slice
+   whose plan section doesn't justify it (most slices touch 2-4 files), halt
+   with `"status": "NEEDS_CONTEXT"` and a concern flagging suspicious diff
+   size. Better to surface a stale-base bug here than let the orchestrator
+   cherry-pick 8000 lines of accidental rework.
+5. If the `codex exec` process exits zero, the worktree base check passed, and
+   the diff size is reasonable, emit the final-message JSON block with
    `"status": "DONE"`. If Codex reports it is blocked on missing context or a
    contradictory spec, emit `"status": "BLOCKED"` or `"status": "NEEDS_CONTEXT"`
    with concerns describing what is missing. Do not retry from this subagent —
    the orchestrator owns fallback decisions.
-4. Do not run `git`, `Edit`, `Write`, or shell-out commands to author code or
+6. Do not run `git`, `Edit`, `Write`, or shell-out commands to author code or
    commits yourself. Codex inside the worktree owns implementation. Your `Read`
-   and `Bash` tools exist only for sanity-checking inputs (for example reading
-   the plan file or verifying the worktree path exists) before dispatch.
+   and `Bash` tools exist for the verification steps above and for assembling
+   and invoking `codex exec`.
 
-## Locked Codex MCP call shape
+## Locked `codex exec` invocation
 
-```json
-{
-  "tool": "mcp__plugin_codex-paired-superpowers_codex__codex",
-  "arguments": {
-    "prompt": "<implementation prompt assembled from the input above>",
-    "sandbox": "workspace-write",
-    "approval-policy": "never",
-    "cwd": "<worktree absolute path>",
-    "model": "gpt-5.5",
-    "config": {
-      "model_reasoning_effort": "high"
-    }
-  }
-}
+```bash
+codex exec \
+  --skip-git-repo-check \
+  -s workspace-write \
+  -C <worktree-absolute-path> \
+  -m gpt-5.5 \
+  -c model_reasoning_effort=high \
+  "<implementation prompt assembled from the input above>"
 ```
 
-Every parameter above is mandatory. `sandbox: workspace-write` and
-`approval-policy: never` keep Codex unattended inside the worktree. `cwd` must
-be the worktree path you were given, not the integration checkout. `model` is
-pinned to `gpt-5.5`. Reasoning effort is pinned to `high`.
+Every flag above is mandatory:
 
-Do not pass any `thread_id`. A fresh thread is required for every dispatch.
+- `--skip-git-repo-check` — the worktree is a valid git repo but Codex's git
+  detection can be flaky on worktree HEAD; skip the check.
+- `-s workspace-write` — sandbox write scoped to the cwd. Allows commits and
+  file edits inside the worktree without approval prompts.
+- `-C <worktree>` — `cd` into the worktree before executing. Must be the
+  worktree path you were given, not the integration checkout.
+- `-m gpt-5.5` — pinned model.
+- `-c model_reasoning_effort=high` — pinned reasoning effort.
+
+Do not pass `--dangerously-bypass-approvals-and-sandbox`. The `-s
+workspace-write` sandbox is sufficient for unattended slice implementation and
+keeps Codex from escaping the worktree.
 
 ## Commit Conventions
 
@@ -119,7 +150,8 @@ End your final message with a fenced JSON block in this shape:
 
 Allowed `status` values:
 
-- `DONE` — Codex finished and the worktree contains conforming commits.
+- `DONE` — `codex exec` exited zero and the worktree contains conforming
+  commits.
 - `BLOCKED` — the slice cannot be implemented as written; concerns describe
   why (for example "slice references a function the plan never specified").
 - `NEEDS_CONTEXT` — the slice is implementable but requires information not
