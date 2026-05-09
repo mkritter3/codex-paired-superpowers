@@ -170,11 +170,23 @@ npm test                              # all bridge tests, ~1s
 Spec: `docs/specs/2026-05-07-codex-paired-superpowers-design.md`
 Plan: `docs/plans/2026-05-07-codex-paired-superpowers.md`
 
+## Phase E live verification (v0.6.0+)
+
+Autopilot adds a fifth phase between `docs-update` and `slice-shipped`: **Phase E** launches the actual app via per-project `.codex-paired/project.json` config, drives Codex-generated user-visible scenarios through Claude Code's native `/computer-use` (macOS only), captures evidence (screenshots + bounded logs) per scenario, runs a same-SHA flake retry before fix-loop entry, and reruns ALL slice scenarios after any fix-subagent commit.
+
+Full spec: [`docs/specs/2026-05-08-v0.6.0-live-verification.md`](docs/specs/2026-05-08-v0.6.0-live-verification.md).
+
+Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live-verification-fixture/) — a tiny Node web app with an intentional Save Display Name bug. When autopilot runs against this fixture with `/computer-use`, Phase E catches the bug, drives the fix-subagent, reruns all scenarios, and ships only after evidence double-SHIP.
+
 ## Status
 
-v0.4.0 — validation rubric. Autopilot now enforces structured per-slice validation coverage at Phase A and verifies it at Phase C.
+v0.6.0 — live verification (Phase E).
 
 ### Changelog
+
+- **v0.6.0** — live verification (Phase E). Autopilot adds a fifth phase between docs-update and slice-shipped: Phase E launches the actual app via per-project `.codex-paired/project.json` config, drives Codex-generated user-visible scenarios through Claude Code's native `/computer-use` (macOS only), captures evidence (screenshots + bounded logs) per scenario, runs same-SHA flake retry before fix-loop entry, and reruns ALL slice scenarios after any fix-subagent commit (no opinion-based coupling). Safety gate prevents surprise screen takeover (default `confirm_each_phase_e`; opt-in `scheduled_window`). New 13-key `live.*` validation rubric parsed by `live-validation-parse` CLI. Skip path via `live-verification: skip - <reason>` in plan slice frontmatter (validated by `parse-skip-frontmatter`). Spec hardened across 2 Codex review rounds; plan hardened across 4 rounds. Fixture proof at `tests/smoke/live-verification-fixture/`.
+
+  v0.5.x was reserved for an e2e smoke milestone that became this v0.6.0 release; no v0.5.x exists.
 
 - **v0.4.1** — parser-as-code + sidecar relocation. Validation-coverage parser extracted to `lib/codex-bridge/validation-coverage.js` with full defect taxonomy + 16 unit tests + 5 CLI tests. Three-way CLI exit codes (0=success, 2=parser defect, 1=infrastructure failure). Sidecars relocated to `<repo-root>/.superpowers-codex-paired/<relative-spec-path>.json` with auto-discovery via `git rev-parse`; legacy `<spec>.codex.json` falls back outside repos and emits one-time deprecation warning when stale. Migration script with two-phase state machine (preflight halts on ambiguity; Phase 2 executes only if clean) + 5 fixture-based shell tests. Spec hardened across 4 Codex review rounds; plan across 5.
 - **v0.4.0** — validation rubric. Adds `lib/codex-bridge/prompts/validation-rubric.md` enforcing structured per-slice validation coverage. Phase A enumerates Tier-1 (10 subcategories) + Tier-2 (3 triggers) + optional Tier-3 (residual-risk for critical-tier slices) with evidence-backed N/A required. Phase C verifies Phase A's locked commitments via 4 keyed `rubric.*` bullets. Plan slices declare `Validation: light|standard|critical`. Loop's serialize() preserves SHIP critique for audit trail. Sidecar gains structured `validation_coverage` per phase. Hook fix: PostToolUse exits 2 (not 1) so stderr surfaces as system reminder; hooks.json schema corrected; stdin filter for git-commit-only. Backfill: 7 edge-case unit tests (malformed JSON in sidecar/anchor, regression guards) + autopilot structural smoke (re-runnable). Rubric hardened across 4 Codex review rounds.

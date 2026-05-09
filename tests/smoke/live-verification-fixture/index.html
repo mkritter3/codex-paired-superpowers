@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Verification Fixture</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 1.5rem; }
+    label { display: block; margin-bottom: 8px; font-weight: 600; }
+    input[type="text"] { width: 100%; padding: 8px; font-size: 1rem; box-sizing: border-box; }
+    button { margin-top: 8px; padding: 8px 16px; font-size: 1rem; cursor: pointer; }
+    #current-name { font-style: italic; color: #555; min-height: 1.2em; }
+    #saves-list { list-style: none; padding: 0; }
+    #saves-list li { padding: 4px 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+    .section { margin-top: 32px; }
+    .error { color: red; font-size: 0.9rem; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<h1>Live Verification Fixture</h1>
+
+<div class="section">
+  <label for="display-name-input">Display Name</label>
+  <input id="display-name-input" type="text" placeholder="Enter display name" />
+  <button id="save-btn">Save Display Name</button>
+  <div class="error" id="save-error" role="alert"></div>
+</div>
+
+<div class="section">
+  <p>Current saved name: <span id="current-name">loading…</span></p>
+</div>
+
+<div class="section">
+  <h2>Recent Saves</h2>
+  <ul id="saves-list"></ul>
+</div>
+
+<script>
+  function clearList(el) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function appendListItem(listEl, text) {
+    const li = document.createElement('li');
+    li.textContent = text;
+    listEl.appendChild(li);
+  }
+
+  async function loadState() {
+    const list = document.getElementById('saves-list');
+    const nameEl = document.getElementById('current-name');
+
+    // Load recent saves
+    try {
+      const res = await fetch('/saves');
+      if (!res.ok) throw new Error('fetch /saves failed: ' + res.status);
+      const data = await res.json();
+      clearList(list);
+      if (data.saves && data.saves.length > 0) {
+        const recent = [...data.saves].reverse().slice(0, 10);
+        for (const s of recent) {
+          appendListItem(list, s.timestamp + ': ' + s.value);
+        }
+      } else {
+        appendListItem(list, '(none)');
+      }
+    } catch (err) {
+      clearList(list);
+      appendListItem(list, 'Error loading saves');
+    }
+
+    // Load current saved display name
+    // BUG manifestation: server writes to 'name' not 'displayName', so this
+    // field remains empty after save — the label will not update.
+    try {
+      const res = await fetch('/display-name');
+      if (res.ok) {
+        const data = await res.json();
+        nameEl.textContent = data.displayName || '(not set)';
+      } else {
+        nameEl.textContent = '(not set)';
+      }
+    } catch {
+      nameEl.textContent = '(not set)';
+    }
+  }
+
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    const displayName = document.getElementById('display-name-input').value.trim();
+    const errorEl = document.getElementById('save-error');
+    errorEl.textContent = '';
+
+    if (!displayName) {
+      errorEl.textContent = 'Please enter a display name.';
+      return;
+    }
+
+    try {
+      const res = await fetch('/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errorEl.textContent = data.error || 'Save failed';
+        return;
+      }
+      // Reload to reflect the saved state (will show the bug: name not updated)
+      await loadState();
+    } catch (err) {
+      errorEl.textContent = 'Network error: ' + err.message;
+    }
+  });
+
+  loadState();
+</script>
+</body>
+</html>

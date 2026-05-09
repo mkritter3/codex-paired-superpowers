@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "app": {
+    "name": "Live Verification Fixture",
+    "description": "Tiny web app with intentional Save Display Name bug, used to prove Phase E catches user-visible bugs.",
+    "type": "web"
+  },
+  "live_verification": {
+    "default": "run",
+    "takeover": { "mode": "confirm_each_phase_e", "scheduled_windows": [] },
+    "launch": {
+      "command": "node server.js",
+      "cwd": ".",
+      "env": { "PORT": "34567" },
+      "timeout_ms": 60000,
+      "shutdown": { "signal": "SIGTERM", "grace_ms": 5000 }
+    },
+    "ready": {
+      "strategy": "http",
+      "url": "http://127.0.0.1:34567/healthz",
+      "expected_status": 200,
+      "timeout_ms": 60000,
+      "poll_interval_ms": 500
+    },
+    "setup": {
+      "reset_command": "node scripts/reset-store.js",
+      "seed_command": null,
+      "login_profiles": {
+        "test_user": {
+          "username": "test@example.com",
+          "password_env": "SMOKE_TEST_PASSWORD",
+          "login_route": "/login"
+        }
+      },
+      "setup_timeout_ms": 30000
+    },
+    "logs": {
+      "paths": [],
+      "include_process_output": true,
+      "max_bytes_per_source": 262144,
+      "max_excerpt_bytes_per_scenario": 32768,
+      "error_patterns": ["ERROR: missing field", "ERROR", "Unhandled", "TypeError", "500"]
+    },
+    "computer_use": {
+      "required": true,
+      "start_url": "http://127.0.0.1:34567",
+      "viewport": { "width": 1280, "height": 800 },
+      "scenario_timeout_ms": 60000,
+      "max_action_retries": 2
+    },
+    "cleanup": { "on_success": "kill", "on_halt": "kill", "shutdown_command": null },
+    "evidence": {
+      "ui_globs": ["*.html", "*.js"],
+      "screenshot_format": "png",
+      "preserve_failure_evidence": true,
+      "prune_pass_evidence_on_ship": true
+    }
+  }
+}
