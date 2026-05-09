@@ -93,7 +93,7 @@ Run a double-SHIP'd implementation plan to completion unattended. The autopilot 
 - The spec has a sidecar with a `codex_session` threadId.
 
 ### Provenance hook
-While autopilot is running, a PostToolUse hook on `git commit` checks the Commit Conventions: subject must match `(feat|test|fix|docs|refactor|chore)(slice:N):` and include `Co-Authored-By: Claude`. The hook fires AFTER the commit (PostToolUse can't prevent it) — non-conforming commits land but the hook exits non-zero, signaling the autopilot to halt with `external-commit-detected`. The user can then `git reset` to remove the offending commit. The hook is silent when autopilot isn't running.
+While autopilot is running, a PostToolUse hook on `git commit` checks the Commit Conventions. As of v0.7.0 the check is subject-only: subject must match `(feat|test|fix|docs|refactor|chore)(slice:N):` where N matches `autopilot.current_slice`. The previously-required `Co-Authored-By: Claude` trailer is no longer required — commits with or without it pass. The hook fires AFTER the commit (PostToolUse can't prevent it) — non-conforming commits land but the hook exits non-zero, signaling the autopilot to halt with `external-commit-detected`. The user can then `git reset` to remove the offending commit. The hook is silent when autopilot isn't running.
 
 ### Active anchor file
 `<repo>/.codex-paired/active.json` (auto-gitignored) tells the hook which sidecar to consult. Created on autopilot start, removed on halt/completion.
@@ -109,7 +109,13 @@ codex-paired-superpowers/
 │   ├── verdict.js                     # parse <<<VERDICT>>>...<<<END>>> blocks
 │   ├── loop.js                        # 7-round Claude<->Codex orchestration
 │   ├── cli.js                         # subcommand dispatcher
+│   ├── worktree.js                    # v0.7.0: worktree primitives + symlink bootstrap
+│   ├── reconciler.js                  # v0.7.0: git state as authoritative truth
+│   ├── worktree-integrate.js          # v0.7.0: ordered cherry-pick + patch-id resume
 │   └── prompts/                       # L11 rubric + verdict format + pre-SHIP checklist
+├── agents/                            # v0.7.0: plugin subagent definitions
+│   ├── slice-implementer-codex.md     # Codex MCP dispatch in fresh thread
+│   └── slice-implementer-sonnet.md    # direct Sonnet implementation
 ├── hooks/                             # provenance hook (PostToolUse on git commit)
 │   ├── hooks.json
 │   └── check-commit-provenance.sh
@@ -180,9 +186,118 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.6.0 — live verification (Phase E).
+v0.7.0 — implementer routing.
 
 ### Changelog
+
+- **v0.7.0** — implementer routing. Phase B becomes a routing dispatch instead
+  of a hard-coded Sonnet subagent path. Default implementer is Codex; Sonnet is
+  the fallback. Halts with `implementer-unavailable` only when both fail.
+  Implementation runs as Claude Code subagents shipped with the plugin
+  (`agents/slice-implementer-codex.md`, `agents/slice-implementer-sonnet.md`).
+  Consecutive slices with non-overlapping `**Files:**` sets dispatch
+  concurrently, each in its own bootstrapped git worktree at
+  `<repo>/.git-worktrees/slice-<N>`. Mixed Codex/Sonnet parallel batches are
+  allowed. Integration is via ordered cherry-pick from each slice branch onto
+  the integration branch, with `git patch-id`-based resume detection.
+  Provenance hook is now subject-only — the `Co-Authored-By: Claude` trailer
+  is no longer required (existing trailer-bearing commits still pass).
+  Architecture pivot: routing decisions live in `skills/autopilot/SKILL.md`
+  prose; mechanical state (worktrees, sidecar, reconciler, integration) lives
+  in `lib/codex-bridge/` Node modules. Reconciler is the source of truth for
+  `head_sha`, `commit_count`, and non-conforming commit detection — subagent
+  JSON status is advisory.
+
+  **Plan frontmatter directives.** Slices may declare:
+
+  - `**Implementer:** codex` — preferred Codex.
+  - `**Implementer:** sonnet` — preferred Sonnet.
+  - (no directive) — defaults to Codex.
+
+  Allowed values are exact lower-case `codex` or `sonnet`. Literal `auto`,
+  empty value, mixed case, or any other value halts with
+  `implementer-directive-malformed` before any worktree setup.
+
+  Parallel-candidate slices must declare a `**Files:**` block:
+
+  ```markdown
+  **Files:**
+  - lib/codex-bridge/foo.js
+  - tests/codex-bridge/foo.test.js
+  ```
+
+  Paths must be exact repo-relative file paths — no globs, no directories with
+  trailing `/`, no absolute paths, no traversal segments, no backslashes, no
+  duplicates, no inline form. Any malformed Files block halts with
+  `parallel-files-malformed`; missing on a parallel candidate halts with
+  `parallel-files-missing`. Overlapping Files sets across consecutive
+  candidates force serial execution (no halt).
+
+  **Parallel dispatch.** When the candidate window passes the checklist and
+  Files sets do not overlap, the orchestrator issues all subagent dispatches
+  in a single assistant turn using Claude's parallel-tool-call mechanism.
+  Serial `await` across separate turns is non-conforming. The empirical
+  parallel smoke at `tests/smoke/implementer-routing-parallel.sh` asserts
+  total wall-clock under 1.5x the single-slice baseline; failure indicates
+  serialized dispatch.
+
+  **Commit-convention change.** The required `Co-Authored-By: Claude` trailer
+  is dropped. Subjects must still match
+  `^(feat|test|fix|docs|refactor|chore)\(slice:N\): <description>` with the
+  slice number matching `autopilot.current_slice`. The provenance hook now
+  validates subject only; commit body is ignored.
+
+  **Upgrade note for v0.6.0 projects.** Existing plans without
+  `**Implementer:**` directives or `**Files:**` blocks continue to work —
+  they default to Codex and run serially. No plan changes are required unless
+  you want parallel dispatch. Existing trailer-bearing commits remain valid;
+  the trailer is now optional, not forbidden.
+
+  Spec hardened across 2 Codex review rounds; plan hardened across 2 rounds.
+  Empirical parallel smoke gated behind `SMOKE_REQUIRES_CODEX=1` (real Codex
+  MCP required; CI skips). Structural smoke at
+  `tests/smoke/phase-b-routing-structural.sh` covers all halt reasons +
+  routing paths with mocked outcomes.
+
+  **v0.7.0 halt reasons** (each halts the autopilot with the named reason
+  surfaced to the user):
+
+  - `implementer-directive-malformed` — `**Implementer:**` value is `auto`,
+    empty, mixed-case, or unknown.
+  - `implementer-unavailable` — preferred and fallback implementers both
+    failed (5 fallback triggers: MCP error, dispatch error, 10-minute
+    timeout, zero commits, non-conforming commits, missing/malformed JSON).
+  - `parallel-files-missing` — a parallel-candidate slice has no
+    `**Files:**` block.
+  - `parallel-files-malformed` — `**Files:**` block has invalid contents
+    (inline form, glob, directory, absolute path, traversal, backslash,
+    duplicate, or empty bullet list).
+  - `worktree-path-conflict` — `<repo>/.git-worktrees/slice-<N>` already
+    exists and is not a clean worktree for the same slice.
+  - `worktree-gitignore-missing` — `.git-worktrees/` is not in `.gitignore`.
+  - `worktree-create-failed` — `git worktree add` exited non-zero.
+  - `worktree-bootstrap-failed` — required dependency symlink source missing
+    OR sidecar `phases.implement.bootstrap.completed_at` marker missing.
+  - `worktree-bootstrap-stale` — `verifyBootstrap` symlink reality check
+    failed (missing, not-a-symlink, or wrong-target).
+  - `worktree-reset-failed` — `git reset --hard <slice_start_sha>` failed
+    during fallback recovery.
+  - `worktree-cleanup-failed` — `git worktree remove` failed after
+    successful integration.
+  - `worktree-branch-cleanup-failed` — `git branch -D` failed after commits
+    reachable from integration branch.
+  - `worktree-merge-conflict` — ordered cherry-pick conflicted; `git
+    cherry-pick --abort` ran; branch/worktree left in place.
+  - `worktree-resume-ambiguous` — patch-id resume detected partial or
+    order-broken integration.
+  - `worktree-integration-empty` — source range empty after a supposedly
+    shipped dispatch (broken upstream invariant).
+  - `codex-blocked` — Codex implementation subagent reported `BLOCKED`.
+  - `codex-needs-context` — Codex implementation subagent reported
+    `NEEDS_CONTEXT`.
+  - `subagent-blocked` — Sonnet implementation subagent reported `BLOCKED`.
+  - `subagent-needs-context` — Sonnet implementation subagent reported
+    `NEEDS_CONTEXT`.
 
 - **v0.6.0** — live verification (Phase E). Autopilot adds a fifth phase between docs-update and slice-shipped: Phase E launches the actual app via per-project `.codex-paired/project.json` config, drives Codex-generated user-visible scenarios through Claude Code's native `/computer-use` (macOS only), captures evidence (screenshots + bounded logs) per scenario, runs same-SHA flake retry before fix-loop entry, and reruns ALL slice scenarios after any fix-subagent commit (no opinion-based coupling). Safety gate prevents surprise screen takeover (default `confirm_each_phase_e`; opt-in `scheduled_window`). New 13-key `live.*` validation rubric parsed by `live-validation-parse` CLI. Skip path via `live-verification: skip - <reason>` in plan slice frontmatter (validated by `parse-skip-frontmatter`). Spec hardened across 2 Codex review rounds; plan hardened across 4 rounds. Fixture proof at `tests/smoke/live-verification-fixture/`.
 

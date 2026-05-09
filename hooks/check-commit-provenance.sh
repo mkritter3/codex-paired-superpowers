@@ -4,12 +4,12 @@
 # commit was non-conforming so autopilot can halt and the user can decide
 # (e.g., `git reset`).
 # Reads <repo-root>/.codex-paired/active.json. If autopilot is running,
-# verifies the most recent commit conforms to Commit Conventions §:
+# verifies the most recent commit subject conforms to Commit Conventions §:
 #   subject:  (feat|test|fix|docs|refactor|chore)\(slice:<current_slice>\):
-#   trailer:  Co-Authored-By: Claude
-# Both must be present. If either is missing, exit 2 (PostToolUse blocking
-# error; Claude Code surfaces stderr as a system reminder so the autopilot
-# can see and halt). Other nonzero codes are logged but not surfaced.
+# Subject only. Trailers are no longer checked (v0.7.0 spec §16). If the
+# subject is non-conforming, exit 2 (PostToolUse blocking error; Claude Code
+# surfaces stderr as a system reminder so the autopilot can see and halt).
+# Other nonzero codes are logged but not surfaced.
 # If no anchor exists (autopilot not running), exit 0 (no-op).
 set -euo pipefail
 
@@ -73,24 +73,16 @@ if [ -z "$CURRENT_SLICE" ]; then
   exit 0  # autopilot block has no current_slice → not actually running
 fi
 
-# Read the most recent commit.
+# Read the most recent commit subject.
 cd "$REPO_ROOT"
 SUBJECT=$(git log -1 --format=%s)
-BODY=$(git log -1 --format=%B)
 
-# Check subject pattern.
+# Check subject pattern (subject-only validation per spec §16).
 SUBJECT_RX="^(feat|test|fix|docs|refactor|chore)\\(slice:${CURRENT_SLICE}\\):"
 if ! echo "$SUBJECT" | grep -Eq "$SUBJECT_RX"; then
   echo "[provenance hook] NON-CONFORMING: most recent commit subject doesn't match expected slice:$CURRENT_SLICE prefix (commit already landed; signaling autopilot to halt)" >&2
   echo "  subject: $SUBJECT" >&2
   echo "  expected pattern: $SUBJECT_RX" >&2
-  exit 2
-fi
-
-# Check Co-Authored-By trailer.
-if ! echo "$BODY" | grep -Eq '^Co-Authored-By: Claude'; then
-  echo "[provenance hook] NON-CONFORMING: commit missing 'Co-Authored-By: Claude' trailer (commit already landed; signaling autopilot to halt)" >&2
-  echo "  subject: $SUBJECT" >&2
   exit 2
 fi
 

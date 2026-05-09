@@ -70,7 +70,7 @@ run_case "anchor + non-conforming subject (wrong slice number): block" '
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ' 2
 
-run_case "anchor + missing trailer: block" '
+run_case "anchor + missing trailer (subject-only validation): allow" '
   mkdir -p .codex-paired docs/specs
   echo "# s" > docs/specs/spec.md
   node '"$PLUGIN_ROOT"'/lib/codex-bridge/cli.js sidecar-init --specPath "$PWD/docs/specs/spec.md" --feature t --threadId tid-1 >/dev/null
@@ -78,7 +78,7 @@ run_case "anchor + missing trailer: block" '
   node '"$PLUGIN_ROOT"'/lib/codex-bridge/cli.js anchor-write --repoRoot "$PWD" --specPath "$PWD/docs/specs/spec.md"
   echo "x" > a && git add a
   git commit -qm "feat(slice:3): no trailer here"
-' 2
+' 0
 
 run_case "anchor + arbitrary external subject: block" '
   mkdir -p .codex-paired docs/specs
