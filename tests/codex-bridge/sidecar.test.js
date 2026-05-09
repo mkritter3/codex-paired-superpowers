@@ -66,7 +66,7 @@ test('setSlice records slice review state', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-import { setPhase, setAutopilot, getAutopilot } from '../../lib/codex-bridge/sidecar.js';
+import { setPhase, setAutopilot, getAutopilot, setLiveVerification, getLiveVerification } from '../../lib/codex-bridge/sidecar.js';
 
 test('setPhase records nested phase state', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cps-'));
@@ -328,4 +328,67 @@ test('mkdtemp legacy back-compat: non-repo mkdtemp path uses legacy layout', () 
   const sc = loadSidecar(spec);
   assert.equal(sc.version, 1);
   rmSync(repo, { recursive: true, force: true });
+});
+
+// ─── Slice 6: setLiveVerification + getLiveVerification ───────────────────────
+
+test('setLiveVerification writes to nested live-verification phase block', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  setLiveVerification(spec, 'slice-6', 'shipped', false);
+  setLiveVerification(spec, 'slice-6', 'skipped', false);
+  setLiveVerification(spec, 'slice-6', 'scenario_generation', { round: 1 });
+  const sc = loadSidecar(spec);
+  assert.equal(sc.slice_reviews['slice-6'].phases['live-verification'].shipped, false);
+  assert.equal(sc.slice_reviews['slice-6'].phases['live-verification'].skipped, false);
+  assert.deepEqual(sc.slice_reviews['slice-6'].phases['live-verification'].scenario_generation, { round: 1 });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('getLiveVerification returns live-verification block when present', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-get-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  setLiveVerification(spec, 'slice-6', 'shipped', true);
+  setLiveVerification(spec, 'slice-6', 'evidence_dir', '.superpowers-codex-paired/evidence/slice-6');
+  const lv = getLiveVerification(spec, 'slice-6');
+  assert.ok(lv !== null, 'getLiveVerification should return the block, not null');
+  assert.equal(lv.shipped, true);
+  assert.equal(lv.evidence_dir, '.superpowers-codex-paired/evidence/slice-6');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('getLiveVerification returns null when slice absent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-null-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  assert.equal(getLiveVerification(spec, 'slice-99'), null);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('getLiveVerification returns null when live-verification phase absent (other phases exist)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-absent-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  setPhase(spec, 'slice-6', 'implement', { subagent_status: 'DONE' });
+  assert.equal(getLiveVerification(spec, 'slice-6'), null);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('setLiveVerification preserves sibling phases (lazy-init does not clobber)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-lv-sibling-'));
+  const spec = join(dir, 'spec.md');
+  writeFileSync(spec, '# spec');
+  initSidecar(spec, { feature: 'd', codexSession: 'u', model: 'gpt-5.5', reasoningEffort: 'high' });
+  setPhase(spec, 'slice-6', 'implement', { subagent_status: 'DONE', commits: ['abc'] });
+  setLiveVerification(spec, 'slice-6', 'shipped', false);
+  const sc = loadSidecar(spec);
+  assert.equal(sc.slice_reviews['slice-6'].phases.implement.subagent_status, 'DONE');
+  assert.equal(sc.slice_reviews['slice-6'].phases['live-verification'].shipped, false);
+  rmSync(dir, { recursive: true, force: true });
 });
