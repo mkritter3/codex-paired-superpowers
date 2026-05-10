@@ -517,6 +517,55 @@ For long-running slices: send a progress update every 5-10 minutes so the
 orchestrator has visibility (e.g., "Progress: 30% — finished test list").
 ```
 
+##### Mailbox cooperative checkpoints (v0.7.3.1, codex-transport only)
+
+For `transport: codex-background-bash` dispatches, the orchestrator additionally appends the following checkpoints block AFTER the shared protocol block. Sonnet-transport dispatches MUST NOT receive this block — the PostToolUse `mailbox-inject` hook delivers in-flight messages to Sonnet automatically, and adding ritual-polling instructions on top would just teach the agent to second-guess auto-delivery.
+
+```
+=== Mailbox checkpoints (codex transport) ===
+
+The orchestrator cannot mid-run-inject messages into codex sessions (codex is
+an opaque subprocess from Claude Code's perspective). Cooperative polling at
+named semantic checkpoints is the mechanism. Call:
+
+  node <plugin>/lib/codex-bridge/cli.js mailbox-read \
+    --for <your-slice-id> --actor <your-slice-id> --unread \
+    --repoRoot "$REPO_ROOT"
+
+at exactly these five points:
+
+  1. At the START of your work — after reading this prompt, before
+     implementation planning or any repo-mutating command. (The poll itself
+     is a command, but it's a read-only one; this checkpoint is about
+     surfacing inbox context before you commit to a plan.)
+  2. BEFORE running each test (before `npm test`, `pytest`, `cargo test`,
+     etc.).
+  3. BEFORE each `git commit`.
+  4. AFTER any command that takes longer than ~30 seconds (long build, long
+     test run, long network call).
+  5. BEFORE composing your final response JSON.
+
+Do NOT poll before every file edit. That trains ritual polling rather than
+thoughtful integration; the checkpoints above are the ones where new context
+is most likely to be load-bearing.
+
+If `mailbox-read` returns one or more messages, process them inline before
+continuing your current step (each message is a JSON object with `from`,
+`text`, `timestamp` — read them and decide whether they change your plan).
+Then, to acknowledge that you have consumed them, mark them read:
+
+  node <plugin>/lib/codex-bridge/cli.js mailbox-mark-read-batch \
+    --for <your-slice-id> --actor <your-slice-id> \
+    --message-ids "<csv>" \
+    --repoRoot "$REPO_ROOT"
+
+Read failures and mark-read failures are best-effort logging from your
+perspective — they do not block your work; the orchestrator's between-turn
+polling (Phase B.4.5) is the authoritative halt path for mailbox-corruption.
+```
+
+Architectural framing: pre-injection (Phase B.4 pre-injection flow) covers the START-of-run delivery for codex; checkpoints (this block) cover the rest of the run. Combined they bound the worst-case mid-run latency to the gap between two semantic checkpoints (typically seconds-to-minutes, not the whole codex runtime).
+
 The orchestrator reads in-flight inboxes between turns (Phase B.4.5).
 
 #### Phase B.4.5 — Between-turns inbox polling (v0.7.3)
