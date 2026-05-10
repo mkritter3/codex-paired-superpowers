@@ -1,7 +1,7 @@
 // Tests for v0.7.3 mailbox CLI subcommands.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -212,5 +212,253 @@ test('mailbox-mark-read unknown id exits 2 with mailbox-corrupt code (id not fou
   assert.equal(r.status, 2);
   const err = JSON.parse(r.stderr);
   assert.equal(err.defect, 'mailbox-corrupt');
+  cleanup(root);
+});
+
+// ── mailbox-mark-read-batch (v0.7.3.1 §4.5) ────────────────────────────────
+
+function seedMessages(root, recipient, count) {
+  const ids = [];
+  for (let i = 0; i < count; i++) {
+    const r = runCli([
+      'mailbox-write', '--to', recipient, '--from', 'orchestrator',
+      '--text', `m${i}`, '--repoRoot', root,
+    ]);
+    ids.push(JSON.parse(r.stdout).id);
+  }
+  return ids;
+}
+
+test('mailbox-mark-read-batch happy path marks all ids', () => {
+  const root = makeRepo();
+  const [id1, id2, id3] = seedMessages(root, 'slice-3', 3);
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', `${id1},${id2},${id3}`,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [id1, id2, id3], skipped: [] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch skips well-formed unknown ids', () => {
+  const root = makeRepo();
+  const [id1, id2] = seedMessages(root, 'slice-3', 2);
+  const fake = 'msg-2026-01-01T00-00-00-000Z-9999';
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', `${id1},${fake},${id2}`,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [id1, id2], skipped: [fake] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch all-unknown well-formed: exit 0, all in skipped', () => {
+  const root = makeRepo();
+  const fake1 = 'msg-2026-01-01T00-00-00-000Z-9998';
+  const fake2 = 'msg-2026-01-01T00-00-00-000Z-9999';
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', `${fake1},${fake2}`,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [], skipped: [fake1, fake2] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch permission denied when actor != for and != orchestrator', () => {
+  const root = makeRepo();
+  const [id1] = seedMessages(root, 'slice-5', 1);
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-5', '--actor', 'slice-3',
+    '--message-ids', id1,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  assert.equal(JSON.parse(r.stderr).defect, 'mailbox-permission-denied');
+  // No mutation
+  const readBack = runCli(['mailbox-read', '--for', 'slice-5', '--actor', 'orchestrator', '--repoRoot', root]);
+  const msgs = JSON.parse(readBack.stdout);
+  assert.equal(msgs[0].read_at, null);
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch orchestrator may mark any inbox', () => {
+  const root = makeRepo();
+  const [id1] = seedMessages(root, 'slice-3', 1);
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'orchestrator',
+    '--message-ids', id1,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [id1], skipped: [] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch missing --for exits 2 missing-arg', () => {
+  const root = makeRepo();
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--actor', 'slice-3',
+    '--message-ids', 'msg-2026-01-01T00-00-00-000Z-0001',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  assert.equal(JSON.parse(r.stderr).defect, 'missing-arg');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch missing --actor exits 2 missing-arg', () => {
+  const root = makeRepo();
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3',
+    '--message-ids', 'msg-2026-01-01T00-00-00-000Z-0001',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  assert.equal(JSON.parse(r.stderr).defect, 'missing-arg');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch missing --message-ids exits 2 missing-arg', () => {
+  const root = makeRepo();
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  assert.equal(JSON.parse(r.stderr).defect, 'missing-arg');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch present-but-empty --message-ids exits 2 invalid-message-ids', () => {
+  const root = makeRepo();
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', '',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  assert.equal(JSON.parse(r.stderr).defect, 'invalid-message-ids');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch trim-to-empty CSV parts → invalid-message-ids', () => {
+  const root = makeRepo();
+  const [id1] = seedMessages(root, 'slice-3', 1);
+  const inboxBefore = readFileSync(
+    join(root, '.codex-paired', 'mailboxes', 'slice-3.json'), 'utf8'
+  );
+  for (const csv of [`${id1},,msg-2026-01-01T00-00-00-000Z-9999`, `${id1}, ,msg-2026-01-01T00-00-00-000Z-9999`]) {
+    const r = runCli([
+      'mailbox-mark-read-batch',
+      '--for', 'slice-3', '--actor', 'slice-3',
+      '--message-ids', csv,
+      '--repoRoot', root,
+    ]);
+    assert.equal(r.status, 2, `csv=${JSON.stringify(csv)} expected exit 2`);
+    assert.equal(JSON.parse(r.stderr).defect, 'invalid-message-ids');
+  }
+  // No mutation: inbox unchanged
+  const inboxAfter = readFileSync(
+    join(root, '.codex-paired', 'mailboxes', 'slice-3.json'), 'utf8'
+  );
+  assert.equal(inboxAfter, inboxBefore, 'inbox must be unchanged when validation fails');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch malformed id rejected before any helper invocation', () => {
+  const root = makeRepo();
+  const [id1] = seedMessages(root, 'slice-3', 1);
+  const inboxBefore = readFileSync(
+    join(root, '.codex-paired', 'mailboxes', 'slice-3.json'), 'utf8'
+  );
+  for (const csv of [`${id1},not-an-id`, `msg-foo`, `msg-2026-9999`, `${id1},msg-bogus-0001`]) {
+    const r = runCli([
+      'mailbox-mark-read-batch',
+      '--for', 'slice-3', '--actor', 'slice-3',
+      '--message-ids', csv,
+      '--repoRoot', root,
+    ]);
+    assert.equal(r.status, 2, `csv=${JSON.stringify(csv)} expected exit 2`);
+    assert.equal(JSON.parse(r.stderr).defect, 'invalid-message-ids');
+  }
+  // Even though id1 was real, no inbox mutation on validation failure
+  const inboxAfter = readFileSync(
+    join(root, '.codex-paired', 'mailboxes', 'slice-3.json'), 'utf8'
+  );
+  assert.equal(inboxAfter, inboxBefore, 'inbox must be unchanged when any id fails validation');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch trims surrounding whitespace from each CSV part', () => {
+  const root = makeRepo();
+  const [id1, id2] = seedMessages(root, 'slice-3', 2);
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', ` ${id1} , ${id2} `,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [id1, id2], skipped: [] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch preserves duplicate+unknown ordering through CLI', () => {
+  const root = makeRepo();
+  const [id1, id2] = seedMessages(root, 'slice-3', 2);
+  const fake = 'msg-2026-01-01T00-00-00-000Z-9999';
+  // Input order: id2, fake, id2 (dup), id1 → expected marked: [id2, id1] (dedupe first occ), skipped: [fake]
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', `${id2},${fake},${id2},${id1}`,
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [id2, id1], skipped: [fake] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch defaults --repoRoot to cwd (back-compat)', () => {
+  const root = makeRepo();
+  const [id1] = seedMessages(root, 'slice-3', 1);
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', id1,
+  ], { cwd: root });
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: [id1], skipped: [] });
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch output shape: keys are exactly marked + skipped (string arrays)', () => {
+  const root = makeRepo();
+  const [id1] = seedMessages(root, 'slice-3', 1);
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'slice-3', '--actor', 'slice-3',
+    '--message-ids', id1,
+    '--repoRoot', root,
+  ]);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(out).sort(), ['marked', 'skipped']);
+  assert.ok(Array.isArray(out.marked) && out.marked.every(x => typeof x === 'string'));
+  assert.ok(Array.isArray(out.skipped) && out.skipped.every(x => typeof x === 'string'));
   cleanup(root);
 });
