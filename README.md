@@ -186,9 +186,78 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.7.2 — codex via orchestrator-level background Bash (LocalShell migration).
+v0.7.3 — mailbox + dependency graph + ready-set batching.
 
 ### Changelog
+
+- **v0.7.3** — Three coupled features unlock "as many parallel agents as the
+  dependency graph allows, without overlap":
+
+  **File-based mailbox** for orchestrator ↔ in-flight slice agents and
+  slice ↔ slice messaging during execution. Persistent JSON inboxes per
+  recipient at `<repo>/.codex-paired/mailboxes/<recipient>.json`. Atomic
+  via `proper-lockfile` (50-retry policy with jittered backoff +
+  stale-lock recovery). Per-recipient archive rotation when
+  `mailbox.max_bytes` exceeded; unread messages always carried forward
+  (all-unread overflow halts `mailbox-overflow-unread`). 3 CLI
+  subcommands: `mailbox-write`, `mailbox-read`, `mailbox-mark-read`.
+  `--actor` permissions enforce who can read/mark inboxes.
+
+  **`**DependsOn:**` directive** in plan frontmatter — explicit DAG
+  of slice dependencies. Block form, parsed by
+  `lib/codex-bridge/plan-parsers.js`. Cycle/unknown-slice/self-reference
+  validated at parse time + DAG construction.
+
+  **Dependency-graph batching** (`lib/codex-bridge/dependency-graph.js`)
+  replaces v0.7.1's consecutive-slice batching. Phase B.2 computes the
+  *ready-set* (pending slices whose every dep has shipped) and dispatches
+  the *deterministic first-fit non-overlap subset*. Non-consecutive
+  slices can now parallelize when both deps and Files allow.
+
+  **DAG digest persistence + revalidation.** SHA-256 digest stored in
+  sidecar `autopilot.dependency_graph` block; verified at every Phase B
+  turn / resume. Plan edits mid-run halt `plan-changed-during-autopilot`.
+
+  **Failure cascade.** On any slice's `failed-halted` outcome, the
+  autopilot run halts with `dependency-cascade-halt` listing transitive
+  descendants (BFS over reverse adjacency). User investigates; resume
+  re-validates DAG digest.
+
+  **NEW HALT REASONS:**
+  - `dep-block-malformed` — DependsOn block syntax invalid
+  - `dep-unknown-slice` — DependsOn references missing slice id
+  - `dep-self-reference` — Slice depends on itself
+  - `dep-cycle` — Cycle in dep graph (diagnostic includes cycle path)
+  - `plan-changed-during-autopilot` — DAG digest mismatch on resume
+  - `mailbox-corrupt` — Inbox JSON unparseable (corrupt file archived)
+  - `mailbox-overflow-unread` — All-unread overflow; user must intervene
+  - `mailbox-recipient-malformed` — Path-traversal guard in recipient name
+  - `mailbox-lock-timeout` — proper-lockfile retry budget exhausted
+  - `mailbox-permission-denied` — Actor cannot read/mark another inbox
+  - `dependency-cascade-halt` — Slice failed; descendants enumerated
+  - `slice-blocker-from-mailbox` — Unread `BLOCKER:` message in slice inbox
+
+  **First runtime npm dep.** `proper-lockfile@^4.1.2`. Distributes through
+  the v0.7.0 worktree-bootstrap symlink path (`node_modules` is one of the
+  default symlink candidates). Run `npm install` in the plugin dir on
+  first use after pull.
+
+  **Plan frontmatter:**
+
+  ```markdown
+  ## Slice 5: Some thing
+
+  **Implementer:** codex
+  **Domain:** backend
+  **DependsOn:**
+  - slice-3
+  - slice-4
+  **Files:**
+  - lib/foo.js
+  ```
+
+  Existing v0.7.2 plans without `**DependsOn:**` directive default to
+  no deps (empty array). Backward-compatible.
 
 - **v0.7.2** — LocalShell migration for codex dispatch. Removes the
   10-minute synchronous Bash timeout cap that was killing legitimate
