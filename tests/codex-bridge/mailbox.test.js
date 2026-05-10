@@ -10,6 +10,7 @@ import {
   readMailbox,
   readUnreadMessages,
   markAsRead,
+  markManyAsRead,
   archiveAndReset,
   cleanupArchives,
   inboxSizeBytes,
@@ -292,5 +293,190 @@ test('cleanupArchives returns 0 deleted when archive dir missing', async () => {
   const root = makeRepo();
   const result = await cleanupArchives(root);
   assert.equal(result.deleted, 0);
+  cleanup(root);
+});
+
+// ── markManyAsRead (v0.7.3.1 §4.5) ─────────────────────────────────────────
+
+test('markManyAsRead marks multiple unread messages atomically', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'b' });
+  const { id: id3 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'c' });
+  const result = await markManyAsRead(root, 'slice-1', [id1, id2, id3]);
+  assert.deepEqual(result, { marked: [id1, id2, id3], skipped: [] });
+  const msgs = await readMailbox(root, 'slice-1');
+  for (const m of msgs) {
+    assert.ok(m.read_at !== null && typeof m.read_at === 'string', `${m.id} should have ISO read_at`);
+  }
+  cleanup(root);
+});
+
+test('markManyAsRead skips unknown ids, marks known ids', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'b' });
+  const result = await markManyAsRead(root, 'slice-1', [id1, 'msg-fake-0001', id2]);
+  assert.deepEqual(result, { marked: [id1, id2], skipped: ['msg-fake-0001'] });
+  cleanup(root);
+});
+
+test('markManyAsRead preserves prior read_at for already-read ids (idempotent re-delivery)', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'b' });
+  await markAsRead(root, 'slice-1', id1);
+  const before = await readMailbox(root, 'slice-1');
+  const id1ReadAtBefore = before.find(m => m.id === id1).read_at;
+  assert.ok(id1ReadAtBefore !== null);
+
+  // Sleep 5ms so any erroneous overwrite would produce a different timestamp
+  await new Promise(r => setTimeout(r, 5));
+
+  const result = await markManyAsRead(root, 'slice-1', [id1, id2]);
+  assert.deepEqual(result, { marked: [id1, id2], skipped: [] });
+
+  const after = await readMailbox(root, 'slice-1');
+  const id1ReadAtAfter = after.find(m => m.id === id1).read_at;
+  const id2ReadAtAfter = after.find(m => m.id === id2).read_at;
+  assert.equal(id1ReadAtAfter, id1ReadAtBefore, 'id1 read_at must not be overwritten');
+  assert.ok(id2ReadAtAfter !== null, 'id2 must be newly marked');
+  cleanup(root);
+});
+
+test('markManyAsRead dedupes by first occurrence', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'b' });
+  const result = await markManyAsRead(root, 'slice-1', [
+    id1, id1, 'msg-fake-0001', 'msg-fake-0001', id2,
+  ]);
+  assert.deepEqual(result, { marked: [id1, id2], skipped: ['msg-fake-0001'] });
+  cleanup(root);
+});
+
+test('markManyAsRead preserves input order in result arrays', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'b' });
+  const { id: id3 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'c' });
+  // Input order is id3, fake, id1 — id2 not requested
+  const result = await markManyAsRead(root, 'slice-1', [id3, 'msg-fake-0001', id1]);
+  assert.deepEqual(result, { marked: [id3, id1], skipped: ['msg-fake-0001'] });
+  // id2 untouched
+  const after = await readMailbox(root, 'slice-1');
+  assert.equal(after.find(m => m.id === id2).read_at, null);
+  cleanup(root);
+});
+
+test('markManyAsRead with empty list is a no-op (no file mutation)', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const path = inboxPath(root, 'slice-1');
+  const contentBefore = readFileSync(path, 'utf8');
+  const result = await markManyAsRead(root, 'slice-1', []);
+  assert.deepEqual(result, { marked: [], skipped: [] });
+  const contentAfter = readFileSync(path, 'utf8');
+  assert.equal(contentAfter, contentBefore, 'inbox content must be byte-identical');
+  cleanup(root);
+});
+
+test('markManyAsRead with empty list does not create missing inbox file', async () => {
+  const root = makeRepo();
+  const path = inboxPath(root, 'slice-1');
+  assert.equal(existsSync(path), false);
+  const result = await markManyAsRead(root, 'slice-1', []);
+  assert.deepEqual(result, { marked: [], skipped: [] });
+  assert.equal(existsSync(path), false, 'empty-list call must not create inbox file');
+  cleanup(root);
+});
+
+test('markManyAsRead on missing inbox with non-empty ids: all skipped, file created as []', async () => {
+  const root = makeRepo();
+  const path = inboxPath(root, 'slice-1');
+  assert.equal(existsSync(path), false);
+  const result = await markManyAsRead(root, 'slice-1', ['msg-fake-0001', 'msg-fake-0002']);
+  assert.deepEqual(result, { marked: [], skipped: ['msg-fake-0001', 'msg-fake-0002'] });
+  // Existing withInboxLock behavior creates the file to support proper-lockfile.
+  assert.equal(existsSync(path), true);
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), []);
+  cleanup(root);
+});
+
+test('markManyAsRead on corrupt inbox throws mailbox-corrupt and does not rewrite as valid JSON', async () => {
+  const root = makeRepo();
+  const path = inboxPath(root, 'slice-1');
+  mkdirSync(join(root, '.codex-paired', 'mailboxes'), { recursive: true });
+  writeFileSync(path, '{not json');
+  await assert.rejects(
+    () => markManyAsRead(root, 'slice-1', ['msg-fake-0001']),
+    err => err instanceof MailboxError && err.code === 'mailbox-corrupt'
+  );
+  // No silent rewrite: either the file was archived (best-effort) or it remains corrupt;
+  // it must NOT have been replaced with valid JSON.
+  if (existsSync(path)) {
+    const remaining = readFileSync(path, 'utf8');
+    let parsed = null;
+    try { parsed = JSON.parse(remaining); } catch { /* still corrupt — ok */ }
+    assert.equal(parsed, null, 'corrupt inbox must not be silently rewritten as valid JSON');
+  }
+  cleanup(root);
+});
+
+test('markManyAsRead validates sliceId', async () => {
+  const root = makeRepo();
+  for (const bad of ['../etc/passwd', 'orchestrator/x', '', null, undefined, 42, {}]) {
+    await assert.rejects(
+      () => markManyAsRead(root, bad, ['msg-fake-0001']),
+      err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed',
+      `expected rejection for sliceId=${JSON.stringify(bad)}`
+    );
+  }
+  cleanup(root);
+});
+
+test('markManyAsRead validates messageIds shape (array of non-empty strings only)', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  // Non-array inputs
+  for (const bad of [null, undefined, 'msg-x', 42, {}]) {
+    await assert.rejects(
+      () => markManyAsRead(root, 'slice-1', bad),
+      err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed',
+      `expected rejection for messageIds=${JSON.stringify(bad)}`
+    );
+  }
+  // Array containing non-string or empty-string element
+  for (const bad of [['msg-x', null], ['msg-x', undefined], ['msg-x', 42], ['msg-x', ''], ['msg-x', {}]]) {
+    await assert.rejects(
+      () => markManyAsRead(root, 'slice-1', bad),
+      err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed',
+      `expected rejection for messageIds=${JSON.stringify(bad)}`
+    );
+  }
+  cleanup(root);
+});
+
+test('markManyAsRead concurrent with writeToMailbox: no deadlock, no data loss', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'b' });
+  const { id: id3 } = await writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'c' });
+
+  const [batchResult] = await Promise.all([
+    markManyAsRead(root, 'slice-1', [id1, id2, id3]),
+    writeToMailbox(root, 'slice-1', { from: 'orchestrator', text: 'new' }),
+  ]);
+  assert.deepEqual(batchResult, { marked: [id1, id2, id3], skipped: [] });
+
+  const after = await readMailbox(root, 'slice-1');
+  assert.equal(after.length, 4, 'should retain 3 originals + 1 new message');
+  for (const id of [id1, id2, id3]) {
+    const m = after.find(x => x.id === id);
+    assert.ok(m && m.read_at !== null, `${id} should be marked read`);
+  }
+  const fresh = after.find(m => m.text === 'new');
+  assert.ok(fresh, 'new message present');
+  assert.equal(fresh.read_at, null);
   cleanup(root);
 });
