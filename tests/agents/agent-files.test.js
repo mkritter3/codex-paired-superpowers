@@ -78,32 +78,32 @@ function parseToolsList(toolsValue) {
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
+//
+// v0.7.2 changes: codex implementer no longer ships as a Claude Code subagent.
+// It dispatches via orchestrator-level background Bash (LocalShell pattern).
+// The codex contract moved to docs/codex-implementer-contract.md (NOT in
+// agents/). This test file now covers ONLY the sonnet subagent file.
 
-test('agents/slice-implementer-codex.md exists and is readable', async () => {
-  const text = await readFile(CODEX_AGENT_PATH, 'utf8');
-  assert.ok(text.length > 0, 'codex agent file is empty');
+test('agents/slice-implementer-codex.md does NOT exist (v0.7.2: codex moved to docs/)', async () => {
+  // Defense against accidental restoration. If codex returns to agents/,
+  // someone must update the registry schema and this test together.
+  const { existsSync } = await import('node:fs');
+  assert.equal(
+    existsSync(CODEX_AGENT_PATH),
+    false,
+    `${CODEX_AGENT_PATH} must not exist; v0.7.2 moved the codex contract to docs/codex-implementer-contract.md`,
+  );
+});
+
+test('docs/codex-implementer-contract.md exists and is readable', async () => {
+  const contractPath = join(PLUGIN_ROOT, 'docs', 'codex-implementer-contract.md');
+  const text = await readFile(contractPath, 'utf8');
+  assert.ok(text.length > 0, 'codex contract doc is empty');
 });
 
 test('agents/slice-implementer-sonnet.md exists and is readable', async () => {
   const text = await readFile(SONNET_AGENT_PATH, 'utf8');
   assert.ok(text.length > 0, 'sonnet agent file is empty');
-});
-
-test('codex agent frontmatter has required keys', async () => {
-  const text = await readFile(CODEX_AGENT_PATH, 'utf8');
-  const { frontmatter } = parseFrontmatter(text);
-  for (const key of ['name', 'description', 'tools', 'model']) {
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(frontmatter, key),
-      `codex agent frontmatter missing key: ${key}`,
-    );
-    assert.ok(
-      frontmatter[key] && frontmatter[key].length > 0,
-      `codex agent frontmatter key has empty value: ${key}`,
-    );
-  }
-  assert.equal(frontmatter.name, 'slice-implementer-codex');
-  assert.equal(frontmatter.model, 'sonnet');
 });
 
 test('sonnet agent frontmatter has required keys', async () => {
@@ -123,23 +123,6 @@ test('sonnet agent frontmatter has required keys', async () => {
   assert.equal(frontmatter.model, 'sonnet');
 });
 
-test('codex agent tools list does NOT include the Codex MCP tool (v0.7.0 fix: shell codex exec)', async () => {
-  // v0.7.0 release validation found MCP-mediated dispatch serializes (~1.73x ratio).
-  // The fix switched the codex implementer to shell-spawned `codex exec` for true
-  // parallelism. The MCP tool was dropped from the codex agent's allowlist.
-  const text = await readFile(CODEX_AGENT_PATH, 'utf8');
-  const { frontmatter } = parseFrontmatter(text);
-  const tools = parseToolsList(frontmatter.tools);
-  assert.ok(
-    !tools.includes(CODEX_MCP_TOOL),
-    `codex agent tools list must NOT include ${CODEX_MCP_TOOL} (v0.7.0+ uses shell codex exec); got: ${JSON.stringify(tools)}`,
-  );
-  // Codex agent is a thin wrapper that shells out via Bash; it does not edit files.
-  for (const t of ['Read', 'Bash']) {
-    assert.ok(tools.includes(t), `codex agent tools missing ${t}`);
-  }
-});
-
 test('sonnet agent tools list does NOT include the Codex MCP tool', async () => {
   const text = await readFile(SONNET_AGENT_PATH, 'utf8');
   const { frontmatter } = parseFrontmatter(text);
@@ -154,33 +137,29 @@ test('sonnet agent tools list does NOT include the Codex MCP tool', async () => 
   }
 });
 
-test('both agent bodies declare the JSON status block contract', async () => {
-  for (const path of [CODEX_AGENT_PATH, SONNET_AGENT_PATH]) {
-    const text = await readFile(path, 'utf8');
-    const { body } = parseFrontmatter(text);
-    assert.ok(/"status"\s*:/.test(body), `${path}: body missing "status": key`);
-    assert.ok(/\bDONE\b/.test(body), `${path}: body missing DONE status`);
-    assert.ok(/\bBLOCKED\b/.test(body), `${path}: body missing BLOCKED status`);
-    assert.ok(
-      /\bNEEDS_CONTEXT\b/.test(body),
-      `${path}: body missing NEEDS_CONTEXT status`,
-    );
-  }
+test('sonnet agent body declares the JSON status block contract', async () => {
+  const text = await readFile(SONNET_AGENT_PATH, 'utf8');
+  const { body } = parseFrontmatter(text);
+  assert.ok(/"status"\s*:/.test(body), `${SONNET_AGENT_PATH}: body missing "status": key`);
+  assert.ok(/\bDONE\b/.test(body), `${SONNET_AGENT_PATH}: body missing DONE status`);
+  assert.ok(/\bBLOCKED\b/.test(body), `${SONNET_AGENT_PATH}: body missing BLOCKED status`);
+  assert.ok(
+    /\bNEEDS_CONTEXT\b/.test(body),
+    `${SONNET_AGENT_PATH}: body missing NEEDS_CONTEXT status`,
+  );
 });
 
-test('both agent bodies reference the subject-only commit convention', async () => {
+test('sonnet agent body references the subject-only commit convention', async () => {
   // The convention's distinctive shape is `(feat|test|fix|docs|refactor|chore)(slice:N): ...`.
   // We accept either the literal alternation form or a concrete example like `feat(slice:3):`.
   const conventionRe = /\(feat\|test\|fix\|docs\|refactor\|chore\)\(slice:N\)/;
   const exampleRe = /\b(feat|test|fix|docs|refactor|chore)\(slice:\d+\):/;
-  for (const path of [CODEX_AGENT_PATH, SONNET_AGENT_PATH]) {
-    const text = await readFile(path, 'utf8');
-    const { body } = parseFrontmatter(text);
-    const hasConvention = conventionRe.test(body);
-    const hasExample = exampleRe.test(body);
-    assert.ok(
-      hasConvention && hasExample,
-      `${path}: body must include both the (feat|test|...)(slice:N) convention and a concrete example like feat(slice:3):`,
-    );
-  }
+  const text = await readFile(SONNET_AGENT_PATH, 'utf8');
+  const { body } = parseFrontmatter(text);
+  const hasConvention = conventionRe.test(body);
+  const hasExample = exampleRe.test(body);
+  assert.ok(
+    hasConvention && hasExample,
+    `${SONNET_AGENT_PATH}: body must include both the (feat|test|...)(slice:N) convention and a concrete example like feat(slice:3):`,
+  );
 });
