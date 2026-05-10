@@ -6,5 +6,8 @@
   "scripts": {
     "test": "node --test 'tests/**/*.test.js'"
   },
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "proper-lockfile": "^4.1.2"
+  }
 }
