@@ -363,6 +363,44 @@ v0.7.2 splits dispatch by **transport**. Look up the chosen implementer's transp
 - `transport: claude-subagent` → use the `Task` tool to dispatch the named subagent. The subagent file is at `agents/<agent>.md` (e.g., `slice-implementer-sonnet.md`).
 - `transport: codex-background-bash` → use the `Bash` tool with `run_in_background: true` to spawn the codex wrapper script. The contract for codex's invocation lives at `docs/codex-implementer-contract.md` (NOT a Claude Code subagent file).
 
+##### Pre-dispatch mailbox injection (v0.7.3.1)
+
+Before issuing the dispatch tool call (either transport), the orchestrator pre-injects any unread messages the recipient already has queued. This guarantees that messages written between B.4.5 polling cycles and this dispatch are delivered to the agent at start, without races.
+
+For each slice in the parallel batch, in the same turn that will issue dispatches:
+
+1. **Read the recipient's unread inbox** as orchestrator:
+   ```bash
+   node <plugin>/lib/codex-bridge/cli.js mailbox-read \
+     --for slice-N --actor orchestrator --unread \
+     --repoRoot "$REPO_ROOT"
+   ```
+2. **If non-empty, prepend a `<codex-paired-pending-messages>` block** to the dispatch prompt (same wrapper format the hook emits, so codex- and Sonnet-path agents see a single canonical shape). The **trailing note differs** from the hook's: pre-injected messages are NOT marked read until terminal result, so use the queued-not-marked phrasing:
+   ```xml
+   <codex-paired-pending-messages recipient="slice-N">
+     <pending-message id="<id>" from="<sender>" timestamp="<iso>">
+     <body>
+     </pending-message>
+     ...
+   </codex-paired-pending-messages>
+
+   (Messages above were queued for you before this dispatch. They have NOT yet been marked read — the orchestrator marks them read when this dispatch reaches a terminal result.)
+   ```
+   The hook's mid-run delivery uses "have been marked read" because the hook marks-read immediately after stdout flush; pre-injection's mark-read is deferred to terminal-result handling (step 4 below). Keeping the wrappers visually similar but the trailers semantically accurate prevents agents from assuming a delivery means a mark.
+3. **Include `injected_message_ids`** in the dispatch record at the time the orchestrator appends/finalizes it. For the Codex path, that's the immediate `outcome: "in-progress"` record (Phase B.7) — include the captured ids there. For the Sonnet path, include the ids in whichever dispatch record the existing flow appends (typically at terminal-result time). Empty array is a positive assertion of "nothing was pre-injected"; absent field is back-compat with pre-0.7.3.1 records.
+4. **On terminal result** (slice reports DONE/BLOCKED, or codex task exits), mark the pre-injected ids as read using the batch CLI:
+   ```bash
+   node <plugin>/lib/codex-bridge/cli.js mailbox-mark-read-batch \
+     --for slice-N --actor orchestrator \
+     --message-ids "<csv>" \
+     --repoRoot "$REPO_ROOT"
+   ```
+   If dispatch failed **before** the agent process started (codex binary not found, Task tool refused), SKIP the mark-read — messages stay unread for the next dispatch attempt. Duplicate delivery is preferred over silent loss.
+
+For the **Sonnet path**, in-flight mailbox messages that arrive AFTER dispatch are auto-delivered by the PostToolUse hook (`hooks/mailbox-inject.sh` → `lib/codex-bridge/hook-mailbox-inject.js`). Identity flows through the subagent's `cwd` (which is the worktree path) — no env-var manipulation required. The hook reads the slice's unread inbox after every Bash/Edit/Write/Read tool call, emits an `additionalContext` block, and marks the delivered messages read.
+
+For the **Codex path**, mid-run injection is architecturally impossible (codex is an opaque subprocess; MCP protocol has no spec-level push). Pre-injection here covers the start-of-run case; cooperative checkpoints in the dispatch prompt body cover the rest (see "Mailbox protocol in agent prompts" below).
+
 ##### Sonnet path (`transport: claude-subagent`)
 
 Dispatch via `Task` tool with `subagent_type: slice-implementer-sonnet`. Prompt content:
@@ -489,6 +527,10 @@ Between every assistant turn during Phase B (after dispatching parallel batches,
 2. For every slice with outcome=in-progress: reads its inbox (`--for slice-N --actor orchestrator --unread`). Surfaces unread messages.
 3. Marks each surfaced message as read via `mailbox-mark-read`.
 4. Special handling for messages whose `text` starts with `BLOCKER:`: pause forward-progress for that slice's batch and surface the blocker to the user. Halt code: `slice-blocker-from-mailbox` (slice still in-progress; user investigates whether to abort or wait).
+
+**v0.7.3.1 role for Sonnet slices.** B.4.5 polling for Sonnet inboxes was the primary delivery path in v0.7.3. Starting v0.7.3.1 the PostToolUse `mailbox-inject` hook is the primary in-flight delivery mechanism for Sonnet subagents; B.4.5 polling becomes a **crash-recovery safety net** that catches messages still unread in two scenarios: (a) hook failed (breadcrumb in `.codex-paired/diagnostics/hook-failures.jsonl`); (b) slice has not yet hit a Bash/Edit/Write/Read tool call that would trigger the hook. Codex slices still rely on B.4.5 polling as primary (no auto-injection is possible for the codex subprocess transport).
+
+**v0.7.3.1 race guard for pre-injection (load-bearing).** Pre-injected messages (per the pre-injection flow above) sit in the recipient's inbox as unread until terminal result, because mark-read is deferred to step 4 per the queued-not-marked contract. B.4.5 between-turns polling MUST exclude these ids; otherwise it would surface and mark-read messages that the dispatch already delivered, breaking the "terminal-result owns the mark" invariant and causing duplicate diagnostic surfacing. When polling a slice with `outcome=in-progress`, the orchestrator computes the in-progress dispatch's `injected_message_ids` set and skips any inbox messages whose `id` appears in it. Terminal-result handling owns those ids' mark-read via `mailbox-mark-read-batch`. Messages NOT in `injected_message_ids` (new arrivals after pre-injection) are surfaced and marked as usual.
 
 Mailbox failures during polling halt the orchestrator (per spec rev5 §6.3 boundary table — orchestrator ops are NOT best-effort):
 - `mailbox-corrupt` — inbox JSON unparseable; corrupt file moved to archive (best-effort) before halt.

@@ -302,6 +302,121 @@ test('appendImplementDispatch accepts missing thread_id (omitted entirely)', () 
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ── v0.7.3.1: injected_message_ids (pre-injected mailbox messages) ─────────
+
+test('appendImplementDispatch accepts injected_message_ids as string array', () => {
+  const { dir, spec } = makeSpec();
+  appendImplementDispatch(spec, 'slice-3', {
+    slice_id: 'slice-3',
+    agent: 'sonnet',
+    dispatched_at: '2026-05-08T12:00:00.000Z',
+    worktree: '/w',
+    outcome: 'shipped',
+    injected_message_ids: ['msg-2026-05-08T12-00-00-000Z-0001', 'msg-2026-05-08T12-00-00-000Z-0002'],
+  });
+  const impl = loadSidecar(spec).slice_reviews['slice-3'].phases.implement;
+  assert.deepEqual(impl.dispatches[0].injected_message_ids, [
+    'msg-2026-05-08T12-00-00-000Z-0001',
+    'msg-2026-05-08T12-00-00-000Z-0002',
+  ]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch accepts injected_message_ids as empty array (no pre-injection)', () => {
+  const { dir, spec } = makeSpec();
+  appendImplementDispatch(spec, 'slice-3', {
+    slice_id: 'slice-3',
+    agent: 'sonnet',
+    dispatched_at: '2026-05-08T12:00:00.000Z',
+    worktree: '/w',
+    outcome: 'shipped',
+    injected_message_ids: [],
+  });
+  const impl = loadSidecar(spec).slice_reviews['slice-3'].phases.implement;
+  assert.deepEqual(impl.dispatches[0].injected_message_ids, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch accepts missing injected_message_ids (back-compat)', () => {
+  const { dir, spec } = makeSpec();
+  appendImplementDispatch(spec, 'slice-3', {
+    slice_id: 'slice-3',
+    agent: 'sonnet',
+    dispatched_at: '2026-05-08T12:00:00.000Z',
+    worktree: '/w',
+    outcome: 'shipped',
+  });
+  // No throw; field simply absent in the persisted record.
+  const impl = loadSidecar(spec).slice_reviews['slice-3'].phases.implement;
+  assert.equal('injected_message_ids' in impl.dispatches[0], false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch rejects injected_message_ids when not an array', () => {
+  const { dir, spec } = makeSpec();
+  for (const bad of ['msg-x', 42, {}, true]) {
+    assert.throws(
+      () => appendImplementDispatch(spec, 'slice-3', {
+        slice_id: 'slice-3',
+        agent: 'sonnet',
+        dispatched_at: '2026-05-08T12:00:00.000Z',
+        worktree: '/w',
+        outcome: 'shipped',
+        injected_message_ids: bad,
+      }),
+      /injected_message_ids/i,
+      `expected throw for injected_message_ids=${JSON.stringify(bad)}`
+    );
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch rejects injected_message_ids array containing non-strings', () => {
+  const { dir, spec } = makeSpec();
+  for (const bad of [['msg-x', null], ['msg-x', 42], ['msg-x', undefined], ['msg-x', '']]) {
+    assert.throws(
+      () => appendImplementDispatch(spec, 'slice-3', {
+        slice_id: 'slice-3',
+        agent: 'sonnet',
+        dispatched_at: '2026-05-08T12:00:00.000Z',
+        worktree: '/w',
+        outcome: 'shipped',
+        injected_message_ids: bad,
+      }),
+      /injected_message_ids/i,
+      `expected throw for injected_message_ids=${JSON.stringify(bad)}`
+    );
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch: injected_message_ids null/undefined treated as absent (back-compat)', () => {
+  const { dir, spec } = makeSpec();
+  // null
+  appendImplementDispatch(spec, 'slice-3', {
+    slice_id: 'slice-3',
+    agent: 'sonnet',
+    dispatched_at: '2026-05-08T12:00:00.000Z',
+    worktree: '/w',
+    outcome: 'shipped',
+    injected_message_ids: null,
+  });
+  // undefined (explicit)
+  appendImplementDispatch(spec, 'slice-4', {
+    slice_id: 'slice-4',
+    agent: 'sonnet',
+    dispatched_at: '2026-05-08T12:00:00.000Z',
+    worktree: '/w',
+    outcome: 'shipped',
+    injected_message_ids: undefined,
+  });
+  // Both should succeed without throwing
+  const sc = loadSidecar(spec);
+  assert.equal(sc.slice_reviews['slice-3'].phases.implement.dispatches.length, 1);
+  assert.equal(sc.slice_reviews['slice-4'].phases.implement.dispatches.length, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('appendImplementDispatch accepts all valid outcomes', () => {
   const { dir, spec } = makeSpec();
   for (const outcome of ['shipped', 'failed-fallback-pending', 'failed-halted']) {
