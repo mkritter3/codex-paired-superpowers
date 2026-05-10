@@ -1,0 +1,296 @@
+// Tests for v0.7.3 mailbox module — file-based inbox with proper-lockfile.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  writeToMailbox,
+  readMailbox,
+  readUnreadMessages,
+  markAsRead,
+  archiveAndReset,
+  cleanupArchives,
+  inboxSizeBytes,
+  MailboxError,
+} from '../../lib/codex-bridge/mailbox.js';
+
+function makeRepo() {
+  return mkdtempSync(join(tmpdir(), 'cps-mailbox-test-'));
+}
+
+function cleanup(root) {
+  rmSync(root, { recursive: true, force: true });
+}
+
+function inboxPath(root, recipient) {
+  return join(root, '.codex-paired', 'mailboxes', `${recipient}.json`);
+}
+
+function archiveDir(root) {
+  return join(root, '.codex-paired', 'mailboxes', 'archive');
+}
+
+// ── recipient/from validation ───────────────────────────────────────────────
+
+test('writeToMailbox rejects malformed recipient', async () => {
+  const root = makeRepo();
+  await assert.rejects(
+    () => writeToMailbox(root, '../etc/passwd', { from: 'orchestrator', text: 'pwn' }),
+    err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed'
+  );
+  cleanup(root);
+});
+
+test('writeToMailbox rejects malformed from', async () => {
+  const root = makeRepo();
+  await assert.rejects(
+    () => writeToMailbox(root, 'orchestrator', { from: 'admin', text: 'hi' }),
+    err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed'
+  );
+  cleanup(root);
+});
+
+test('writeToMailbox accepts orchestrator and slice-N recipients', async () => {
+  const root = makeRepo();
+  const r1 = await writeToMailbox(root, 'orchestrator', { from: 'slice-3', text: 'hi orch' });
+  const r2 = await writeToMailbox(root, 'slice-5', { from: 'slice-3', text: 'hi slice5' });
+  assert.match(r1.id, /^msg-\d{4}/);
+  assert.match(r2.id, /^msg-\d{4}/);
+  cleanup(root);
+});
+
+test('writeToMailbox: message text must be a string', async () => {
+  const root = makeRepo();
+  await assert.rejects(
+    () => writeToMailbox(root, 'orchestrator', { from: 'slice-3', text: 42 }),
+    err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed'
+  );
+  cleanup(root);
+});
+
+// ── basic write/read ────────────────────────────────────────────────────────
+
+test('writeToMailbox + readMailbox roundtrip preserves message', async () => {
+  const root = makeRepo();
+  const { id } = await writeToMailbox(root, 'orchestrator', {
+    from: 'slice-3',
+    text: 'progress: 30%',
+    summary: 'p3',
+  });
+  const messages = await readMailbox(root, 'orchestrator');
+  assert.equal(messages.length, 1);
+  const m = messages[0];
+  assert.equal(m.id, id);
+  assert.equal(m.from, 'slice-3');
+  assert.equal(m.to, 'orchestrator');
+  assert.equal(m.text, 'progress: 30%');
+  assert.equal(m.summary, 'p3');
+  assert.equal(m.color, null);
+  assert.equal(m.read_at, null);
+  assert.match(m.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+  cleanup(root);
+});
+
+test('readMailbox returns empty array for missing inbox', async () => {
+  const root = makeRepo();
+  const messages = await readMailbox(root, 'slice-3');
+  assert.deepEqual(messages, []);
+  cleanup(root);
+});
+
+test('writeToMailbox appends to existing inbox', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'first' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-2', text: 'second' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-3', text: 'third' });
+  const messages = await readMailbox(root, 'orchestrator');
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].text, 'first');
+  assert.equal(messages[2].text, 'third');
+  // IDs must be unique
+  const ids = new Set(messages.map(m => m.id));
+  assert.equal(ids.size, 3);
+  cleanup(root);
+});
+
+// ── unread + mark read ──────────────────────────────────────────────────────
+
+test('readUnreadMessages filters by read_at === null', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'm1' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'm2' });
+  await markAsRead(root, 'orchestrator', id1);
+  const unread = await readUnreadMessages(root, 'orchestrator');
+  assert.equal(unread.length, 1);
+  assert.equal(unread[0].text, 'm2');
+  cleanup(root);
+});
+
+test('markAsRead is idempotent', async () => {
+  const root = makeRepo();
+  const { id } = await writeToMailbox(root, 'orchestrator', { from: 'slice-3', text: 'hi' });
+  const r1 = await markAsRead(root, 'orchestrator', id);
+  assert.equal(r1.alreadyRead, false);
+  const r2 = await markAsRead(root, 'orchestrator', id);
+  assert.equal(r2.alreadyRead, true);
+  cleanup(root);
+});
+
+test('markAsRead throws for unknown id', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-3', text: 'hi' });
+  await assert.rejects(
+    () => markAsRead(root, 'orchestrator', 'msg-nonexistent'),
+    err => err instanceof MailboxError && err.code === 'mailbox-corrupt' && /not found/.test(err.message)
+  );
+  cleanup(root);
+});
+
+// ── corrupt inbox handling ──────────────────────────────────────────────────
+
+test('readMailbox on malformed JSON throws mailbox-corrupt + best-effort archive move', async () => {
+  const root = makeRepo();
+  const path = inboxPath(root, 'orchestrator');
+  mkdirSync(join(root, '.codex-paired', 'mailboxes'), { recursive: true });
+  writeFileSync(path, '{not json');
+  await assert.rejects(
+    () => readMailbox(root, 'orchestrator'),
+    err => err instanceof MailboxError && err.code === 'mailbox-corrupt'
+  );
+  // Original file should be moved to archive
+  assert.equal(existsSync(path), false, 'corrupt file should have been moved');
+  // Archive dir should exist with the corrupt file
+  const archive = archiveDir(root);
+  assert.ok(existsSync(archive));
+  const archived = readdirSync(archive);
+  assert.ok(archived.some(n => n.includes('corrupt')));
+  cleanup(root);
+});
+
+test('readMailbox on non-array top-level value throws mailbox-corrupt', async () => {
+  const root = makeRepo();
+  const path = inboxPath(root, 'orchestrator');
+  mkdirSync(join(root, '.codex-paired', 'mailboxes'), { recursive: true });
+  writeFileSync(path, '{"hello":"world"}');
+  await assert.rejects(
+    () => readMailbox(root, 'orchestrator'),
+    err => err instanceof MailboxError && err.code === 'mailbox-corrupt'
+  );
+  cleanup(root);
+});
+
+// ── archive rotation ────────────────────────────────────────────────────────
+
+test('archiveAndReset rotates read messages and carries unread forward', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'old1' });
+  const { id: id2 } = await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'old2' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'unread1' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'unread2' });
+  await markAsRead(root, 'orchestrator', id1);
+  await markAsRead(root, 'orchestrator', id2);
+
+  const result = await archiveAndReset(root, 'orchestrator');
+  assert.equal(result.archivedCount, 2);
+  assert.equal(result.carriedForwardCount, 2);
+  assert.ok(result.archivedPath);
+  assert.ok(existsSync(result.archivedPath));
+
+  const remaining = await readMailbox(root, 'orchestrator');
+  assert.equal(remaining.length, 2);
+  assert.equal(remaining[0].text, 'unread1');
+  assert.equal(remaining[1].text, 'unread2');
+
+  const archived = JSON.parse(readFileSync(result.archivedPath, 'utf8'));
+  assert.equal(archived.length, 2);
+  assert.equal(archived[0].text, 'old1');
+  cleanup(root);
+});
+
+test('archiveAndReset throws mailbox-overflow-unread when all messages are unread', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'a' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'b' });
+  await assert.rejects(
+    () => archiveAndReset(root, 'orchestrator'),
+    err => err instanceof MailboxError && err.code === 'mailbox-overflow-unread'
+  );
+  cleanup(root);
+});
+
+test('archiveAndReset with archive_policy=drop drops read messages without archive file', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'old' });
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'fresh' });
+  await markAsRead(root, 'orchestrator', id1);
+
+  const result = await archiveAndReset(root, 'orchestrator', { archive_policy: 'drop' });
+  assert.equal(result.archivedPath, null);
+  assert.equal(result.archivedCount, 1);
+  assert.equal(result.carriedForwardCount, 1);
+
+  const remaining = await readMailbox(root, 'orchestrator');
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].text, 'fresh');
+  cleanup(root);
+});
+
+// ── concurrent writes ──────────────────────────────────────────────────────
+
+test('concurrent writes do not lose messages (lockfile serializes)', async () => {
+  const root = makeRepo();
+  const N = 20;
+  const writes = [];
+  for (let i = 0; i < N; i++) {
+    writes.push(
+      writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: `concurrent-${i}` })
+    );
+  }
+  await Promise.all(writes);
+  const messages = await readMailbox(root, 'orchestrator');
+  assert.equal(messages.length, N, `expected ${N} messages; got ${messages.length}`);
+  // All ids unique
+  const ids = new Set(messages.map(m => m.id));
+  assert.equal(ids.size, N);
+  // All texts present
+  const texts = new Set(messages.map(m => m.text));
+  for (let i = 0; i < N; i++) {
+    assert.ok(texts.has(`concurrent-${i}`), `missing concurrent-${i}`);
+  }
+  cleanup(root);
+});
+
+// ── inbox size + cleanup ──────────────────────────────────────────────────
+
+test('inboxSizeBytes returns 0 for missing, byte count for existing', async () => {
+  const root = makeRepo();
+  assert.equal(await inboxSizeBytes(root, 'slice-3'), 0);
+  await writeToMailbox(root, 'slice-3', { from: 'orchestrator', text: 'x' });
+  const size = await inboxSizeBytes(root, 'slice-3');
+  assert.ok(size > 0);
+  cleanup(root);
+});
+
+test('cleanupArchives deletes by retention_count', async () => {
+  const root = makeRepo();
+  // Manually create 5 archive files
+  const dir = archiveDir(root);
+  mkdirSync(dir, { recursive: true });
+  for (let i = 0; i < 5; i++) {
+    const ts = new Date(2026, 4, 10 - i).toISOString().replace(/[:.]/g, '-');
+    writeFileSync(join(dir, `slice-3-${ts}.json`), '[]');
+  }
+  // Keep at most 2 → delete 3
+  const result = await cleanupArchives(root, { retention_count: 2, retention_days: 365 });
+  assert.equal(result.deleted, 3);
+  cleanup(root);
+});
+
+test('cleanupArchives returns 0 deleted when archive dir missing', async () => {
+  const root = makeRepo();
+  const result = await cleanupArchives(root);
+  assert.equal(result.deleted, 0);
+  cleanup(root);
+});
