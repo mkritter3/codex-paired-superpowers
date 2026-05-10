@@ -286,16 +286,16 @@ For each slice in the batch, build an isolated worktree using the `worktree.js` 
 
 Both tiers must pass for every worktree in the batch before any subagent dispatch fires. A single Tier-1/Tier-2 failure in a parallel batch halts the whole batch — do not dispatch the other slice(s) while one worktree is broken.
 
-#### Phase B.4 — Dispatch (subagent files, single-turn parallel)
+#### Phase B.4 — Dispatch (transport-aware, single-turn parallel)
 
-For each slice in the batch, dispatch the routed subagent. The subagents are the markdown files in the plugin's `agents/` directory:
+v0.7.2 splits dispatch by **transport**. Look up the chosen implementer's transport in `agents/dispatchers.json`:
 
-- `agents/slice-implementer-codex.md` — invokes Codex MCP in a fresh thread inside the worktree. Tool name: `slice-implementer-codex`.
-- `agents/slice-implementer-sonnet.md` — implements directly with `Read/Edit/Write/Bash`. Tool name: `slice-implementer-sonnet`.
+- `transport: claude-subagent` → use the `Task` tool to dispatch the named subagent. The subagent file is at `agents/<agent>.md` (e.g., `slice-implementer-sonnet.md`).
+- `transport: codex-background-bash` → use the `Bash` tool with `run_in_background: true` to spawn the codex wrapper script. The contract for codex's invocation lives at `docs/codex-implementer-contract.md` (NOT a Claude Code subagent file).
 
-Choice is mechanical: directive `codex` (or absent) → `slice-implementer-codex`; directive `sonnet` → `slice-implementer-sonnet`.
+##### Sonnet path (`transport: claude-subagent`)
 
-Every dispatch's prompt includes:
+Dispatch via `Task` tool with `subagent_type: slice-implementer-sonnet`. Prompt content:
 
 - Slice id (e.g., `slice-3`).
 - Full slice section text from the plan, verbatim.
@@ -307,11 +307,71 @@ Every dispatch's prompt includes:
 - Instruction to leave all changes committed in the worktree before reporting `DONE`.
 - Reminder of the final-message JSON contract: `{"status":"DONE"|"BLOCKED"|"NEEDS_CONTEXT","concerns":[]}`.
 
-**Single-turn parallel dispatch (load-bearing).** When the batch contains more than one slice, dispatch ALL implementer subagents in a SINGLE assistant turn using Claude's parallel-tool-call mechanism — i.e., emit multiple `Agent` tool calls in the same response. Issuing them across separate turns is non-conforming: it serializes the work and breaks the wall-clock assertion in the empirical parallel smoke (`tests/smoke/implementer-routing-parallel.sh`, slice 9). The structural smoke (`tests/smoke/phase-b-routing-structural.sh`) verifies orchestrator output contains all parallel `Agent` calls in one turn for the non-overlap path.
+##### Codex path (`transport: codex-background-bash`, v0.7.2)
 
-Do not begin reconciliation for any slice until all parallel subagents in the batch have returned. Single-slice batches use a single subagent call as usual.
+The orchestrator dispatches `codex exec` directly via `Bash` with `run_in_background: true`. No subagent wrapper. This pattern mirrors Claude Code's `LocalShellTask` (per `src/tasks/LocalShellTask/` in the runtime source) and supports unbounded codex runtimes (subject to `codex_dispatch.max_runtime_ms` configured via `.codex-paired/project.json`, default 2 hours).
 
-**Subagent return contract.** The subagent's final message ends with a fenced JSON block. Read its `status` field. The orchestrator only consults this status for `BLOCKED` and `NEEDS_CONTEXT` halts; for everything else the reconciler is authoritative (Phase B.5). If the JSON is missing or malformed, treat it as `missing-or-malformed-json` and route into the fallback rules in Phase B.6 — unless the message is an unambiguous blocker phrased as natural language ("blocked: X"), in which case record `BLOCKED` and halt without fallback.
+Locked invocation (orchestrator constructs and runs):
+
+```bash
+<plugin>/scripts/codex-exec-with-status.sh \
+  <status-file-path> \
+  -- \
+  codex exec \
+    --skip-git-repo-check \
+    -s workspace-write \
+    -C <worktree-absolute-path> \
+    -m gpt-5.5 \
+    -c model_reasoning_effort=high \
+    "<implementation prompt>" \
+  </dev/null
+```
+
+The wrapper at `scripts/codex-exec-with-status.sh` captures exit code + timestamps + signal in a JSON status file. This is durable evidence — the on-disk status file survives orchestrator session termination, unlike Claude Code's in-memory Bash task registry.
+
+Per-dispatch path generation (orchestrator computes):
+
+- `<status-file-path>`: `~/Library/Application Support/Inkling/diagnostics/codex-dispatch/<slice-id>-<ISO-timestamp>.status.json`
+- `<output-file-path>`: same prefix with `.log` suffix; passed to Bash via the standard background-task output capture.
+
+`<implementation prompt>` argument: same content as the Sonnet path's prompt, but composed as a single string and passed as the final positional argument to `codex exec`. See `docs/codex-implementer-contract.md` for the full contract.
+
+**Bash invocation parameters:**
+
+- `run_in_background: true` — required. Returns immediately with a Bash task id.
+- No `timeout` parameter (background tasks have no synchronous cap; runtime bound is `codex_dispatch.max_runtime_ms`).
+
+After dispatch, the orchestrator immediately writes an `outcome: "in-progress"` dispatch record (Phase B.7) with `transport: codex-background-bash`, `task_id`, `output_file`, `status_file`. This is durability evidence — if the orchestrator crashes between dispatch and completion, the next session can read the status file to determine codex's terminal state.
+
+##### Single-turn parallel dispatch (load-bearing for both transports)
+
+When the batch contains more than one slice, dispatch ALL implementers in a SINGLE assistant turn using Claude's parallel-tool-call mechanism — emit multiple tool calls in the same response. This works across transports: a mixed batch may emit one `Bash run_in_background:true` for a codex slice + one `Task` for a sonnet slice in the same turn. Both empirically parallelize:
+
+- Codex via `Bash`: 18s for 2 × 5s tasks (proven in v0.7.0 release validation).
+- Sonnet via `Task`: 1s gap between two 5s tasks (proven in v0.7.1 validation; Task subagents parallelize natively).
+
+Issuing dispatches across separate turns is non-conforming and breaks the wall-clock assertion in `tests/smoke/implementer-routing-parallel.sh`.
+
+##### Subagent return contract (Sonnet path)
+
+The Sonnet subagent's final message ends with a fenced JSON block. Read its `status` field. The orchestrator only consults this status for `BLOCKED` and `NEEDS_CONTEXT` halts; for everything else the reconciler is authoritative (Phase B.5). If the JSON is missing or malformed, treat it as `missing-or-malformed-json` and route into fallback rules in Phase B.6 — unless the message is an unambiguous blocker phrased as natural language ("blocked: X"), in which case record `BLOCKED` and halt without fallback.
+
+##### Codex completion (codex path)
+
+The codex background task completes asynchronously. Claude Code emits a task-notification when the Bash task exits. The orchestrator handles this notification — possibly across multiple assistant turns from when dispatch happened — by:
+
+1. Reading the status file at `<status-file-path>` (see schema in `docs/codex-implementer-contract.md`).
+2. Inspecting `exit_code`:
+   - `0` → proceed to Phase B.5 reconciler.
+   - non-zero → fallback trigger; route to Phase B.6.
+   - missing status file (orchestrator crashed mid-dispatch and Bash task entry is gone) → halt `codex-background-task-lost`.
+3. Calling `finalizeImplementDispatch(specPath, sliceId, taskId, terminal)` to promote the in-progress dispatch entry to its terminal outcome (Phase B.7).
+
+If the in-progress codex task exceeds `codex_dispatch.max_runtime_ms`, the orchestrator MUST kill it (best-effort SIGTERM via `kill <pid>`, then SIGKILL after 5s grace) and halt `codex-background-timeout`. The wrapper script writes a status file on signal-kill recording `signal: "SIGTERM"` and `exit_code: 143`.
+
+Multi-turn completion handling does NOT violate the single-turn parallel dispatch invariant. The invariant is: all parallel batch dispatches are issued in one turn. Completion is inherently async.
+
+Do not begin Phase B.8 integration cherry-pick until ALL slices in the parallel batch are terminal (shipped / blocked / failed). Reconcile each slice as it completes, but defer integration until the batch is done.
 
 #### Phase B.5 — Reconcile (reconciler is truth)
 
@@ -361,12 +421,13 @@ preferred implementer
 
 **Failure triggers fallback** (any one of these from the preferred dispatch):
 
-1. MCP error from the subagent (Codex MCP tool error for `slice-implementer-codex`; subagent dispatch error for either).
-2. Subagent dispatch error (the `Agent` tool call itself failed).
-3. 10-minute implementation timeout.
-4. Zero commits produced (`commit_count == 0`).
-5. Non-conforming commits emitted (`non_conforming_subjects` non-empty).
-6. Missing or malformed final-message JSON, when there is no clear blocker signal.
+1. Codex `codex exec` exits non-zero (read from status file `exit_code`) — for `transport: codex-background-bash`.
+2. Codex background task exceeds `codex_dispatch.max_runtime_ms` — orchestrator kills + halts `codex-background-timeout`.
+3. Codex background task lost — orchestrator crashed and there's no status file evidence; halts `codex-background-task-lost`.
+4. Sonnet subagent dispatch error (the `Task` tool call itself failed) — for `transport: claude-subagent`.
+5. Zero commits produced (`commit_count == 0`).
+6. Non-conforming commits emitted (`non_conforming_subjects` non-empty).
+7. Missing or malformed final-message JSON (Sonnet path only), when there is no clear blocker signal.
 
 **NOT fallback triggers** (these halt without trying the other implementer):
 
@@ -412,12 +473,42 @@ Use the slice-3 implement-phase persistence CLI/methods (sidecar.js):
     --bootstrap '{"symlinks":[...],"completed_at":"<ISO now>"}'
   ```
 
-- **After each reconcile** (whether successful, fallback-pending, or halted), append a dispatch record:
+- **At codex dispatch time** (transport=codex-background-bash, v0.7.2), append an in-progress entry IMMEDIATELY after issuing the background Bash, BEFORE the task completes:
   ```bash
   cli sidecar-append-implement-dispatch --specPath <spec> --sliceId <slice-N> --dispatch '{
     "slice_id":"<slice-N>",
-    "agent":"codex|sonnet",
-    "thread_id":"<codex thread id or null>",
+    "agent":"codex",
+    "transport":"codex-background-bash",
+    "task_id":"<Bash task id from run_in_background>",
+    "output_file":"<absolute path to .log>",
+    "status_file":"<absolute path to .status.json>",
+    "dispatched_at":"<ISO>",
+    "worktree":"<absolute worktree path>",
+    "outcome":"in-progress"
+  }'
+  ```
+  This is durable evidence — if the orchestrator crashes between dispatch and completion, the next session reads `status_file` to determine codex's terminal state.
+
+- **At codex completion** (after the Bash task notification arrives + you've read the status file + run reconciler), promote the in-progress entry to its terminal outcome via `finalizeImplementDispatch`:
+  ```js
+  import { finalizeImplementDispatch } from '<plugin>/lib/codex-bridge/sidecar.js';
+  finalizeImplementDispatch(specPath, sliceId, taskId, {
+    outcome: 'shipped' | 'failed-fallback-pending' | 'failed-halted',
+    head_sha: reconciler.head_sha,
+    commit_count: reconciler.commit_count,
+    completed_at: <ISO now>,
+    concerns: [...]  // optional
+  });
+  ```
+  This mutates the in-progress record in place by `task_id` match. Throws if no matching in-progress entry found.
+
+- **At sonnet reconcile** (transport=claude-subagent, synchronous), append a terminal dispatch record directly:
+  ```bash
+  cli sidecar-append-implement-dispatch --specPath <spec> --sliceId <slice-N> --dispatch '{
+    "slice_id":"<slice-N>",
+    "agent":"sonnet",
+    "transport":"claude-subagent",
+    "thread_id":null,
     "dispatched_at":"<ISO>",
     "completed_at":"<ISO>",
     "worktree":"<absolute worktree path>",
@@ -426,6 +517,7 @@ Use the slice-3 implement-phase persistence CLI/methods (sidecar.js):
     "outcome":"shipped|failed-fallback-pending|failed-halted"
   }'
   ```
+
   Dispatch entries are append-only. If fallback ships, both records persist: the failed preferred dispatch and the shipped fallback dispatch.
 
 - **After successful integration** (Phase B.8), update `last_commit_sha` via `sidecar-set-autopilot` and write `slice_reviews[slice-N].phases.implement` shipped/commits via `sidecar-set-phase`.

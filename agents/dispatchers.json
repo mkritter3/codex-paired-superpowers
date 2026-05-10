@@ -1,8 +1,8 @@
 {
   "codex": {
-    "agent": "slice-implementer-codex",
-    "transport": "codex-exec",
-    "tools": ["Read", "Bash"],
+    "transport": "codex-background-bash",
+    "contract": "docs/codex-implementer-contract.md",
+    "tools": ["Bash"],
     "domains": {
       "ui": "forbidden",
       "ai-harness": "forbidden",
@@ -11,8 +11,8 @@
     }
   },
   "sonnet": {
-    "agent": "slice-implementer-sonnet",
     "transport": "claude-subagent",
+    "agent": "slice-implementer-sonnet",
     "tools": ["Read", "Edit", "Write", "Bash"],
     "domains": {
       "ui": "preferred",

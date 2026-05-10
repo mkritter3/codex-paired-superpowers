@@ -186,9 +186,69 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.7.1 — domain-aware routing via dispatchers registry.
+v0.7.2 — codex via orchestrator-level background Bash (LocalShell migration).
 
 ### Changelog
+
+- **v0.7.2** — LocalShell migration for codex dispatch. Removes the
+  10-minute synchronous Bash timeout cap that was killing legitimate
+  long-running codex slices. Architectural changes:
+
+  **Codex no longer ships as a subagent.** `agents/slice-implementer-codex.md`
+  is removed. The codex contract moved to `docs/codex-implementer-contract.md`
+  (referenced by the registry but NOT a Claude Code subagent file).
+
+  **Transport-aware registry.** `agents/dispatchers.json` schema is now
+  transport-specific:
+
+  - `transport: claude-subagent` → entry requires `agent` field, NOT `contract`.
+  - `transport: codex-background-bash` → entry requires `contract` field, NOT `agent`.
+
+  v0.7.2 registry:
+
+  ```json
+  "codex":  { "transport": "codex-background-bash",  "contract": "docs/codex-implementer-contract.md", "tools": ["Bash"], ... }
+  "sonnet": { "transport": "claude-subagent",         "agent": "slice-implementer-sonnet",            "tools": ["Read","Edit","Write","Bash"], ... }
+  ```
+
+  **Orchestrator-level codex dispatch.** Phase B.4 dispatches codex via
+  `Bash run_in_background:true` calling `scripts/codex-exec-with-status.sh`,
+  a wrapper that captures `{exit_code, started_at, completed_at, signal}`
+  to a JSON status file. The status file is durable on-disk evidence — it
+  survives orchestrator session termination, unlike Claude Code's in-memory
+  Bash task registry. Crash mid-batch is recoverable.
+
+  **Runtime bounds.** Per-project `.codex-paired/project.json` gains:
+
+  ```json
+  {
+    "codex_dispatch": {
+      "max_runtime_ms": 7200000,
+      "log_max_bytes": 1048576
+    }
+  }
+  ```
+
+  Defaults: 2-hour kill threshold, 1 MB sidecar log-summary cap. Codex tasks
+  exceeding `max_runtime_ms` are killed (SIGTERM + SIGKILL after 5s grace);
+  halt code `codex-background-timeout`.
+
+  **Sidecar gains async-dispatch fields.** `phases.implement.dispatches[]`
+  entries now support `transport`, `task_id`, `output_file`, `status_file`
+  + a new `outcome: "in-progress"` for background-dispatched but
+  not-yet-reconciled state. New `finalizeImplementDispatch()` API
+  promotes in-progress entries to terminal outcomes by `task_id` match.
+
+  **New halt reasons:**
+
+  - `codex-background-task-lost` — orchestrator crashed AND no status
+    file evidence; cannot infer codex's terminal state.
+  - `codex-background-timeout` — codex exceeded `max_runtime_ms`;
+    orchestrator killed it.
+
+  **Empirical performance (carry forward from v0.7.0):** two parallel
+  shell `codex exec` processes complete in 18s vs 30s single-call
+  baseline — true parallelism, well below the spec's 1.5× threshold.
 
 - **v0.7.1** — domain-aware routing. Adds `agents/dispatchers.json` registry
   declaring which implementers are `forbidden` / `allowed` / `preferred` for
