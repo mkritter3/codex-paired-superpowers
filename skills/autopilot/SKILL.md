@@ -124,21 +124,43 @@ The system rubric only needs to be sent on the first plan-slice round of the fea
 
 ### Phase B: implement
 
-> **v0.7.1 — domain-aware routing dispatch.** Phase B routes implementation work to one of two plugin subagents (`slice-implementer-codex`, `slice-implementer-sonnet`) defined in the plugin's `agents/` directory, gated by a domain policy declared in `agents/dispatchers.json`. UI/UX and AI-harness slices route to Sonnet (Codex `forbidden` for those domains). Backend slices route to Codex by default. Other v0.7.0 properties carry forward: worktree isolation, optional parallel batching for non-overlapping `**Files:**` sets, Node-mechanical worktree/reconciler/integration primitives, subagent JSON advisory + reconciler authoritative.
+> **v0.7.3 — dependency-graph batching + mailbox coordination.** Phase B builds a DAG from each slice's `**DependsOn:**` directive (block form, parsed by `lib/codex-bridge/dependency-graph.js`), computes the *ready-set* (pending slices with all deps shipped), and dispatches the *deterministic first-fit non-overlap subset* of the ready-set. This replaces v0.7.1's consecutive-slice batching — non-consecutive slices can now parallelize when deps + Files allow. Mailbox infrastructure (file-based JSON inboxes per recipient under `.codex-paired/mailboxes/`) lets in-flight agents send progress/blocker messages to the orchestrator + each other; orchestrator polls between turns.
+>
+> Carry forward from v0.7.1: domain-aware routing per `agents/dispatchers.json`. Carry forward from v0.7.2: codex via background Bash + status file; sonnet via Task subagent.
 
-Phase B has nine steps, executed in order:
+Phase B has the following steps, executed in order. v0.7.3 adds **B.PRE** (DAG build/verify, runs once per autopilot session AND on every resume) and replaces B.2 entirely.
 
-1. **Resolve domain** — Claude reads `**Domain:**` directive or infers from `**Files:**` paths.
-2. **Pre-dispatch checklist** — Claude inspects the slice section directly; enforces domain policy via the registry.
-3. **Conflict comparison** — Claude compares Files sets across consecutive parallel-candidate slices.
-4. **Worktree setup per batch** — create + bootstrap + verify (two-tier gate).
-5. **Dispatch** — invoke the routed subagent(s); parallel batches dispatch in a SINGLE assistant turn.
-6. **Reconcile** — call `reconcileWorktree` from `lib/codex-bridge/reconciler.js`.
-7. **Apply routing rules** — preferred → fallback → halt; fallback respects domain policy.
-8. **Persist** — sidecar `setImplementMeta` / `setImplementBootstrap` / `appendImplementDispatch` (now includes resolved domain).
-9. **Integration** — ordered cherry-pick via `lib/codex-bridge/worktree-integrate.js`; clean up worktrees.
+1. **PRE: Build + verify DAG** (v0.7.3) — `buildDAG(planPath)`; persist digest to sidecar; on resume halt `plan-changed-during-autopilot` if digest mismatches.
+2. **Resolve domain** — Claude reads `**Domain:**` directive or infers from `**Files:**` paths.
+3. **Pre-dispatch checklist** — Claude inspects the slice section directly; enforces domain policy via the registry.
+4. **Ready-set + first-fit batching** (v0.7.3 REPLACES old conflict comparison) — `computeReadySet(dag, sliceStates)` then `maximalFirstFitNonOverlap(readySet, filesIndex)`.
+5. **Worktree setup per batch** — create + bootstrap + verify (two-tier gate).
+6. **Dispatch** — invoke routed subagent(s); parallel batches dispatch in a SINGLE assistant turn. v0.7.3 dispatch prompts include the agent's mailbox protocol.
+7. **Between turns** (v0.7.3) — orchestrator polls in-flight inboxes + own inbox; surfaces unread messages.
+8. **Reconcile** — call `reconcileWorktree` from `lib/codex-bridge/reconciler.js`.
+9. **Apply routing rules** — preferred → fallback → halt; fallback respects domain policy.
+10. **Failure cascade halt** (v0.7.3) — on any slice's `failed-halted` outcome, halt the run with `dependency-cascade-halt` listing descendants.
+11. **Persist** — sidecar `setImplementMeta` / `setImplementBootstrap` / `appendImplementDispatch`.
+12. **Integration** — ordered cherry-pick via `lib/codex-bridge/worktree-integrate.js`; clean up worktrees.
 
 The rest of this section spells each step out verbatim.
+
+#### Phase B.PRE — Build + verify DAG (v0.7.3)
+
+At the start of an autopilot session AND at the start of every Phase B turn (including resume after crash):
+
+1. Call `buildDAG(planPath)` from `lib/codex-bridge/dependency-graph.js`.
+2. On `{ ok: false, halt }` — halt with the returned reason (`dep-block-malformed`, `dep-self-reference`, `dep-unknown-slice`, `dep-cycle`, etc.). These are pre-dispatch fatal — no worktree work.
+3. On `{ ok: true, dag, filesIndex, digest }`:
+   - **First call (session start)**: persist `{digest, dag}` to sidecar's `autopilot.dependency_graph` block.
+   - **Subsequent calls (every turn / on resume)**: read persisted digest from sidecar. Compare with the freshly-computed `digest`. If mismatch → halt `plan-changed-during-autopilot` with old + new digests in diagnostic. The user has edited the plan mid-run; on resume, autopilot must re-validate.
+4. Compute current slice states from sidecar:
+   - `shipped` — `slice_reviews[sliceId].phases.implement.shipped === true`
+   - `failed` — most recent dispatch outcome is `failed-halted`
+   - `in-progress` — most recent dispatch outcome is `in-progress` (codex-background-bash awaiting completion)
+   - `pending` — otherwise
+
+The orchestrator carries `dag`, `filesIndex`, and `sliceStates` through the rest of Phase B.
 
 #### Phase B.0 — Domain resolution (v0.7.1)
 
@@ -243,17 +265,35 @@ Apply these checks in order. The first failure halts the entire candidate window
 
 **Candidate-window halt rule:** if any of the above halts fire on any candidate slice, halt **before creating or bootstrapping any worktree** in that window. Do not partially set up worktrees and roll back. The halt summary must surface the exact offending slice id, path, and value.
 
-#### Phase B.2 — Conflict comparison
+#### Phase B.2 — Ready-set + first-fit batching (v0.7.3 REPLACEMENT)
 
-Once every candidate's directive and Files block is valid, compute parallelism.
+v0.7.3 replaces the v0.7.0 "consecutive non-overlapping slices" logic with DAG-aware batching. Non-consecutive slices can now parallelize when both deps and Files allow.
 
-1. For each candidate, build the Files set: trim each bullet, normalize as repo-relative path strings (no normalization beyond trim — paths are already validated).
-2. Compare every pair of candidates' Files sets for exact path overlap.
-3. Decision:
-   - **No overlap across all candidates** → form one parallel batch containing all candidates. Mixed Codex/Sonnet implementers are allowed in the same parallel batch.
-   - **Any overlap** → force serial execution. Drop back to single-slice batches; record `parallel_suppressed_reason: "files-overlap"` in the sidecar implement meta for each affected slice. Process the slices one at a time in order.
+```js
+import { computeReadySet, maximalFirstFitNonOverlap } from '<plugin>/lib/codex-bridge/dependency-graph.js';
 
-Conflict detection runs only on Files sets, never on implementer choice. Two Sonnet slices may run in parallel if their Files sets are disjoint; a Codex slice and a Sonnet slice may run in parallel if their Files sets are disjoint.
+const readySet = computeReadySet(dag, sliceStates);
+//   pending slices whose every dep has shipped state.
+
+const batch = maximalFirstFitNonOverlap(readySet, filesIndex);
+//   deterministic first-fit by numeric slice id; greedy-include if Files
+//   set disjoint from already-included.
+```
+
+**Algorithm guarantees:**
+
+- **Deterministic.** Same DAG + same Files yields the same batch every time. Sort key is numeric slice id.
+- **Conservative.** Returns the largest non-overlapping subset achievable via first-fit. Doesn't attempt combinatorial-optimal bin-packing (NP-hard for arbitrary inputs; first-fit is good enough for typical N=2-10).
+- **Mixed-implementer compatible.** Conflict detection still runs only on Files sets, not on implementer choice. A Codex backend slice and a Sonnet UI slice can both batch together if their Files don't overlap.
+- **Empty ready-set is OK.** When a session has only in-progress codex-background-bash dispatches and no pending slices have all deps shipped, `readySet === []` and `batch === []`. Phase B turn ends; orchestrator waits for in-flight completions (Phase B between-turns inbox polling, see B.4.5).
+
+**Per-slice sidecar update for the batch:**
+
+For each slice in the chosen batch, write `setImplementMeta` with:
+- `parallel_group`: a batch id like `parallel-<ISO>-<slice-from>-<slice-to>` if `batch.length > 1`, else `null`.
+- `parallel_suppressed_reason`: typically `null` under v0.7.3 (we no longer "suppress" — we just don't include conflicting slices in the batch). For backward compatibility with v0.7.1 sidecars, this field is preserved as `null`.
+
+Slices in `readySet` that did NOT make it into `batch` (because they overlap with a higher-priority pick) stay `pending` and become candidates next turn.
 
 #### Phase B.3 — Worktree setup per batch
 
@@ -373,6 +413,60 @@ Multi-turn completion handling does NOT violate the single-turn parallel dispatc
 
 Do not begin Phase B.8 integration cherry-pick until ALL slices in the parallel batch are terminal (shipped / blocked / failed). Reconcile each slice as it completes, but defer integration until the batch is done.
 
+##### Mailbox protocol in agent prompts (v0.7.3)
+
+Every dispatch prompt — codex (Bash invocation prompt) and sonnet (Task subagent prompt) — appends this protocol block:
+
+```
+=== Mailbox protocol ===
+
+Your inbox: <repo>/.codex-paired/mailboxes/<your-slice-id>.json
+
+To send a status / progress / blocker message to the orchestrator:
+  node <plugin>/lib/codex-bridge/cli.js mailbox-write \
+    --to orchestrator \
+    --from <your-slice-id> \
+    --text-stdin
+  (then write your message body to stdin)
+
+Tip: prefix BLOCKER messages with "BLOCKER:" so the orchestrator surfaces
+them immediately. Progress messages are best-effort logging — failure to
+deliver does not block your work. BLOCKER delivery failure DOES block:
+if your mailbox-write call for a BLOCKER fails, set your final-message
+JSON status to BLOCKED/NEEDS_CONTEXT with the delivery-failure noted in
+concerns.
+
+To send a message to another in-flight slice (rare; usually mediated by
+orchestrator instead):
+  node <plugin>/lib/codex-bridge/cli.js mailbox-write \
+    --to slice-N --from <your-slice-id> --text-stdin
+
+To read your own inbox (orchestrator may have asked you something):
+  node <plugin>/lib/codex-bridge/cli.js mailbox-read \
+    --for <your-slice-id> --actor <your-slice-id> --unread
+
+For long-running slices: send a progress update every 5-10 minutes so the
+orchestrator has visibility (e.g., "Progress: 30% — finished test list").
+```
+
+The orchestrator reads in-flight inboxes between turns (Phase B.4.5).
+
+#### Phase B.4.5 — Between-turns inbox polling (v0.7.3)
+
+Between every assistant turn during Phase B (after dispatching parallel batches, before the next turn's actions), the orchestrator:
+
+1. Reads `orchestrator.json` inbox (`mailbox-read --for orchestrator --actor orchestrator --unread`). Surfaces every unread message as diagnostics.
+2. For every slice with outcome=in-progress: reads its inbox (`--for slice-N --actor orchestrator --unread`). Surfaces unread messages.
+3. Marks each surfaced message as read via `mailbox-mark-read`.
+4. Special handling for messages whose `text` starts with `BLOCKER:`: pause forward-progress for that slice's batch and surface the blocker to the user. Halt code: `slice-blocker-from-mailbox` (slice still in-progress; user investigates whether to abort or wait).
+
+Mailbox failures during polling halt the orchestrator (per spec rev5 §6.3 boundary table — orchestrator ops are NOT best-effort):
+- `mailbox-corrupt` — inbox JSON unparseable; corrupt file moved to archive (best-effort) before halt.
+- `mailbox-lock-timeout` — 50-retry budget exhausted; filesystem trouble.
+- `mailbox-permission-denied` — should never fire here (orchestrator can read any inbox); indicates programming error.
+
+Inbox archive rotation is best-effort. When `inboxSizeBytes > mailbox.max_bytes`, orchestrator calls `archiveAndReset` per the configured `mailbox.archive_policy`. All-unread overflow → halt `mailbox-overflow-unread` (no silent loss).
+
 #### Phase B.5 — Reconcile (reconciler is truth)
 
 For each returned subagent, call:
@@ -450,6 +544,31 @@ preferred implementer
 **Both implementers fail** → halt `implementer-unavailable`. Record both dispatch failures in the sidecar. Leave the worktree in place for inspection.
 
 For parallel batches, fallback is per-slice. One slice failing the preferred implementer does not trigger fallback or halt for the other slice in the batch. Each slice's reconcile/fallback/halt decision is independent.
+
+#### Phase B.6.5 — Failure cascade halt (v0.7.3)
+
+When ANY slice in the autopilot run reaches a `failed-halted` outcome (preferred + fallback both failed, or `BLOCKED`/`NEEDS_CONTEXT` halt without recovery), the orchestrator MUST halt the entire autopilot run with `dependency-cascade-halt`.
+
+```js
+import { enumerateDescendants } from '<plugin>/lib/codex-bridge/dependency-graph.js';
+const blockedDescendants = enumerateDescendants(dag, failedSliceId);
+```
+
+The halt diagnostic includes:
+
+- `failed_slice_id` — the slice that failed
+- `failure_reason` — the underlying halt reason (`implementer-unavailable`, `codex-blocked`, etc.)
+- `blocked_descendants` — array of slice ids transitively depending on the failed slice
+- `shipped_so_far` — array of slice ids already shipped (preserved on integration branch)
+
+Why halt the whole run rather than continuing with non-descendants? Because:
+- The user needs visibility: silently continuing would land partial work without surfacing the failure.
+- DAG correctness assumes deps shipped successfully; a failed slice invalidates that assumption for descendants.
+- Resume after user-side investigation is preferable to hidden state divergence.
+
+On resume after the user fixes the failed slice (or instructs autopilot to skip it), the next session's Phase B.PRE re-validates the DAG digest. If the plan changed during investigation → halt `plan-changed-during-autopilot` (catches user edits during recovery). Otherwise resume normally; the failed slice's state in sidecar is reset to `pending` by the user/skill before relaunch.
+
+For parallel batches with multiple failures: enumerate descendants once for each failed slice; the union is the blocked set.
 
 #### Phase B.7 — Persist (sidecar)
 
