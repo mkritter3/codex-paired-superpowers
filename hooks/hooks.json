@@ -1,5 +1,5 @@
 {
-  "description": "codex-paired-superpowers provenance hook: verifies commit conventions during active autopilot runs",
+  "description": "codex-paired-superpowers hooks: provenance verification + v0.7.3.1 mailbox auto-injection for Sonnet subagents",
   "hooks": {
     "PostToolUse": [
       {
@@ -8,6 +8,15 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/check-commit-provenance.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/mailbox-inject.sh\""
           }
         ]
       }
