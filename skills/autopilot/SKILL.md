@@ -147,18 +147,48 @@ The rest of this section spells each step out verbatim.
 
 #### Phase B.PRE — Build + verify DAG (v0.7.3)
 
-At the start of an autopilot session AND at the start of every Phase B turn (including resume after crash):
+Read the autopilot block from sidecar to get the planPath:
 
-1. Call `buildDAG(planPath)` from `lib/codex-bridge/dependency-graph.js`.
-2. On `{ ok: false, halt }` — halt with the returned reason (`dep-block-malformed`, `dep-self-reference`, `dep-unknown-slice`, `dep-cycle`, etc.). These are pre-dispatch fatal — no worktree work.
-3. On `{ ok: true, dag, filesIndex, digest }`:
-   - **First call (session start)**: persist `{digest, dag}` to sidecar's `autopilot.dependency_graph` block.
-   - **Subsequent calls (every turn / on resume)**: read persisted digest from sidecar. Compare with the freshly-computed `digest`. If mismatch → halt `plan-changed-during-autopilot` with old + new digests in diagnostic. The user has edited the plan mid-run; on resume, autopilot must re-validate.
-4. Compute current slice states from sidecar:
-   - `shipped` — `slice_reviews[sliceId].phases.implement.shipped === true`
-   - `failed` — most recent dispatch outcome is `failed-halted`
-   - `in-progress` — most recent dispatch outcome is `in-progress` (codex-background-bash awaiting completion)
-   - `pending` — otherwise
+```bash
+PLAN_PATH=$(node <plugin>/lib/codex-bridge/cli.js sidecar-show --specPath <spec> | jq -r '.autopilot.plan_path')
+```
+
+At the start of an autopilot session AND at the start of every Phase B turn (including resume after crash), follow these 4 steps:
+
+**Step 1: Build the DAG.**
+
+```js
+import { buildDAG } from '<plugin>/lib/codex-bridge/dependency-graph.js';
+const built = buildDAG(planPath);
+```
+
+**Step 2: Halt on validation failure.** On `{ ok: false, halt }` — halt with the returned reason (`dep-block-malformed`, `dep-self-reference`, `dep-unknown-slice`, `dep-cycle`, etc.). These are pre-dispatch fatal — no worktree work.
+
+**Step 3: Decide write-vs-verify by checking sidecar.**
+
+```bash
+EXISTING=$(node <plugin>/lib/codex-bridge/cli.js sidecar-get-dependency-graph --specPath <spec>)
+```
+
+- **`EXISTING` is empty (first call)**: persist the freshly-built graph:
+
+  ```bash
+  node <plugin>/lib/codex-bridge/cli.js sidecar-set-dependency-graph \
+    --specPath <spec> \
+    --graph "$(jq -nc --arg digest "$built.digest" --argjson dag "$built.dag" \
+                '{digest: $digest, dag: $dag}')"
+  ```
+
+- **`EXISTING` is non-empty (subsequent call / resume)**: parse it as JSON, compare `EXISTING.digest` with `built.digest`. If mismatch → halt `plan-changed-during-autopilot` with both digests in diagnostic. The user has edited the plan mid-run; autopilot must re-validate before continuing.
+
+**Step 4: Compute current slice states from sidecar.**
+
+For each slice id in `built.dag.nodes`:
+
+- `shipped` — `slice_reviews[sliceId].phases.implement.shipped === true`
+- `failed` — most recent entry in `dispatches[]` has `outcome: "failed-halted"`
+- `in-progress` — most recent entry has `outcome: "in-progress"` (codex-background-bash awaiting completion)
+- `pending` — otherwise (no dispatches yet, or last outcome was `failed-fallback-pending` and a fallback hasn't been attempted)
 
 The orchestrator carries `dag`, `filesIndex`, and `sliceStates` through the rest of Phase B.
 
@@ -465,7 +495,20 @@ Mailbox failures during polling halt the orchestrator (per spec rev5 §6.3 bound
 - `mailbox-lock-timeout` — 50-retry budget exhausted; filesystem trouble.
 - `mailbox-permission-denied` — should never fire here (orchestrator can read any inbox); indicates programming error.
 
-Inbox archive rotation is best-effort. When `inboxSizeBytes > mailbox.max_bytes`, orchestrator calls `archiveAndReset` per the configured `mailbox.archive_policy`. All-unread overflow → halt `mailbox-overflow-unread` (no silent loss).
+**Archive rotation timing:** the orchestrator runs the size check + `archiveAndReset` decision **once per Phase B turn, AFTER reading inboxes but BEFORE the next dispatch**. Per-poll size checks are too aggressive (write-amplification under heavy contention); once-per-turn is the right granularity. For each in-flight slice + orchestrator inbox:
+
+```js
+import { inboxSizeBytes, archiveAndReset } from '<plugin>/lib/codex-bridge/mailbox.js';
+import { applyMailboxDefaults } from '<plugin>/lib/codex-bridge/project-config.js';
+
+const cfg = applyMailboxDefaults(projectConfig);
+const size = await inboxSizeBytes(repoRoot, recipient);
+if (size > cfg.max_bytes) {
+  await archiveAndReset(repoRoot, recipient, { archive_policy: cfg.archive_policy });
+}
+```
+
+All-unread overflow during `archiveAndReset` throws `MailboxError(code='mailbox-overflow-unread')` — orchestrator halts (no silent loss). Run `cleanupArchives` periodically (once per autopilot session is enough) to apply retention policy.
 
 #### Phase B.5 — Reconcile (reconciler is truth)
 
