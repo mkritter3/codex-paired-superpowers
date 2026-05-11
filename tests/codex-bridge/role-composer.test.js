@@ -231,3 +231,30 @@ test('composer filters out roles whose resolveIdentity throws (defensive)', () =
     cleanup(root);
   }
 });
+
+test('composer filters malformed directive roles (path-traversal / invalid identity)', () => {
+  const root = makeRepo();
+  try {
+    // Directive with mix of valid + malformed (path-traversal, uppercase,
+    // underscore). The malformed ones cause resolveIdentity to throw
+    // invalid-role-name; composer's defensive filter must skip them.
+    const result = composeExperts({
+      phase: 'spec-review',
+      signals: { explicitDirective: 'ui, ../evil, UI, a_thing, architecture' },
+      repoRoot: root,
+    });
+    const selected = ids(result);
+    // Valid directive roles + phase defaults survive.
+    assert.ok(selected.includes('expert-ui'));
+    assert.ok(selected.includes('expert-architecture'));
+    assert.ok(selected.includes('expert-test')); // phase default
+    // Malformed roles are filtered.
+    assert.ok(!selected.some(id => id.includes('..')), `traversal leaked: ${selected}`);
+    assert.ok(!selected.some(id => /[A-Z_]/.test(id)), `bad-char leaked: ${selected}`);
+    for (const id of selected) {
+      assert.match(id, /^expert-[a-z][a-z0-9-]{0,47}$/, `bad identity: ${id}`);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
