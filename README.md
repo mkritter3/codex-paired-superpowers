@@ -272,12 +272,14 @@ Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook archit
 
 ### Changelog
 
-- **v0.8.0** — domain-expert teammates. Adds a curated bundle of expert
-  roles (UI, UX, accessibility, performance, security, test, architecture,
-  ai-harness, frontend-design, payment-processing, python-development,
-  supabase-toolkit) that compose with the existing Codex L11 reviewer.
-  Experts are Claude-driven Agent dispatches with their own mailbox-rooted
-  inboxes; no native agent-teams runtime dependency.
+- **v0.8.0** — domain-expert teammates. Adds a curated bundle of **7
+  expert roles** that compose with the existing Codex L11 reviewer: `ui`,
+  `ux`, `architecture`, `backend`, `ai-harness`, `test`, `security`. Each
+  role is a Claude-driven Agent dispatch with its own mailbox-rooted inbox
+  (e.g., `expert-ui` peer-DMs `expert-ux` via the existing v0.7.3.1
+  mailbox primitive). No native agent-teams runtime dependency — works on
+  any Claude Code version where `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`
+  is not available.
 
   **File map.** Curated expert prompts ship at
   `lib/codex-bridge/prompts/expert-*.md`; users override by placing
