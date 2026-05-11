@@ -60,3 +60,7 @@ If a slice can't reach double-SHIP in 7 rounds, halt the implementation. Surface
 ## Required upstream sub-skills
 - `superpowers:subagent-driven-development` — for the implementer + spec-reviewer + code-quality-reviewer pattern. This forked skill ADDS the Codex slice review on top.
 - `pr-review-toolkit:silent-failure-hunter` — recommended for the code-quality reviewer in slices that touch error-handling.
+
+## Troubleshooting setup errors
+
+If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. Resume after green.

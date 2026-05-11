@@ -13,9 +13,9 @@ The operating rules:
 - **Anti-yes-man.** Claude evaluates each Codex critique independently, verifies against actual code, and pushes back when wrong.
 - **One Codex thread per feature.** The session UUID lives in a sidecar JSON next to the spec; brainstorm, plan review, and per-slice code review all resume the same thread.
 
-## Skills (forked)
+## Skills
 
-| Skill | What changes vs. upstream |
+| Skill | Purpose |
 |---|---|
 | `brainstorming` | Codex drafts the spec; Claude routes product questions to user, technical to Codex; 7-round revision loop |
 | `writing-plans` | Codex reviews the plan structure on the same session |
@@ -23,6 +23,8 @@ The operating rules:
 | `receiving-code-review` | Anti-rubber-stamp discipline for Codex verdicts |
 | `systematic-debugging` | Codex reviews the root-cause hypothesis before the fix |
 | `test-driven-development` | Codex reviews the test list before red-green-refactor |
+| `autopilot` (v0.3.0+) | Runs a double-SHIP'd plan slice-by-slice unattended; 4 phases × 7-round budgets each |
+| `doctor` (v0.7.3.1+) | Preflight diagnostic — verifies Node, codex CLI, git, vendored deps, hooks, and writeable state dir |
 
 ## Prerequisites
 
@@ -43,29 +45,86 @@ The operating rules:
 
 ## Install
 
-Recommended path: use Claude Code's native plugin install via a marketplace. The plugin is published in a local marketplace at `<plugins-parent>/.claude-plugin/marketplace.json`; adapt the path below to wherever you cloned this repo.
+This plugin is published as a single-plugin marketplace: the repository itself is the marketplace, and adding it makes exactly one plugin (`codex-paired-superpowers`) available.
+
+### From a public GitHub repo (recommended)
 
 ```bash
-# 1) One-time: tell Claude Code about the marketplace that contains the plugin.
-#    Substitute the absolute path to YOUR plugins parent dir.
-claude plugin marketplace add /path/to/plugins
+# 1) One-time: register the marketplace by GitHub owner/repo.
+claude plugin marketplace add <owner>/codex-paired-superpowers
 
-# 2) Install:
-claude plugin install codex-paired-superpowers@mkr-personal
+# 2) Install the plugin (user scope by default).
+claude plugin install codex-paired-superpowers@codex-paired-superpowers
 
-# 3) Verify:
-claude plugin list
+# 3) Reload (or restart Claude Code) to activate.
+/reload-plugins
 ```
 
-Or, inside an active Claude Code session, use the `/plugin` slash command to browse and install interactively.
+Substitute `<owner>` with the actual GitHub username/org hosting this repo. Full HTTPS or SSH URLs also work:
 
-For local development (the author's path, or anyone hacking on the plugin), point Claude Code directly at the working tree without going through a marketplace:
+```bash
+claude plugin marketplace add https://github.com/<owner>/codex-paired-superpowers.git
+claude plugin marketplace add git@github.com:<owner>/codex-paired-superpowers.git
+```
+
+To pin a specific version (tag or branch), append `#`:
+
+```bash
+claude plugin marketplace add <owner>/codex-paired-superpowers#v0.7.3.1
+```
+
+### Inside an active Claude Code session
+
+Use the `/plugin` slash command to browse marketplaces and install interactively. Add via the Marketplaces tab, then install from Discover.
+
+### For local development
+
+If you've cloned the repo and want to point Claude Code directly at the working tree (no marketplace, no install — useful when hacking on the plugin):
 
 ```bash
 claude --plugin-dir /path/to/codex-paired-superpowers
 ```
 
-`node_modules/` is committed (Claude Code does not run `npm install` on plugin install). The four runtime deps are pure-JS — no native bindings, no rebuild step — so the plugin works on any platform with Node 20+.
+### Why `node_modules/` is committed
+
+Claude Code does not run `npm install` on plugin install. The four runtime deps (`proper-lockfile` + three pure-JS transitive deps) are vendored at `node_modules/`. Total 204 KB, zero native bindings, works on any platform with Node 20+. This is the same pattern other Claude Code plugins with Node deps use (e.g., `episodic-memory`).
+
+## Uninstall
+
+```bash
+# Uninstall the plugin but keep the marketplace registered:
+claude plugin uninstall codex-paired-superpowers@codex-paired-superpowers
+
+# Disable temporarily without uninstalling:
+claude plugin disable codex-paired-superpowers@codex-paired-superpowers
+claude plugin enable codex-paired-superpowers@codex-paired-superpowers
+
+# Remove the marketplace entirely (ALSO uninstalls any plugins from it):
+claude plugin marketplace remove codex-paired-superpowers
+```
+
+## First-run health check
+
+After installing, run the bundled doctor to verify all prerequisites are in place:
+
+```bash
+codex-paired-doctor
+```
+
+(It's on `PATH` while the plugin is enabled.) The doctor checks Node version, `codex` CLI presence + authentication, `git` version, vendored dependencies, and hook files. Each FAIL prints the exact command to resolve it. You can also invoke `/codex-paired-superpowers:doctor` from inside Claude Code — same output, surfaced as a skill response.
+
+Run the doctor proactively when any skill produces errors mentioning `Cannot find module`, `codex: command not found`, `codex not authenticated`, or similar setup-shaped failures.
+
+## Publishing your own copy
+
+If you're forking this plugin to publish under your own GitHub account:
+
+1. Edit `.claude-plugin/marketplace.json` and replace `REPLACE_WITH_YOUR_GITHUB_OWNER` with your GitHub username/org. The `source.repo` field must point at the GitHub repository where you'll push.
+2. `git init`, commit, push to a new GitHub repo named `codex-paired-superpowers` (or pick a different repo name and update `source.repo` to match).
+3. Verify by running `claude plugin marketplace add <your-org>/codex-paired-superpowers` from another machine (or against an empty plugin cache).
+4. Optionally tag a release (`git tag v0.7.3.1 && git push --tags`) so users can pin versions.
+
+The marketplace.json's `source` field uses GitHub source rather than a local relative path because the plugin and the marketplace catalog live at the same root (Claude Code's local relative-path sources expect the plugin to sit in a subdirectory of the marketplace; that pattern doesn't fit a single-plugin self-marketplace).
 
 ## Usage
 
@@ -267,6 +326,18 @@ v0.7.3.1 — mailbox auto-delivery for Sonnet subagents (PostToolUse hook). All 
   Cross-slice races are race-free because each slice has its own inbox
   file. The `read → emit → mark-read` ordering is the worker-sees-bytes-
   first invariant that requires releasing the lock between read and mark.
+
+  **Doctor preflight + public-repo layout.** `bin/codex-paired-doctor`
+  (also exposed as `/codex-paired-superpowers:doctor`) checks 8
+  prerequisites (Node version, codex CLI, codex auth, git version,
+  vendored deps, bridge-CLI loadability, hooks, project state dir) and
+  prints exact fix commands for any failure. All user-facing skill
+  files (`brainstorming`, `autopilot`, `writing-plans`, `test-driven-development`,
+  `systematic-debugging`, `receiving-code-review`, `subagent-driven-development`)
+  now reference the doctor as the recovery path for setup-failure error
+  patterns. `.claude-plugin/marketplace.json` makes the repo a
+  single-plugin self-marketplace so users can install via
+  `claude plugin marketplace add <owner>/codex-paired-superpowers`.
 
   Spec hardened across 5 Codex review rounds (3 REVISE + 2 SHIP).
   L11 validation pass on all 7 slices including hook coexistence smoke

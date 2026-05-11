@@ -141,3 +141,7 @@ Invoke `superpowers:writing-plans` (or this plugin's forked version once shipped
 - **Round-7 deadlock:** annotate spec with both positions; user arbitrates; arbitration recorded in sidecar.
 - **User overrides Codex:** allowed; recorded under `open_contentions`.
 - **Sidecar corruption:** treat as data loss; restart with new session, surface to user.
+
+## Troubleshooting setup errors
+
+If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern while running this skill, invoke `/codex-paired-superpowers:doctor` first. The doctor diagnoses the install and prints the exact commands to fix each issue. Resume this skill after the doctor reports all checks green.

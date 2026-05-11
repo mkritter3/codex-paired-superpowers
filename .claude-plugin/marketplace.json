@@ -1,0 +1,16 @@
+{
+  "name": "codex-paired-superpowers",
+  "description": "Single-plugin marketplace for codex-paired-superpowers. The plugin and the marketplace catalog live in the same repository — adding this marketplace makes exactly one plugin (`codex-paired-superpowers`) available for install.",
+  "owner": { "name": "mkr" },
+  "plugins": [
+    {
+      "name": "codex-paired-superpowers",
+      "description": "Six superpowers skills paired with Codex (GPT-5.5) as an L11 engineering partner; one persistent Codex thread per feature; 7-round revision loop with structured verdict protocol.",
+      "version": "0.7.3.1",
+      "source": {
+        "source": "github",
+        "repo": "REPLACE_WITH_YOUR_GITHUB_OWNER/codex-paired-superpowers"
+      }
+    }
+  ]
+}

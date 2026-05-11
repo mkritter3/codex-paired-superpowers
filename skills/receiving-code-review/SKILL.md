@@ -44,3 +44,7 @@ The only acceptable shapes: agree-with-evidence, disagree-with-evidence, request
 
 ## Sidecar logging
 Both your verdict and Codex's must be recorded each round (the bridge does this automatically via `appendRound`). Don't skip rounds. Don't summarize multiple rounds into one.
+
+## Troubleshooting setup errors
+
+If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. Resume after green.

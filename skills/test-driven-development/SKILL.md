@@ -50,3 +50,7 @@ At slice review time, the test suite is part of the diff. Codex's slice review w
 
 ## Required upstream sub-skill
 - `superpowers:test-driven-development` for the red-green-refactor mechanics. This forked skill ADDS the up-front test-list review.
+
+## Troubleshooting setup errors
+
+If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. Resume after green.

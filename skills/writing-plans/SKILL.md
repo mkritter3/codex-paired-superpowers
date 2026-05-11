@@ -92,3 +92,7 @@ In either path, the per-slice review fires from `subagent-driven-development` (f
 - **Sidecar missing:** the spec wasn't run through Codex-paired brainstorming. Halt and tell the user.
 - **Spec not double-SHIP'd:** halt. Run brainstorming first.
 - **Round-7 deadlock on plan:** annotate the plan with both positions, surface to user, record arbitration in sidecar.
+
+## Troubleshooting setup errors
+
+If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. Resume after green.

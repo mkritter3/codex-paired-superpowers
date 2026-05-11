@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# codex-paired-superpowers doctor — preflight checks.
+#
+# Run this when you first install the plugin, when a skill fails with what
+# looks like a setup error, or anytime you want to verify the install is
+# healthy. The script makes no changes to your system; it only reports what
+# is and isn't configured.
+#
+# Output: human-readable summary on stdout. Pass --json to get a machine-
+# parseable report instead (one object per check + a summary).
+#
+# Exit code: 0 if all checks pass or only warn, 1 if any FAIL.
+set -uo pipefail
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+WANT_JSON=0
+if [ "${1:-}" = "--json" ]; then WANT_JSON=1; fi
+
+# ── Result accumulator ────────────────────────────────────────────────────
+declare -a RESULTS=()
+declare -i FAIL_COUNT=0
+declare -i WARN_COUNT=0
+declare -i PASS_COUNT=0
+
+record() {
+  # record <status> <check-name> <detail> [fix-command]
+  local status="$1" name="$2" detail="$3" fix="${4-}"
+  case "$status" in
+    pass) PASS_COUNT=$((PASS_COUNT + 1)) ;;
+    warn) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+    fail) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
+  esac
+  RESULTS+=("$status|$name|$detail|$fix")
+}
+
+# ── Check 1: node v20+ ────────────────────────────────────────────────────
+if ! command -v node >/dev/null 2>&1; then
+  record fail "node" "node not on PATH" \
+    "Install Node 20+ from https://nodejs.org or via: brew install node@20"
+else
+  NODE_V=$(node --version 2>/dev/null | sed 's/^v//')
+  NODE_MAJOR="${NODE_V%%.*}"
+  if [ -z "$NODE_MAJOR" ] || ! [ "$NODE_MAJOR" -ge 20 ] 2>/dev/null; then
+    record fail "node" "node $NODE_V found; v20+ required" \
+      "brew upgrade node OR install v20+ from https://nodejs.org"
+  else
+    record pass "node" "v$NODE_V (>=v20 OK)" ""
+  fi
+fi
+
+# ── Check 2: codex CLI ────────────────────────────────────────────────────
+if ! command -v codex >/dev/null 2>&1; then
+  record fail "codex-cli" "codex not on PATH — required for the bundled MCP server and the 7-round Claude<->Codex loop" \
+    "brew install openai/codex/codex   # or: npm install -g @openai/codex"
+else
+  CODEX_V=$(codex --version 2>/dev/null | head -1 | sed 's/codex //' || echo "unknown")
+  record pass "codex-cli" "$CODEX_V" ""
+fi
+
+# ── Check 3: codex authentication ─────────────────────────────────────────
+# Heuristic: codex stores auth state at ~/.codex/config.toml or similar.
+# A fast non-destructive probe: codex login --help should succeed; an
+# unauthenticated codex throws on mcp-server start. We try the cheaper check.
+if command -v codex >/dev/null 2>&1; then
+  if codex login --help >/dev/null 2>&1; then
+    # CLI is responsive; check for credential file.
+    if [ -f "$HOME/.codex/config.toml" ] || [ -f "$HOME/.codex/auth.json" ] || [ -f "$HOME/.config/codex/auth.json" ]; then
+      record pass "codex-auth" "credentials present" ""
+    else
+      record warn "codex-auth" "no codex auth file detected; first invocation may prompt for login" \
+        "Run: codex login"
+    fi
+  else
+    record warn "codex-auth" "could not probe codex auth state (codex CLI present but unresponsive)" \
+      "Run: codex login"
+  fi
+fi
+
+# ── Check 4: git v2.5+ (for worktrees) ────────────────────────────────────
+if ! command -v git >/dev/null 2>&1; then
+  record fail "git" "git not on PATH — required for autopilot's worktree-based parallel slice dispatch" \
+    "Install git: brew install git (macOS) or your OS package manager"
+else
+  GIT_V=$(git --version 2>/dev/null | sed 's/git version //')
+  GIT_MAJOR="${GIT_V%%.*}"
+  GIT_REST="${GIT_V#*.}"
+  GIT_MINOR="${GIT_REST%%.*}"
+  # Require >= 2.5 (git worktree was introduced in 2.5).
+  if [ "$GIT_MAJOR" -lt 2 ] 2>/dev/null || { [ "$GIT_MAJOR" = "2" ] && [ "$GIT_MINOR" -lt 5 ] 2>/dev/null; }; then
+    record warn "git" "git $GIT_V found; >=2.5 recommended for worktree support" \
+      "Update git via your OS package manager"
+  else
+    record pass "git" "$GIT_V" ""
+  fi
+fi
+
+# ── Check 5: vendored node_modules (proper-lockfile must be importable) ───
+if [ -f "$PLUGIN_ROOT/node_modules/proper-lockfile/package.json" ]; then
+  record pass "vendored-deps" "proper-lockfile + transitive deps present at $PLUGIN_ROOT/node_modules" ""
+else
+  record fail "vendored-deps" "vendored node_modules missing or incomplete at $PLUGIN_ROOT/node_modules — mailbox + autopilot will fail at runtime" \
+    "Reinstall the plugin: /plugin uninstall codex-paired-superpowers@codex-paired-superpowers && /plugin install codex-paired-superpowers@codex-paired-superpowers"
+fi
+
+# ── Check 6: bridge CLI is loadable ───────────────────────────────────────
+if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js" ]; then
+  # Try a non-destructive invocation. Any subcommand-not-found prints the
+  # available list to stderr — that's a successful module load.
+  CLI_PROBE=$(node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" __doctor_probe__ 2>&1 || true)
+  if echo "$CLI_PROBE" | grep -q "unknown subcommand"; then
+    record pass "bridge-cli" "lib/codex-bridge/cli.js loads cleanly" ""
+  else
+    # Extract the most informative single line from node's traceback.
+    PROBE_SUMMARY=$(echo "$CLI_PROBE" | grep -E "Error|Cannot find|SyntaxError" | head -1)
+    [ -z "$PROBE_SUMMARY" ] && PROBE_SUMMARY=$(echo "$CLI_PROBE" | head -1)
+    record fail "bridge-cli" "lib/codex-bridge/cli.js failed to load: $PROBE_SUMMARY" \
+      "Most likely vendored-deps is also failing (above). Reinstall the plugin."
+  fi
+fi
+
+# ── Check 7: hook files present + executable ──────────────────────────────
+if [ -x "$PLUGIN_ROOT/hooks/mailbox-inject.sh" ] && [ -x "$PLUGIN_ROOT/hooks/check-commit-provenance.sh" ]; then
+  record pass "hooks" "PostToolUse hooks present and executable" ""
+elif [ -f "$PLUGIN_ROOT/hooks/mailbox-inject.sh" ]; then
+  record warn "hooks" "hook files present but not executable" \
+    "chmod +x $PLUGIN_ROOT/hooks/*.sh"
+else
+  record fail "hooks" "hook files missing at $PLUGIN_ROOT/hooks/" \
+    "Reinstall the plugin"
+fi
+
+# ── Check 8: current working directory has writable .codex-paired/ ────────
+# This isn't always required (only inside an active autopilot project) but
+# is useful diagnostic when something IS expected and isn't working.
+if [ -d ".codex-paired" ]; then
+  if [ -w ".codex-paired" ]; then
+    record pass "project-state-dir" ".codex-paired/ in current directory is writable" ""
+  else
+    record fail "project-state-dir" ".codex-paired/ in current directory is NOT writable" \
+      "Check filesystem permissions: ls -la .codex-paired/"
+  fi
+else
+  # Not having .codex-paired/ is fine — most repos won't have it until
+  # autopilot first runs there. Report as informational only.
+  record pass "project-state-dir" "no .codex-paired/ in cwd (informational; created lazily by autopilot)" ""
+fi
+
+# ── Output ────────────────────────────────────────────────────────────────
+if [ "$WANT_JSON" -eq 1 ]; then
+  # Emit machine-readable JSON (one summary + array of checks)
+  printf '{\n'
+  printf '  "summary": {"pass": %d, "warn": %d, "fail": %d},\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
+  printf '  "checks": [\n'
+  first=1
+  for entry in "${RESULTS[@]}"; do
+    IFS='|' read -r status name detail fix <<< "$entry"
+    [ "$first" -eq 1 ] || printf ',\n'
+    first=0
+    # JSON-escape via node since detail/fix may contain quotes
+    node -e "process.stdout.write(JSON.stringify({status: process.argv[1], name: process.argv[2], detail: process.argv[3], fix: process.argv[4] || null}))" "$status" "$name" "$detail" "$fix" | sed 's/^/    /'
+  done
+  printf '\n  ]\n}\n'
+else
+  echo "codex-paired-superpowers doctor — checks against PLUGIN_ROOT=$PLUGIN_ROOT"
+  echo ""
+  for entry in "${RESULTS[@]}"; do
+    IFS='|' read -r status name detail fix <<< "$entry"
+    case "$status" in
+      pass) printf "  PASS  %-20s  %s\n" "$name" "$detail" ;;
+      warn) printf "  WARN  %-20s  %s\n" "$name" "$detail"
+            [ -n "$fix" ] && printf "        fix:  %s\n" "$fix" ;;
+      fail) printf "  FAIL  %-20s  %s\n" "$name" "$detail"
+            [ -n "$fix" ] && printf "        fix:  %s\n" "$fix" ;;
+    esac
+  done
+  echo ""
+  echo "Summary: $PASS_COUNT pass, $WARN_COUNT warn, $FAIL_COUNT fail."
+  if [ "$FAIL_COUNT" -gt 0 ]; then
+    echo "Action required: address FAIL items above before using the plugin."
+  elif [ "$WARN_COUNT" -gt 0 ]; then
+    echo "Plugin should work; review WARN items if you hit issues."
+  else
+    echo "All checks green. Plugin is ready to use."
+  fi
+fi
+
+# Exit non-zero only on FAIL.
+[ "$FAIL_COUNT" -eq 0 ]
