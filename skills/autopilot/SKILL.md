@@ -238,22 +238,58 @@ In all other ambiguous cases (no implementer directive or all plausible domains 
 For each slice in the current batch, the orchestrator selects an expert teammate set based on signals (slice frontmatter `**Domain:**`, file paths in the slice's `**Files:**` block, content keywords). The selection is recorded in the sidecar's `expert_teammates.selected[]`:
 
 ```js
-// Pseudo-code: orchestrator selects experts via expert-runtime
+// Pseudo-code: orchestrator selects experts via expert-runtime.
+// IMPORTANT: if the orchestrator believes a broad selection (>5 experts) is
+// warranted, it MUST pre-compute fanOutRationale and pass it INTO signals
+// BEFORE calling selectTeammates. role-composer.js throws
+// `role-composer-fan-out-unjustified` if it returns >5 selections without
+// a fanOutRationale, so providing it after the fact is too late.
 const { selectTeammates } = await import('<plugin>/lib/codex-bridge/expert-runtime.js');
+
+// First pass: estimate breadth from signals (or attempt a narrow call first
+// without rationale and recover via try/catch if it throws).
+const signals = {
+  specHas: [/* spec keywords */],
+  filePaths: [/* slice Files block */],
+  domains: [sliceDomain],
+  explicitDirective: sliceFrontmatter.experts,  // optional **Experts:** directive
+};
+
+// If the orchestrator anticipates broad selection (touches UI + UX + arch
+// + security + AI), include the rationale up front:
+if (anticipatesFanOut) {
+  signals.fanOutRationale = "<concrete justification of the breadth>";
+}
+
 const result = selectTeammates({
   phase: 'post-implementation-review',
-  signals: {
-    specHas: [/* spec keywords */],
-    filePaths: [/* slice Files block */],
-    domains: [sliceDomain],
-    explicitDirective: sliceFrontmatter.experts,  // optional **Experts:** directive
-  },
+  signals,
   repoRoot: <repoRoot>,
 });
-// Then persist via appendExpertSelection + (if fan-out) appendFanOutRationale
+// result.selected: ExpertIdentity[]
+// result.fanOutRationale: string|null  (populated when >5 selected)
+// result.selectionReasons: {[expertId]: string}
+
+// Persist:
+for (const identity of result.selected) {
+  appendExpertSelection(specPath, {
+    id: identity.id,
+    role: identity.role,
+    source: identity.source,
+    phase: 'post-implementation-review',
+    selectionReason: result.selectionReasons[identity.id],
+  });
+}
+if (result.fanOutRationale !== null) {
+  appendFanOutRationale(specPath, {
+    phase: 'post-implementation-review',
+    selected_count: result.selected.length,
+    rationale: result.fanOutRationale,
+  });
+}
 ```
 
-If `result.selected.length > 5`, the orchestrator MUST write a fan-out rationale into `expert_teammates.fan_out_rationales[]` justifying the breadth of selection (per spec §Default Expert Set). The role-composer enforces this contract — calling `appendFanOutRationale` with no rationale on a fan-out throws `role-composer-fan-out-unjustified`.
+The role-composer enforces the fan-out contract via `role-composer-fan-out-unjustified` (thrown from `composeExperts`, not from `appendFanOutRationale`). `appendFanOutRationale` is purely a persistence call — it validates that `selected_count > 5` but cannot detect missing rationale on the composer side.
 
 **Composition with existing Phase B.0:** B.0 still chooses implementer transport (codex vs sonnet) via `dispatchers.json`. B.0.5 augments by selecting domain-expert REVIEWERS for the same slice. Experts do not replace implementers in MVP — they are advisory reviewers that emit verdicts and findings, never accepted manuscript writes.
 
@@ -321,7 +357,26 @@ Apply these checks in order. The first failure halts the entire candidate window
 
 #### Phase B.1.5 — Optional expert pre-review (v0.8.0)
 
-For each expert tagged with `pre-dispatch` in its registry phases (currently `architecture` and `test` per `agents/dispatchers.json`), run `expert-runtime.runTurn(expert, {phase: "pre-dispatch", slice_id: <currentSliceId>, ...})` with the slice plan as context.
+For each expert tagged with `pre-dispatch` in its registry phases (currently `architecture` and `test` per `agents/dispatchers.json`), run `expert-runtime.runTurn(request)` where `request` is the single-object shape defined in `lib/codex-bridge/expert-turn.js`:
+
+```js
+const { runTurn } = await import('<plugin>/lib/codex-bridge/expert-runtime.js');
+
+const result = await runTurn({
+  identity: expertIdentity,           // from selectTeammates result
+  repoRoot: <repoRoot>,
+  specPath: <specPath>,
+  specSnippet: <slice plan section as context>,
+  phase: 'pre-dispatch',
+  sliceId: <currentSliceId>,
+  sidecarParticipantState: <prior turn summaries for this expert, if any>,
+  task: 'Pre-dispatch review of the planned slice. Surface blocking ' +
+        'architectural / test-coverage concerns before implementation begins.',
+});
+// result: { ok: true, result: ParsedMachineResult } | { ok: false, reason: ... }
+```
+
+Do NOT call `runTurn(expert, {phase})` with two arguments — the facade expects a single `request` object. The `(expert, drainContext)` two-arg shape is the SCHEDULER's internal wrapper signature used inside B.5.5's `drainPeerDMs` deps, not the public `runTurn` API.
 
 If all pre-review experts SHIP (no blocking findings), held turn records flow through to B.7 where they are attached to the dispatch record's `expert_blockers: []` (empty) + `experts_selected[]` + `expert_turn_ids[]`. Normal flow continues to B.2.
 
