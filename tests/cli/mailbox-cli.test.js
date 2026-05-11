@@ -462,3 +462,125 @@ test('mailbox-mark-read-batch output shape: keys are exactly marked + skipped (s
   assert.ok(Array.isArray(out.skipped) && out.skipped.every(x => typeof x === 'string'));
   cleanup(root);
 });
+
+// ── v0.8.0 expert-* recipient identity (CLI surfaces) ──────────────────────
+
+test('mailbox-write accepts expert-* recipient and sender', () => {
+  const root = makeRepo();
+  const r = runCli([
+    'mailbox-write',
+    '--to', 'expert-ui',
+    '--from', 'expert-ux',
+    '--text', 'x',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  const result = JSON.parse(r.stdout);
+  assert.match(result.id, /^msg-\d{4}/);
+  cleanup(root);
+});
+
+test('mailbox-read --for expert-ui --actor expert-ui --unread exits 0 (self-read)', () => {
+  const root = makeRepo();
+  // Seed a message
+  runCli([
+    'mailbox-write',
+    '--to', 'expert-ui',
+    '--from', 'expert-ux',
+    '--text', 'peer DM',
+    '--repoRoot', root,
+  ]);
+  const r = runCli([
+    'mailbox-read',
+    '--for', 'expert-ui',
+    '--actor', 'expert-ui',
+    '--unread',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  const messages = JSON.parse(r.stdout);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].from, 'expert-ux');
+  cleanup(root);
+});
+
+test('mailbox-read --for expert-ui --actor orchestrator --unread exits 0 (supervisory)', () => {
+  const root = makeRepo();
+  runCli([
+    'mailbox-write',
+    '--to', 'expert-ui',
+    '--from', 'expert-ux',
+    '--text', 'peer DM',
+    '--repoRoot', root,
+  ]);
+  const r = runCli([
+    'mailbox-read',
+    '--for', 'expert-ui',
+    '--actor', 'orchestrator',
+    '--unread',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  cleanup(root);
+});
+
+test('mailbox-read --for expert-ui --actor expert-ux exits 2 mailbox-permission-denied', () => {
+  const root = makeRepo();
+  runCli([
+    'mailbox-write',
+    '--to', 'expert-ui',
+    '--from', 'orchestrator',
+    '--text', 'secret',
+    '--repoRoot', root,
+  ]);
+  const r = runCli([
+    'mailbox-read',
+    '--for', 'expert-ui',
+    '--actor', 'expert-ux',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  const err = JSON.parse(r.stderr);
+  assert.equal(err.defect, 'mailbox-permission-denied');
+  cleanup(root);
+});
+
+test('mailbox-mark-read-batch --for expert-ui --actor expert-ui marks expert messages', () => {
+  const root = makeRepo();
+  const ids = [];
+  for (let i = 0; i < 2; i++) {
+    const w = runCli([
+      'mailbox-write',
+      '--to', 'expert-ui',
+      '--from', 'expert-ux',
+      '--text', `m${i}`,
+      '--repoRoot', root,
+    ]);
+    ids.push(JSON.parse(w.stdout).id);
+  }
+  const r = runCli([
+    'mailbox-mark-read-batch',
+    '--for', 'expert-ui',
+    '--actor', 'expert-ui',
+    '--message-ids', ids.join(','),
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 0, `stderr=${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout), { marked: ids, skipped: [] });
+  cleanup(root);
+});
+
+test('mailbox-write --to expert-../../x exits 2 mailbox-recipient-malformed', () => {
+  const root = makeRepo();
+  const r = runCli([
+    'mailbox-write',
+    '--to', 'expert-../../x',
+    '--from', 'expert-ui',
+    '--text', 'x',
+    '--repoRoot', root,
+  ]);
+  assert.equal(r.status, 2);
+  const err = JSON.parse(r.stderr);
+  assert.equal(err.defect, 'mailbox-recipient-malformed');
+  cleanup(root);
+});

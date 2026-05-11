@@ -480,3 +480,70 @@ test('markManyAsRead concurrent with writeToMailbox: no deadlock, no data loss',
   assert.equal(fresh.read_at, null);
   cleanup(root);
 });
+
+// ── v0.8.0 expert-* recipient identity ─────────────────────────────────────
+
+test('writeToMailbox accepts expert-* recipients and senders', async () => {
+  const root = makeRepo();
+  const r1 = await writeToMailbox(root, 'expert-ui', { from: 'expert-ux', text: 'peer DM' });
+  const r2 = await writeToMailbox(root, 'expert-ai-harness', { from: 'orchestrator', text: 'spec snippet' });
+  const r3 = await writeToMailbox(root, 'orchestrator', { from: 'expert-ui', text: 'findings' });
+  assert.match(r1.id, /^msg-\d{4}/);
+  assert.match(r2.id, /^msg-\d{4}/);
+  assert.match(r3.id, /^msg-\d{4}/);
+  const inbox = await readMailbox(root, 'expert-ui');
+  assert.equal(inbox.length, 1);
+  assert.equal(inbox[0].from, 'expert-ux');
+  cleanup(root);
+});
+
+test('writeToMailbox rejects malformed expert-* recipients (path traversal, empty suffix, underscore, uppercase, double-hyphen-uppercase)', async () => {
+  const root = makeRepo();
+  const bad = [
+    'expert-../../x',
+    'expert-',
+    'expert_UI',
+    'expert-UI',
+    'expert-A-B',
+  ];
+  for (const recipient of bad) {
+    await assert.rejects(
+      () => writeToMailbox(root, recipient, { from: 'orchestrator', text: 'x' }),
+      err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed',
+      `expected rejection for recipient=${JSON.stringify(recipient)}`
+    );
+  }
+  cleanup(root);
+});
+
+test('writeToMailbox rejects malformed expert-* senders (from-field)', async () => {
+  const root = makeRepo();
+  const bad = [
+    'expert-../../x',
+    'expert-',
+    'expert_UI',
+    'expert-UI',
+    'expert-A-B',
+  ];
+  for (const from of bad) {
+    await assert.rejects(
+      () => writeToMailbox(root, 'orchestrator', { from, text: 'x' }),
+      err => err instanceof MailboxError && err.code === 'mailbox-recipient-malformed',
+      `expected rejection for from=${JSON.stringify(from)}`
+    );
+  }
+  cleanup(root);
+});
+
+test('markManyAsRead works for expert-* recipients', async () => {
+  const root = makeRepo();
+  const { id: id1 } = await writeToMailbox(root, 'expert-ui', { from: 'expert-ux', text: 'a' });
+  const { id: id2 } = await writeToMailbox(root, 'expert-ui', { from: 'orchestrator', text: 'b' });
+  const result = await markManyAsRead(root, 'expert-ui', [id1, id2]);
+  assert.deepEqual(result, { marked: [id1, id2], skipped: [] });
+  const msgs = await readMailbox(root, 'expert-ui');
+  for (const m of msgs) {
+    assert.ok(m.read_at !== null && typeof m.read_at === 'string', `${m.id} should have ISO read_at`);
+  }
+  cleanup(root);
+});
