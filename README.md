@@ -26,25 +26,46 @@ The operating rules:
 
 ## Prerequisites
 
-- `codex` CLI v0.128.0+ on PATH, authenticated against an account with GPT-5.5 access.
-- Node.js v20+ (built-in `node --test` runner; v24+ tested).
+- **`codex` CLI v0.128.0+** on PATH, authenticated against an account with GPT-5.5 access. Install:
+  ```bash
+  # macOS / Linux (Homebrew):
+  brew install openai/codex/codex
+
+  # or via npm (cross-platform):
+  npm install -g @openai/codex
+
+  # then authenticate:
+  codex login
+  ```
+  See [openai/codex on GitHub](https://github.com/openai/codex) for source, alternative installers (Docker, GitHub Releases), and version requirements.
+- **Node.js v20+** on PATH (the bundled MCP server + the bridge CLI run as a Node subprocess; runtime deps are vendored in `node_modules/`, no `npm install` required).
+- **`git` v2.5+** for worktree-based parallel slice dispatch (v0.7.0+).
 
 ## Install
 
-This plugin lives at `/Users/mkr/local-coding/plugins/codex-paired-superpowers/`. Install via the personal local marketplace:
+Recommended path: use Claude Code's native plugin install via a marketplace. The plugin is published in a local marketplace at `<plugins-parent>/.claude-plugin/marketplace.json`; adapt the path below to wherever you cloned this repo.
 
 ```bash
-# 1) Add the local marketplace (one-time)
-claude plugin marketplace add /Users/mkr/local-coding/plugins
+# 1) One-time: tell Claude Code about the marketplace that contains the plugin.
+#    Substitute the absolute path to YOUR plugins parent dir.
+claude plugin marketplace add /path/to/plugins
 
-# 2) Install this plugin
+# 2) Install:
 claude plugin install codex-paired-superpowers@mkr-personal
 
-# 3) Reload (or restart Claude Code)
+# 3) Verify:
 claude plugin list
 ```
 
-Inside an active Claude Code session, you can also use the `/plugin` slash command.
+Or, inside an active Claude Code session, use the `/plugin` slash command to browse and install interactively.
+
+For local development (the author's path, or anyone hacking on the plugin), point Claude Code directly at the working tree without going through a marketplace:
+
+```bash
+claude --plugin-dir /path/to/codex-paired-superpowers
+```
+
+`node_modules/` is committed (Claude Code does not run `npm install` on plugin install). The four runtime deps are pure-JS — no native bindings, no rebuild step — so the plugin works on any platform with Node 20+.
 
 ## Usage
 
@@ -186,9 +207,74 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.7.3 — mailbox + dependency graph + ready-set batching.
+v0.7.3.1 — mailbox auto-delivery for Sonnet subagents (PostToolUse hook). All implementation slices shipped; live Task-subagent verification (release gate) is the only remaining step before tag.
 
 ### Changelog
+
+- **v0.7.3.1** — closes the auto-delivery gap from v0.7.3. The mailbox proved
+  coordination works empirically, but agents had to remember to poll between
+  tool calls; v0.7.3.1 delivers messages automatically.
+
+  **Sonnet auto-injection (PostToolUse hook).** `hooks/mailbox-inject.sh` →
+  `lib/codex-bridge/hook-mailbox-inject.js`. The hook fires on
+  Bash/Edit/Write/Read inside Task subagents, infers the slice identity from
+  the subagent's `cwd` (right-to-left scan for `.git-worktrees/slice-N` with
+  `.codex-paired/` sibling validation), reads the slice's unread inbox, and
+  emits a `<codex-paired-pending-messages>` block via Claude Code's
+  documented `hookSpecificOutput.additionalContext` channel. After the
+  stdout flush completes, the hook marks the delivered messages read in a
+  single batched lockfile acquisition.
+
+  **Pre-injection at dispatch time.** The orchestrator pre-injects any
+  already-queued messages into the dispatch prompt before invocation,
+  guaranteeing zero-loss delivery even for the start-of-run case. The
+  wrapper trailer differs intentionally from the hook's: pre-injected
+  messages are NOT marked read until terminal result ("queued for you …
+  NOT yet marked read"), so a crashed dispatch retries deliver the same
+  messages. Dispatch records gain an `injected_message_ids` field
+  (validated in `appendImplementDispatch`); Phase B.4.5 polling skips ids
+  present there to avoid racing terminal-result mark-read ownership.
+
+  **Codex cooperative checkpoints.** Codex transport stays cooperative
+  (subprocess opacity precludes mid-run injection). The dispatch prompt
+  body now lists five named semantic checkpoints — start, before-test,
+  before-commit, after-long-cmd, before-final-response — at which the
+  codex agent calls `mailbox-read --unread` and `mailbox-mark-read-batch`.
+  Explicitly NOT pre-edit (that trains ritual polling).
+
+  **Batch helper + CLI.** `markManyAsRead(repoRoot, sliceId, messageIds)`
+  in `lib/codex-bridge/mailbox.js` does a single-lock batch with
+  dedupe-by-first-occurrence, input-order results, and idempotent
+  re-delivery (already-read ids preserve their original `read_at`). Exposed
+  as `mailbox-mark-read-batch --for --actor --message-ids <CSV> [--repoRoot]`.
+  Strict format regex `msg-YYYY-MM-DDTHH-MM-SS-mmmZ-NNNN` validates each
+  CSV part at the CLI boundary; malformed ids reject the whole batch
+  before any helper invocation (no partial mutation).
+
+  **Debug env hatch.** `CPS_HOOK_DEBUG=1` in the Claude Code environment
+  surfaces wrapper-level failures (node missing, module missing, syntax
+  error, non-zero exit) to stderr (Claude Code logs hook stderr without
+  injecting it into the subagent prompt). Production path is silent.
+
+  **Cost.** Hook cold-start ~110ms per Bash/Edit/Write/Read tool call,
+  whether the subagent is in a slice worktree or not. A 50-tool-call
+  non-slice subagent (code-reviewer, explore, etc.) adds ~5-6s wall-clock.
+  Future optimization candidates: compiled wrapper or long-lived daemon.
+
+  **Concurrency characteristic (Linux).** Same-slice racing hook fires
+  may each deliver the same message before any mark-read commits —
+  duplicate delivery, not data loss (spec §5.4 explicitly accepts this).
+  Cross-slice races are race-free because each slice has its own inbox
+  file. The `read → emit → mark-read` ordering is the worker-sees-bytes-
+  first invariant that requires releasing the lock between read and mark.
+
+  Spec hardened across 5 Codex review rounds (3 REVISE + 2 SHIP).
+  L11 validation pass on all 7 slices including hook coexistence smoke
+  (`tests/smoke/hooks-coexist.sh`), cross-slice concurrency smoke
+  (`tests/smoke/hooks-cross-slice-concurrency.sh`), Linux smoke via
+  Docker, sidecar backward-compat with v0.7.3 records. Release gate:
+  manual live Task-subagent verification per
+  `docs/verification/v0.7.3.1-hook-fires.md`.
 
 - **v0.7.3** — Three coupled features unlock "as many parallel agents as the
   dependency graph allows, without overlap":

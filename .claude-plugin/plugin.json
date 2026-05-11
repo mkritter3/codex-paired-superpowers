@@ -1,7 +1,7 @@
 {
   "name": "codex-paired-superpowers",
   "description": "Fork of six superpowers skills paired with Codex (GPT-5.5) as an L11 engineering partner. One persistent Codex thread per feature; 7-round revision loop with structured verdict protocol.",
-  "version": "0.7.3",
+  "version": "0.7.3.1",
   "author": { "name": "mkr" },
   "license": "MIT",
   "keywords": ["skills", "codex", "pair-programming", "tdd", "code-review"],

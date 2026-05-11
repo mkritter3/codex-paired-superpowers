@@ -1,4 +1,9 @@
-node_modules/
+# node_modules is intentionally NOT ignored — Claude Code does not run
+# `npm install` on plugin install (marketplace or --plugin-dir), so the
+# plugin's runtime deps (proper-lockfile + its 3 transitive pure-JS deps,
+# ~200KB total, zero native bindings) are vendored alongside the source.
+# See episodic-memory plugin for the same pattern.
+
 .DS_Store
 *.log
 # sidecar files generated during real runs (not test fixtures)
