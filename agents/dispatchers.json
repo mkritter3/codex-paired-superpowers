@@ -20,5 +20,49 @@
       "backend": "allowed",
       "general": "preferred"
     }
+  },
+  "experts": {
+    "ui": {
+      "id": "expert-ui",
+      "prompt": "lib/codex-bridge/prompts/expert-ui.md",
+      "phases": ["spec-review", "post-implementation-review"],
+      "domains": ["ui"]
+    },
+    "ux": {
+      "id": "expert-ux",
+      "prompt": "lib/codex-bridge/prompts/expert-ux.md",
+      "phases": ["spec-review"],
+      "domains": ["ui"]
+    },
+    "architecture": {
+      "id": "expert-architecture",
+      "prompt": "lib/codex-bridge/prompts/expert-architecture.md",
+      "phases": ["spec-review", "pre-dispatch", "post-implementation-review"],
+      "domains": ["backend", "ai-harness", "general", "ui"]
+    },
+    "backend": {
+      "id": "expert-backend",
+      "prompt": "lib/codex-bridge/prompts/expert-backend.md",
+      "phases": ["spec-review", "post-implementation-review"],
+      "domains": ["backend"]
+    },
+    "ai-harness": {
+      "id": "expert-ai-harness",
+      "prompt": "lib/codex-bridge/prompts/expert-ai-harness.md",
+      "phases": ["spec-review", "post-implementation-review"],
+      "domains": ["ai-harness"]
+    },
+    "test": {
+      "id": "expert-test",
+      "prompt": "lib/codex-bridge/prompts/expert-test.md",
+      "phases": ["spec-review", "pre-dispatch", "post-implementation-review"],
+      "domains": ["general"]
+    },
+    "security": {
+      "id": "expert-security",
+      "prompt": "lib/codex-bridge/prompts/expert-security.md",
+      "phases": ["spec-review", "post-implementation-review"],
+      "domains": ["backend", "ai-harness"]
+    }
   }
 }

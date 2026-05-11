@@ -233,6 +233,30 @@ In all other ambiguous cases (no implementer directive or all plausible domains 
 
 **Smart-parallelization implication.** Two consecutive slices with different inferred domains should be inspected for tight coupling before parallelizing them. A `ui` slice and an `ai-harness` slice that touch independent files can still parallel-batch (different domains, both safe for Sonnet). A `ui` slice and a `backend` slice cross domain boundaries — verify the `**Files:**` are genuinely disjoint and the slices aren't logically joined (e.g., a UI component slice that imports a type from a backend slice should NOT parallelize even if the Files don't overlap, because the backend slice's exports are the UI slice's contract).
 
+#### Phase B.0.5 — Expert selection per slice (v0.8.0)
+
+For each slice in the current batch, the orchestrator selects an expert teammate set based on signals (slice frontmatter `**Domain:**`, file paths in the slice's `**Files:**` block, content keywords). The selection is recorded in the sidecar's `expert_teammates.selected[]`:
+
+```js
+// Pseudo-code: orchestrator selects experts via expert-runtime
+const { selectTeammates } = await import('<plugin>/lib/codex-bridge/expert-runtime.js');
+const result = selectTeammates({
+  phase: 'post-implementation-review',
+  signals: {
+    specHas: [/* spec keywords */],
+    filePaths: [/* slice Files block */],
+    domains: [sliceDomain],
+    explicitDirective: sliceFrontmatter.experts,  // optional **Experts:** directive
+  },
+  repoRoot: <repoRoot>,
+});
+// Then persist via appendExpertSelection + (if fan-out) appendFanOutRationale
+```
+
+If `result.selected.length > 5`, the orchestrator MUST write a fan-out rationale into `expert_teammates.fan_out_rationales[]` justifying the breadth of selection (per spec §Default Expert Set). The role-composer enforces this contract — calling `appendFanOutRationale` with no rationale on a fan-out throws `role-composer-fan-out-unjustified`.
+
+**Composition with existing Phase B.0:** B.0 still chooses implementer transport (codex vs sonnet) via `dispatchers.json`. B.0.5 augments by selecting domain-expert REVIEWERS for the same slice. Experts do not replace implementers in MVP — they are advisory reviewers that emit verdicts and findings, never accepted manuscript writes.
+
 #### Phase B.1 — Pre-dispatch checklist (Claude reads the slice section)
 
 Before any worktree work, read the current slice section directly from the plan markdown. Apply these checks **literally** — paraphrase or guesswork is non-conforming.
@@ -294,6 +318,35 @@ Apply these checks in order. The first failure halts the entire candidate window
 | Directory-only path with trailing `/` | `parallel-files-malformed` |
 
 **Candidate-window halt rule:** if any of the above halts fire on any candidate slice, halt **before creating or bootstrapping any worktree** in that window. Do not partially set up worktrees and roll back. The halt summary must surface the exact offending slice id, path, and value.
+
+#### Phase B.1.5 — Optional expert pre-review (v0.8.0)
+
+For each expert tagged with `pre-dispatch` in its registry phases (currently `architecture` and `test` per `agents/dispatchers.json`), run `expert-runtime.runTurn(expert, {phase: "pre-dispatch", slice_id: <currentSliceId>, ...})` with the slice plan as context.
+
+If all pre-review experts SHIP (no blocking findings), held turn records flow through to B.7 where they are attached to the dispatch record's `expert_blockers: []` (empty) + `experts_selected[]` + `expert_turn_ids[]`. Normal flow continues to B.2.
+
+If any pre-review expert returns blocking findings (parsed `Machine Result.blocking_findings[]` non-empty), the slice does NOT proceed to B.4 dispatch. To preserve the durable-state requirement, the orchestrator immediately appends a **sentinel halted dispatch record** to anchor the blockers on a durable record:
+
+```js
+appendImplementDispatch(specPath, sliceId, {
+  /* ...required dispatch fields... */
+  outcome: "failed-halted",
+  failure_reason: "pre-dispatch-blocker",
+  dispatched_at: <now-iso>,
+  experts_selected: <expert ids>,
+  expert_turn_ids: <turn ids from pre-review>,
+  expert_blockers: [/* ...findings with disposition:"open"... */],
+});
+```
+
+The sentinel exists ONLY to anchor blocker state on a durable record — it does NOT represent a real dispatch (no worker spawned, no commits made). The sentinel makes `updateDispatchExpertBlocker({sliceId, dispatched_at}, findingId, ...)` resolution work uniformly across pre-dispatch and post-dispatch blockers. After the sentinel is appended, halt with `expert-blocker-open` (preserves expert mailboxes per slice 7 archival policy).
+
+On resume, Claude reads the sentinel's `expert_blockers[]` and either:
+
+- (a) overrides technical false-positives via `updateDispatchExpertBlocker({sliceId, dispatched_at}, findingId, {disposition: "technical-override", rationale, evidence})`
+- (b) routes product/UX/business findings to the human user (halt code `expert-blocker-needs-user`).
+
+Once all blockers reach `disposition !== "open"`, the orchestrator may advance to B.4 (treating the sentinel as a resolved pre-dispatch gate) or supersede with a real dispatch.
 
 #### Phase B.2 — Ready-set + first-fit batching (v0.7.3 REPLACEMENT)
 
@@ -601,6 +654,12 @@ if (size > cfg.max_bytes) {
 
 All-unread overflow during `archiveAndReset` throws `MailboxError(code='mailbox-overflow-unread')` — orchestrator halts (no silent loss). Run `cleanupArchives` periodically (once per autopilot session is enough) to apply retention policy.
 
+**v0.8.0 update.** B.4.5 now ALSO polls active expert inboxes (as recorded in `expert_teammates.selected[]`) alongside orchestrator + in-flight slice inboxes. If an active expert has unread messages at B.4.5:
+
+- Record the inbox state (don't immediately spawn — expert review should see reconciled implementation truth at B.5.5, not partial worker output).
+- Schedule the expert for B.5.5 post-review drain.
+- Exception: if the unread message indicates a dispatch safety issue (stale basis, wrong slice, command failure), halt before B.5 and route through B.6 fallback.
+
 #### Phase B.5 — Reconcile (reconciler is truth)
 
 For each returned subagent, call:
@@ -636,6 +695,79 @@ or `{ok:false, halt:{reason:"reconciler-failed", detail}}` on git failure.
 - Subagent reports `BLOCKED` → halt with `codex-blocked` (Codex implementer) or `subagent-blocked` (Sonnet implementer). Do **not** fall back. Reconcile commits the subagent made before bailing for the audit trail, but do not advance.
 - Subagent reports `NEEDS_CONTEXT` → halt with `codex-needs-context` or `subagent-needs-context`. Same no-fallback rule.
 - `reconcileWorktree` returns `{ok:false}` (e.g., bad sha, broken worktree) → fallback trigger (treated as a dispatch failure: the worktree is unreliable).
+
+#### Phase B.5.5 — Expert post-review and peer-DM drain (v0.8.0)
+
+After reconcile and before routing/fallback, invoke the peer-DM drain scheduler. For each active expert selected for the slice (per `expert_teammates.selected[]`), the scheduler:
+
+1. Reads unread messages for that expert.
+2. Spawns the expert with the reconciled slice output plus unread messages.
+3. Parses the machine result.
+4. Marks injected messages read **only after parse success**.
+5. Records findings, DMs sent, and status in the sidecar via `appendExpertTurn` + `updateExpertStatus`.
+6. If the expert sent DMs to another active expert, schedules the recipient in the same B.5.5 drain loop.
+
+```js
+const { drainPeerDMs } = await import('<plugin>/lib/codex-bridge/expert-dm-scheduler.js');
+const drainResult = await drainPeerDMs(
+  activeExperts,
+  {
+    hasUnread: (expertId) => /* wrapper over mailbox.readUnreadMessages */,
+    runTurn: (expert, ctx) => /* wrapper over expert-runtime.runTurn */,
+    readExpertTurns: (specPath, ctx) => /* wrapper over sidecar.readExpertTurns */,
+    writeBreadcrumb,
+  },
+  {
+    maxRespawnsPerExpert: 2,
+    maxTotalTurns: 8,
+    specPath,
+    drainContext: { phase: "post-implementation-review", sliceId: <currentSliceId> },
+    resumeFromSidecar: <true if recovering>,
+  }
+);
+```
+
+`drainContext` is REQUIRED. The scheduler fails closed (throws) if it's missing or if `readExpertTurns` errors during resume — refusing to fail open prevents double-spawning experts already capped from prior turns.
+
+**Loop bounds:**
+
+- Maximum 2 respawns per expert per slice per B.5.5 drain.
+- Maximum 8 total expert turns per slice per B.5.5 drain.
+
+**Halt handling:**
+
+- `drainResult.halt === "expert-peer-dm-drain-cap-exceeded"`: caps were exhausted while DMs remain unread. Halt with `expert-peer-dm-drain-cap-exceeded` (preserves expert mailboxes per slice 7). Claude may narrow the question and retry, defer non-blocking peer discussion, or ask the user.
+- `drainResult.halt === null`: drain converged normally. Continue to B.6 routing.
+
+**Integration gate.** Block integration if any unresolved blocking finding remains — i.e., any entry in `expert_blockers[]` (across all dispatch records for this slice) with `disposition: "open"`. See the Blocking-Finding Override Authority section below for resolution paths.
+
+##### Blocking-Finding Override Authority (v0.8.0)
+
+When an expert emits a blocking finding, the orchestrator MUST resolve its disposition before proceeding past the integration gate.
+
+**Technical overrides (Claude may apply).** Claude can override a blocking expert finding ONLY when ALL of these are true:
+
+1. The finding is technical, not product/UX/business.
+2. Claude writes a specific rationale citing concrete evidence (file path, line/function, current slice version, command output, reconciler result).
+3. The override is recorded via `updateDispatchExpertBlocker(specPath, {sliceId, dispatched_at}, findingId, {disposition: "technical-override", rationale, evidence})`.
+
+Examples of valid technical overrides:
+
+- Expert referenced a stale slice version.
+- Expert misread a command boundary.
+- Expert claimed a missing test that exists at the failure boundary.
+- Expert flagged a behavior that reconciler output proves is not present.
+
+**Product/UX/business overrides (REQUIRE human authorization).** Halt with `expert-blocker-needs-user`. Surface the finding to the user. On user response, record via `updateDispatchExpertBlocker(specPath, {sliceId, dispatched_at}, findingId, {disposition: "needs-user", rationale: <user's rationale>})`.
+
+Examples requiring the human:
+
+- Expert says the workflow is confusing but technically works.
+- Expert says a visual choice weakens the intended product feel.
+- Expert says the user-facing copy changes the promise of the feature.
+- Expert says the feature scope no longer matches the requested outcome.
+
+Claude rubber-stamping a product/UX/business override (i.e., applying `technical-override` to a non-technical finding) is a contract violation; the rationale field is auditable, and a non-technical rationale is grounds for reversal during slice review.
 
 #### Phase B.6 — Apply routing rules
 

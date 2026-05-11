@@ -290,3 +290,29 @@ assert_eq "$PS_SLICE_SHIPPED" "true" "phase-e-skipped: slice-1.shipped (skipped 
 assert_eq "$PS_HALT_REASON" "completed" "phase-e-skipped: autopilot.halt_reason"
 
 echo "PASS: autopilot structural smoke — Phase E SKIPPED path (live-verification.skipped=true, skip_reason recorded, slice reached shipped)"
+
+# =============================================================================
+# v0.8.0 slice 6 — SKILL.md domain-experts Phase B prose assertions
+# =============================================================================
+SKILL_FILE="$PLUGIN_ROOT/skills/autopilot/SKILL.md"
+
+assert_grep() {
+  local pattern="$1"
+  local label="$2"
+  if grep -Fq "$pattern" "$SKILL_FILE"; then
+    echo "  PASS: SKILL.md contains: $label"
+  else
+    echo "  FAIL: SKILL.md missing: $label (pattern: $pattern)" >&2
+    exit 1
+  fi
+}
+
+echo "== v0.8.0 Phase B expert-augmentation prose =="
+assert_grep "Phase B.0.5 — Expert selection" "B.0.5 heading"
+assert_grep "Phase B.1.5 — Optional expert pre-review" "B.1.5 heading"
+assert_grep "Phase B.5.5 — Expert post-review and peer-DM drain" "B.5.5 heading"
+assert_grep "Blocking-Finding Override Authority" "override-authority heading"
+assert_grep "sentinel halted dispatch record" "B.1.5 sentinel pattern"
+assert_grep "updateDispatchExpertBlocker" "override-authority function name"
+
+echo "PASS: autopilot structural smoke — v0.8.0 Phase B expert-augmentation prose present"
