@@ -170,9 +170,11 @@ test('drainPeerDMs: chain DM (ui → architecture) results in 2 turns', async ()
 
 // ── 4. Per-expert respawn cap ──────────────────────────────────────────────
 
-test('drainPeerDMs: per-expert respawn cap (default 2) skips expert after 2 turns', async () => {
+test('drainPeerDMs: per-expert cap with capped-expert still having unread halts cap-exceeded', async () => {
+  // Codex round-1 critique: per-expert cap exhaustion WITH unread remaining
+  // must halt with cap-exceeded, NOT exit silently with halt:null. Otherwise
+  // B.5.5 proceeds while DMs are queued.
   const activeExperts = [makeIdentity('expert-ui'), makeIdentity('expert-architecture')];
-  // expert-ui ALWAYS has unread; expert-architecture never does.
   const unreadFlags = { 'expert-ui': 1, 'expert-architecture': 0 };
   const { deps, calls } = makeDeps({
     hasUnread: async (expertId) => unreadFlags[expertId] ?? 0,
@@ -184,11 +186,38 @@ test('drainPeerDMs: per-expert respawn cap (default 2) skips expert after 2 turn
     drainContext: { phase: 'post-implementation-review', sliceId: 'slice-1' },
   });
 
-  // Scheduler should dispatch expert-ui twice, then skip it (cap hit), and
-  // since no other expert has work, exit with halt: null.
-  assert.equal(result.halt, null);
+  // expert-ui dispatched twice (cap=2), then no eligible expert has work AND
+  // expert-ui still has unread → halt cap-exceeded.
+  assert.equal(result.halt, 'expert-peer-dm-drain-cap-exceeded');
   assert.equal(result.turns.length, 2);
   assert.ok(result.turns.every((t) => t.expert_id === 'expert-ui'));
+});
+
+test('drainPeerDMs: per-expert cap with all-capped-and-empty exits halt:null (genuine convergence)', async () => {
+  // Sibling test to the above: cap hits but each capped expert's inbox is
+  // already drained at that moment → genuine convergence, halt:null.
+  const activeExperts = [makeIdentity('expert-ui'), makeIdentity('expert-architecture')];
+  // expert-ui has unread on calls 1+2 (the 2 turns), THEN empty.
+  let uiCalls = 0;
+  const { deps, calls } = makeDeps({
+    hasUnread: async (expertId) => {
+      if (expertId === 'expert-ui') {
+        uiCalls++;
+        return uiCalls <= 2 ? 1 : 0;
+      }
+      return 0;
+    },
+    runTurn: async (expert) => makeTurnResult(expert.id),
+  });
+
+  const result = await drainPeerDMs(activeExperts, deps, {
+    specPath: '/tmp/spec.md',
+    drainContext: { phase: 'post-implementation-review', sliceId: 'slice-1' },
+  });
+
+  // expert-ui dispatched twice, then no expert has unread → genuine convergence.
+  assert.equal(result.halt, null);
+  assert.equal(result.turns.length, 2);
 });
 
 // ── 5. Total turn cap ──────────────────────────────────────────────────────
@@ -257,8 +286,8 @@ test('drainPeerDMs: opts overrides for maxRespawnsPerExpert and maxTotalTurns', 
     maxTotalTurns: 10,
   });
 
-  // 2 experts × 3 respawns = 6 turns total; below the 10-turn cap → no halt.
-  assert.equal(result.halt, null);
+  // 2 experts × 3 respawns = 6 turns; both caps hit with unread remaining → halt cap-exceeded.
+  assert.equal(result.halt, 'expert-peer-dm-drain-cap-exceeded');
   assert.equal(result.turns.length, 6);
 });
 
@@ -379,9 +408,11 @@ test('drainPeerDMs: resumeFromSidecar seeds respawnCounts from prior turns (no d
     maxRespawnsPerExpert: 2,
   });
 
-  // expert-ui cap already hit from prior (2 turns ≥ 2). expert-architecture has
-  // no unread. So scheduler should exit with NO new turns and halt: null.
-  assert.equal(result.halt, null);
+  // expert-ui cap already hit from prior (2 turns ≥ 2) BUT it still has
+  // unread → cap-exceeded halt (Codex round-1 critique). expert-architecture
+  // has no unread. Scheduler must NOT advance expert-ui (no double-count) and
+  // must report the halt code so B.5.5 surfaces queued DMs to the user.
+  assert.equal(result.halt, 'expert-peer-dm-drain-cap-exceeded');
   assert.equal(result.turns.length, 0);
   // Verify readExpertTurns was invoked with proper filter.
   assert.equal(calls.readExpertTurns.length, 1);
@@ -390,6 +421,72 @@ test('drainPeerDMs: resumeFromSidecar seeds respawnCounts from prior turns (no d
   assert.equal(calls.readExpertTurns[0].filter.sliceId, 'slice-3');
   // Crucially: no new runTurn calls (no double-count).
   assert.equal(calls.runTurn.length, 0);
+});
+
+// ── Restart-recovery fail-closed semantics (Codex round-1 critique) ────────
+//
+// resumeFromSidecar must fail closed (throw) when drainContext is missing or
+// readExpertTurns fails. Failing open would reset cap counts to zero and
+// double-spawn experts already at cap from prior turns.
+
+test('drainPeerDMs: resumeFromSidecar without drainContext throws (fail-closed)', async () => {
+  const activeExperts = [makeIdentity('expert-ui')];
+  const { deps } = makeDeps({});
+
+  await assert.rejects(
+    () => drainPeerDMs(activeExperts, deps, {
+      specPath: '/tmp/spec.md',
+      resumeFromSidecar: true,
+      // drainContext intentionally omitted
+    }),
+    err => /drainContext is REQUIRED/i.test(err.message),
+  );
+});
+
+test('drainPeerDMs: resumeFromSidecar with malformed drainContext (missing phase) throws', async () => {
+  const activeExperts = [makeIdentity('expert-ui')];
+  const { deps } = makeDeps({});
+
+  await assert.rejects(
+    () => drainPeerDMs(activeExperts, deps, {
+      specPath: '/tmp/spec.md',
+      resumeFromSidecar: true,
+      drainContext: { sliceId: 'slice-1' }, // missing phase
+    }),
+    err => /drainContext\.phase/i.test(err.message),
+  );
+});
+
+test('drainPeerDMs: resumeFromSidecar with readExpertTurns throwing fails closed (no double-spawn)', async () => {
+  const activeExperts = [makeIdentity('expert-ui')];
+  const { deps } = makeDeps({
+    readExpertTurns: async () => { throw new Error('disk on fire'); },
+  });
+
+  await assert.rejects(
+    () => drainPeerDMs(activeExperts, deps, {
+      specPath: '/tmp/spec.md',
+      resumeFromSidecar: true,
+      drainContext: { phase: 'post-implementation-review', sliceId: 'slice-1' },
+    }),
+    err => /refusing to fail open/i.test(err.message),
+  );
+});
+
+test('drainPeerDMs: resumeFromSidecar with readExpertTurns returning non-array fails closed', async () => {
+  const activeExperts = [makeIdentity('expert-ui')];
+  const { deps } = makeDeps({
+    readExpertTurns: async () => null,
+  });
+
+  await assert.rejects(
+    () => drainPeerDMs(activeExperts, deps, {
+      specPath: '/tmp/spec.md',
+      resumeFromSidecar: true,
+      drainContext: { phase: 'post-implementation-review', sliceId: 'slice-1' },
+    }),
+    err => /non-array/i.test(err.message),
+  );
 });
 
 test('drainPeerDMs: resumeFromSidecar with partial prior turns allows continuation', async () => {
