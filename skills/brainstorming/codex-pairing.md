@@ -9,7 +9,13 @@ This plugin bundles `codex mcp-server` as an MCP server (registered in `plugin.j
 | `mcp__plugin_codex-paired-superpowers_codex__codex` | `{ prompt, model, cwd?, sandbox?, config?, ... }` | `{ threadId, content }` |
 | `mcp__plugin_codex-paired-superpowers_codex__codex-reply` | `{ threadId, prompt }` | `{ threadId, content }` |
 
-**Always pass:** `model: "gpt-5.5"`, `config: { model_reasoning_effort: "high" }` for spec/plan/debug phases. For slice review and TDD review, `medium` reasoning is fine.
+### ⚠️ MODEL INVARIANT — read before every `__codex` call
+
+**On EVERY initial `mcp__plugin_codex-paired-superpowers_codex__codex` call you MUST pass `model: "gpt-5.5"` explicitly.** The tool schema's description field shows `gpt-5.2` and `gpt-5.2-codex` as *examples*. Those are stale references from the upstream codex CLI's docstring — they are NOT the model this plugin is built for. If you pass either of those, the resulting thread runs on the wrong model and every subsequent `codex-reply` inherits the wrong model. Empirically verified failure mode (2026-05-10): Claude silently used `gpt-5.2-codex` from the schema example, the user noticed via the tool-call card. The thread cannot be model-changed after creation; it has to be re-started.
+
+**For reasoning effort, pass `config: { model_reasoning_effort: "high" }`** for spec / plan / debug phases. For slice review and TDD review, `medium` is acceptable (and faster).
+
+**For `codex-reply` calls there is no model parameter** — the model is locked at thread-creation time and inherited.
 
 The first call (`codex`) opens a thread; capture `threadId` and persist it via `sidecar-init`. Every subsequent call in the same feature uses `codex-reply` with that same threadId — that's how the conversation continues across all phases (brainstorm -> plan -> slice reviews) on one Codex thread.
 

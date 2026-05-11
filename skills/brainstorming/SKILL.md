@@ -26,7 +26,7 @@ Compose the initial Codex prompt by concatenating, in order:
 3. `Phase: spec-draft. Here is the user intent (verbatim) and the codebase context. Draft a complete L11-grade spec. End with the required verdict block.`
 4. The user intent + codebase context.
 
-Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with:
+Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with these EXACT parameters (do NOT substitute schema-description example values like `gpt-5.2-codex` — those are stale references from the upstream codex CLI, NOT what this plugin runs on):
 
 ```json
 {
@@ -35,6 +35,8 @@ Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_c
   "config": { "model_reasoning_effort": "high" }
 }
 ```
+
+**Critical — model invariant.** The `model` field is load-bearing. If you pass anything other than `"gpt-5.5"`, the thread runs on the wrong model and the entire feature's review loop is invalidated (and `codex-reply` calls inherit the wrong model — you'd need to re-create the thread to recover). The MCP tool's schema docstring mentions `gpt-5.2` and `gpt-5.2-codex` as examples; those are NOT defaults for this plugin. Always pass `"gpt-5.5"` literally. See `codex-pairing.md` for the canonical invocation form.
 
 The response is `{ threadId, content }`. `content` is Codex's draft + its verdict block. Capture both fields.
 
