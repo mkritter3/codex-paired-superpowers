@@ -11,6 +11,15 @@ After Claude forms a root-cause hypothesis, Codex reviews the hypothesis (not ju
 ## When to invoke
 Trivial bugs (typos, obvious off-by-one) skip this — just fix. Use this for: intermittent failures, multi-system interactions, behavior that contradicts your mental model, "shouldn't be possible" bugs.
 
+## Honest-reporting activation (v0.8.1, do this first)
+Before Phase 0, write the honest-reporting marker:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill systematic-debugging
+```
+
+The marker has an 8-hour TTL and auto-expires; no cleanup needed. This keeps debug claims ("ROOT CAUSE IDENTIFIED", "FIX VERIFIED") sourced to actual tool output.
+
 ## Phase 0 — Reproduce
 Standard upstream discipline: minimal reproduction, deterministic, captured as a failing test if possible. Don't move on until you can reproduce on demand.
 

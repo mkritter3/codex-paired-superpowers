@@ -10,6 +10,15 @@ description: Use after a Codex-paired spec is double-SHIP'd. Claude drafts the i
 - After Claude drafts the plan, Codex reviews structure: slice boundaries, task granularity, missing tasks, TDD adequacy, file decomposition.
 - 7-round loop applies. Both must SHIP.
 
+## Honest-reporting activation (v0.8.1, do this first)
+Before Phase 0, write the honest-reporting marker so the Stop/PreToolUse hook can keep claims sourced for this session:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill writing-plans
+```
+
+The marker has an 8-hour TTL and auto-expires; no cleanup needed.
+
 ## Phase 0 — Locate the sidecar
 The plan must be born from a double-SHIP'd spec. Read the spec's frontmatter or use the convention `<plan>` ↔ `<spec>` mapping (plans live under `docs/superpowers/plans/`, specs under `docs/superpowers/specs/`, same date prefix and name).
 

@@ -609,3 +609,65 @@ test('appendImplementDispatch: rejects blocker initial disposition not "open"', 
   , /disposition/i);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.8.1 appendExpertTurn peer-DM audit fields ──────────────────────────
+
+test('appendExpertTurn v0.8.1: accepts peer_messages_enqueued + peer_messages_failed (round-trip)', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn({
+    peer_messages_enqueued: [
+      { to: 'expert-ux', message_id: 'msg-1', summary: 's' },
+      { to: 'expert-architecture', message_id: 'msg-2' },
+    ],
+    peer_messages_failed: [
+      { to: 'expert-FOO!!', reason: 'invalid-recipient', code: 'mailbox-recipient-malformed' },
+      { to: null, reason: 'malformed-item', code: 'malformed-item' },
+    ],
+  }));
+  const sc = loadSidecar(spec);
+  const t = sc.expert_teammates.turns[0];
+  assert.equal(t.peer_messages_enqueued.length, 2);
+  assert.equal(t.peer_messages_enqueued[0].to, 'expert-ux');
+  assert.equal(t.peer_messages_enqueued[0].message_id, 'msg-1');
+  assert.equal(t.peer_messages_failed.length, 2);
+  assert.equal(t.peer_messages_failed[0].code, 'mailbox-recipient-malformed');
+  assert.equal(t.peer_messages_failed[1].to, null, 'null to allowed for malformed-item');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1: peer fields absent (back-compat with pre-0.8.1)', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn()); // no peer_messages_* fields
+  const sc = loadSidecar(spec);
+  const t = sc.expert_teammates.turns[0];
+  assert.equal('peer_messages_enqueued' in t, false);
+  assert.equal('peer_messages_failed' in t, false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1: rejects non-array peer_messages_enqueued', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ peer_messages_enqueued: { x: 1 } })),
+    /peer_messages_enqueued/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1: rejects peer_messages_enqueued element missing message_id', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ peer_messages_enqueued: [{ to: 'expert-ux' }] })),
+    /message_id/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1: rejects peer_messages_failed element missing reason', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ peer_messages_failed: [{ to: 'expert-ux' }] })),
+    /reason/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});

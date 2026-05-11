@@ -73,6 +73,7 @@ const PRESERVE_REASONS = [
   'slice-blocker-from-mailbox',
   'expert-blocker-open',
   'expert-peer-dm-drain-cap-exceeded',
+  'expert-peer-dm-enqueue-failed', // v0.8.1
   'subagent-dispatch-failed',
   'reconcile-failed',
   'validation-failed',

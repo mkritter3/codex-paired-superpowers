@@ -1,5 +1,5 @@
 {
-  "description": "codex-paired-superpowers hooks: provenance verification + v0.7.3.1 mailbox auto-injection for Sonnet subagents",
+  "description": "codex-paired-superpowers hooks: provenance verification + v0.7.3.1 mailbox auto-injection for Sonnet subagents + v0.8.1 honest-reporting Stop/PreToolUse hook",
   "hooks": {
     "PostToolUse": [
       {
@@ -17,6 +17,27 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/mailbox-inject.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/honest-reporting.sh\" pretooluse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/honest-reporting.sh\" stop"
           }
         ]
       }

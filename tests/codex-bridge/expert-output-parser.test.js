@@ -17,7 +17,7 @@ function validPayload(overrides = {}) {
     scope: 'ui',
     blocking_findings: [],
     nonblocking_findings: [],
-    peer_messages_sent: [],
+    peer_messages_requested: [],
     questions_for_orchestrator: [],
     ...overrides,
   };
@@ -210,7 +210,7 @@ test('parseExpertOutput: empty arrays for findings/messages are valid', () => {
   const payload = validPayload({
     blocking_findings: [],
     nonblocking_findings: [],
-    peer_messages_sent: [],
+    peer_messages_requested: [],
     questions_for_orchestrator: [],
   });
   const raw = wrapMachineResult(JSON.stringify(payload));
@@ -235,8 +235,8 @@ test('parseExpertOutput: non-array (null) for findings triggers schema-violation
 });
 
 // Test 10c: Required arrays — non-array (object) triggers schema-violation
-test('parseExpertOutput: non-array (object) for peer_messages_sent triggers schema-violation', () => {
-  const payload = validPayload({ peer_messages_sent: { x: 1 } });
+test('parseExpertOutput: non-array (object) for peer_messages_requested triggers schema-violation', () => {
+  const payload = validPayload({ peer_messages_requested: { x: 1 } });
   const raw = wrapMachineResult(JSON.stringify(payload));
   const result = parseExpertOutput(raw, {
     expectedExpertId: 'expert-ui',
@@ -244,7 +244,7 @@ test('parseExpertOutput: non-array (object) for peer_messages_sent triggers sche
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'schema-violation');
-  assert.ok(result.missingFields.includes('peer_messages_sent'));
+  assert.ok(result.missingFields.includes('peer_messages_requested'));
 });
 
 // Test 10d: Required arrays — non-array (string) triggers schema-violation
@@ -357,4 +357,102 @@ test('parser handles JSON array (not object) without throwing', () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'schema-violation');
   assert.ok(/array/i.test(result.detail), 'detail should mention got=array');
+});
+
+// ── v0.8.1 legacy field back-compat ───────────────────────────────────────
+//
+// v0.8.0 emitted `peer_messages_sent`; v0.8.1 canonical is
+// `peer_messages_requested`. Parser accepts the legacy alias for one release
+// and normalizes onto the canonical field, with a warning.
+
+test('parser normalizes legacy peer_messages_sent into peer_messages_requested with warning', () => {
+  const payload = {
+    expert_id: 'expert-ui',
+    phase: 'spec-review',
+    status: 'SHIP',
+    scope: 'ui',
+    blocking_findings: [],
+    nonblocking_findings: [],
+    peer_messages_sent: [{ to: 'expert-ux', summary: 's' }], // legacy shape
+    questions_for_orchestrator: [],
+  };
+  const raw = wrapMachineResult(JSON.stringify(payload));
+  const result = parseExpertOutput(raw, {
+    expectedExpertId: 'expert-ui',
+    expectedPhase: 'spec-review',
+  });
+  assert.equal(result.ok, true, 'legacy field should parse');
+  assert.deepEqual(
+    result.result.peer_messages_requested,
+    [{ to: 'expert-ux', summary: 's' }],
+    'normalized onto canonical field'
+  );
+  assert.ok(
+    Array.isArray(result.warnings) && result.warnings.includes('legacy-peer_messages_sent-normalized'),
+    'should emit legacy-normalization warning'
+  );
+});
+
+test('parser preferred-wins when both peer_messages_requested and peer_messages_sent present', () => {
+  const payload = {
+    expert_id: 'expert-ui',
+    phase: 'spec-review',
+    status: 'SHIP',
+    scope: 'ui',
+    blocking_findings: [],
+    nonblocking_findings: [],
+    peer_messages_requested: [{ to: 'expert-ux', body: 'preferred' }],
+    peer_messages_sent: [{ to: 'expert-ux', summary: 'legacy' }],
+    questions_for_orchestrator: [],
+  };
+  const raw = wrapMachineResult(JSON.stringify(payload));
+  const result = parseExpertOutput(raw, {});
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.result.peer_messages_requested,
+    [{ to: 'expert-ux', body: 'preferred' }],
+    'preferred field wins'
+  );
+  assert.ok(
+    Array.isArray(result.warnings) && result.warnings.includes('both-peer-fields-present-preferred-wins'),
+    'should warn that both are present'
+  );
+});
+
+test('parser fails schema-violation when neither peer_messages_requested nor peer_messages_sent present', () => {
+  const payload = {
+    expert_id: 'expert-ui',
+    phase: 'spec-review',
+    status: 'SHIP',
+    scope: 'ui',
+    blocking_findings: [],
+    nonblocking_findings: [],
+    // both peer fields absent
+    questions_for_orchestrator: [],
+  };
+  const raw = wrapMachineResult(JSON.stringify(payload));
+  const result = parseExpertOutput(raw, {});
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'schema-violation');
+  assert.ok(result.missingFields.includes('peer_messages_requested'));
+});
+
+test('parser fails schema-violation when legacy peer_messages_sent is non-array', () => {
+  const payload = {
+    expert_id: 'expert-ui',
+    phase: 'spec-review',
+    status: 'SHIP',
+    scope: 'ui',
+    blocking_findings: [],
+    nonblocking_findings: [],
+    peer_messages_sent: { bogus: true }, // legacy field, wrong type
+    questions_for_orchestrator: [],
+  };
+  const raw = wrapMachineResult(JSON.stringify(payload));
+  const result = parseExpertOutput(raw, {});
+  // Normalization happens regardless of type; downstream array-ness check
+  // sees the non-array on the canonical field and reports schema-violation.
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'schema-violation');
+  assert.ok(result.missingFields.includes('peer_messages_requested'));
 });

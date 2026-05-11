@@ -8,6 +8,15 @@ description: Use to run a written, double-SHIP'd implementation plan slice-by-sl
 ## What this is
 Given a plan that's already double-SHIP'd in `writing-plans`, run it slice-by-slice with full Claude↔Codex review at every phase, until all slices ship or the loop halts on a real blocker. Designed to be wrapped by `ralph-loop` so it survives Claude session boundaries.
 
+## Honest-reporting activation (v0.8.1, do this first)
+On entry, write the honest-reporting marker so the Stop/PreToolUse hook keeps claims sourced for the autopilot run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill autopilot --spec <spec-path>
+```
+
+The marker has an 8-hour TTL; for longer autopilot runs, refresh it on each major phase boundary (or pass `--ttl-hours 24`). See `skills/honest-reporting/SKILL.md` for the VERIFIED / ASSUMED / UNTESTED vocabulary.
+
 ## Required inputs
 - A double-SHIP'd plan at `docs/superpowers/plans/<plan>.md`.
 - The plan's parent spec at `docs/superpowers/specs/<spec>.md` with a sidecar (`<spec>.codex.json`) containing the persistent Codex threadId.
@@ -762,6 +771,7 @@ The policy from `lib/codex-bridge/expert-archive.js`:
 | `slice-blocker-from-mailbox`             | PRESERVE | Slice in-progress; user decides abort vs wait.         |
 | `expert-blocker-open`                    | PRESERVE | Blocking finding awaiting override/resolution.         |
 | `expert-peer-dm-drain-cap-exceeded`      | PRESERVE | Pending peer DMs must survive for resume.              |
+| `expert-peer-dm-enqueue-failed`          | PRESERVE | v0.8.1: writeToMailbox failed for one or more outbound peer DMs; targets recorded in `peer_messages_failed` for triage. |
 | `subagent-dispatch-failed`               | PRESERVE | Transient dispatch failure; retry needs queued state.  |
 | `reconcile-failed`                       | PRESERVE | Worktree unreliable; operator must inspect.            |
 | `validation-failed`                      | PRESERVE | Live verification halted; expert state may inform fix. |
@@ -884,7 +894,12 @@ const drainResult = await drainPeerDMs(
 **Halt handling:**
 
 - `drainResult.halt === "expert-peer-dm-drain-cap-exceeded"`: caps were exhausted while DMs remain unread. Halt with `expert-peer-dm-drain-cap-exceeded` (preserves expert mailboxes per slice 7). Claude may narrow the question and retry, defer non-blocking peer discussion, or ask the user.
+- `drainResult.halt === "expert-peer-dm-enqueue-failed"` (**v0.8.1**): an outbound peer-DM write failed for one or more requested recipients. The scheduler observes `turnResult.peer_dm_summary.failed > 0` immediately after a `runTurn` returns and halts. Inspect the most recent turn's `peer_messages_failed[]` to see which recipients and why (`invalid-recipient`, `self-dm`, `empty-body`, `malformed-item`, or a MailboxError code). PRESERVE policy keeps mailboxes intact so resume can fix-and-replay.
 - `drainResult.halt === null`: drain converged normally. Continue to B.6 routing.
+
+**Sidecar safety net (v0.8.1).** Scheduler-observed halt is the primary detector. As a backstop, before declaring drain converged autopilot also scans `expert_teammates.turns[]` for any turn with non-empty `peer_messages_failed` belonging to the current slice/phase. If found AND `drainResult.halt === null`, treat it as `expert-peer-dm-enqueue-failed` (the scheduler missed the signal — e.g., `appendExpertTurn` succeeded while the scheduler crashed mid-loop). This is a backup, not the primary path.
+
+**Peer-DM schema (v0.8.1).** Expert Machine Result emits `peer_messages_requested: array of {to, body, summary?}`. The orchestrator's runtime (`runTurnWithDeps`) enqueues each valid item into the recipient's mailbox via `writeToMailbox(repoRoot, to, {from: identity.id, text: body ?? summary, summary})`. The expert does NOT call `mailbox-write` itself. Legacy `peer_messages_sent` (v0.8.0) is accepted as an alias for one release with a parse warning.
 
 **Integration gate.** Block integration if any unresolved blocking finding remains — i.e., any entry in `expert_blockers[]` (across all dispatch records for this slice) with `disposition: "open"`. See the Blocking-Finding Override Authority section below for resolution paths.
 

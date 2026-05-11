@@ -8,6 +8,15 @@ description: Use when executing a Codex-paired plan. After each slice's subagent
 ## What this changes vs. upstream
 After each slice's implementing subagent reports completion, Claude runs a **scoped Codex review** before moving to the next slice. The review is locked to the slice's tasks; out-of-scope issues are noted but cannot block.
 
+## Honest-reporting activation (v0.8.1, do this first)
+Before the per-slice flow starts, write the honest-reporting marker so the Stop/PreToolUse hook keeps claims sourced across the implementation session:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill subagent-driven-development
+```
+
+The marker has an 8-hour TTL and auto-expires; no cleanup needed.
+
 ## Per-slice flow
 
 ### Step A: dispatch implementing subagent

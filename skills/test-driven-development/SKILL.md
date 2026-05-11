@@ -11,6 +11,15 @@ Before red-green-refactor, the **test list** itself is reviewed by Codex. Catche
 ## When to invoke
 Any slice with non-trivial test design. Skip for one-test-one-function slices where the design is obvious.
 
+## Honest-reporting activation (v0.8.1, do this first)
+Before Phase 0, write the honest-reporting marker:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill test-driven-development
+```
+
+The marker has an 8-hour TTL and auto-expires; no cleanup needed.
+
 ## Phase 0 — Draft the test list (Claude)
 Write a numbered list of test cases. Each entry:
 1. What invariant or behavior it pins.

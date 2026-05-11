@@ -16,13 +16,14 @@ function makeIdentity(id, role = id.replace(/^expert-/, '')) {
   return { id, role, promptPath: `/fake/prompts/${id}.md`, source: 'builtin' };
 }
 
-function makeTurnResult(expertId, peerMessagesSent = []) {
+function makeTurnResult(expertId, peerMessagesSent = [], peerDmSummary = { enqueued: 0, failed: 0 }) {
   return {
     expert_id: expertId,
     phase: 'post-implementation-review',
     verdict: 'SHIP',
     failure_reason: null,
     peer_messages_sent: peerMessagesSent,
+    peer_dm_summary: peerDmSummary,
     mailbox_message_ids_injected: [`msg-from-${expertId}`],
     started_at: '2026-05-11T00:00:00.000Z',
     completed_at: '2026-05-11T00:00:01.000Z',
@@ -529,4 +530,89 @@ test('drainPeerDMs: resumeFromSidecar with partial prior turns allows continuati
   assert.equal(result.turns.length, 1);
   assert.equal(result.turns[0].expert_id, 'expert-ui');
   assert.equal(calls.runTurn.length, 1);
+});
+
+// ── v0.8.1 peer-DM enqueue-failed halt (primary detector) ─────────────────
+//
+// drainPeerDMs observes turnResult.peer_dm_summary.failed > 0 immediately
+// after each runTurn and halts with `expert-peer-dm-enqueue-failed`.
+// Sidecar scanning in B.5.5 is a secondary safety net for cases where
+// appendExpertTurn was best-effort-lost.
+
+test('v0.8.1 drainPeerDMs halts on peer_dm_summary.failed > 0 with expert-peer-dm-enqueue-failed', async () => {
+  const expertUi = makeIdentity('expert-ui');
+  const expertUx = makeIdentity('expert-ux');
+  const activeExperts = [expertUi, expertUx];
+  const unreadFlags = { 'expert-ui': 1, 'expert-ux': 1 };
+
+  const { deps, calls } = makeDeps({
+    hasUnread: async (expertId) => unreadFlags[expertId] ?? 0,
+    runTurn: async (expert) => {
+      unreadFlags[expert.id] = 0;
+      // Simulate runTurn observing a peer-DM enqueue failure
+      // (e.g. invalid recipient name, or MailboxError on write).
+      return makeTurnResult(expert.id, [], { enqueued: 0, failed: 1 });
+    },
+  });
+
+  const result = await drainPeerDMs(activeExperts, deps, {
+    specPath: '/tmp/spec.md',
+    drainContext: { phase: 'post-implementation-review', sliceId: 'slice-3' },
+  });
+
+  assert.equal(result.halt, 'expert-peer-dm-enqueue-failed');
+  // Only ran one turn because we halt immediately on first failure.
+  assert.equal(result.turns.length, 1);
+  assert.equal(calls.runTurn.length, 1);
+});
+
+test('v0.8.1 drainPeerDMs does NOT halt when peer_dm_summary.failed === 0', async () => {
+  const expertUi = makeIdentity('expert-ui');
+  const activeExperts = [expertUi];
+  const unreadFlags = { 'expert-ui': 1 };
+
+  const { deps } = makeDeps({
+    hasUnread: async (expertId) => unreadFlags[expertId] ?? 0,
+    runTurn: async (expert) => {
+      unreadFlags[expert.id] = 0;
+      // Successful enqueue (or no peer messages).
+      return makeTurnResult(expert.id, [], { enqueued: 2, failed: 0 });
+    },
+  });
+
+  const result = await drainPeerDMs(activeExperts, deps, {
+    specPath: '/tmp/spec.md',
+    drainContext: { phase: 'post-implementation-review', sliceId: 'slice-3' },
+  });
+
+  // Normal convergence: queue drains, no halt.
+  assert.equal(result.halt, null);
+  assert.equal(result.turns.length, 1);
+});
+
+test('v0.8.1 drainPeerDMs tolerates turns lacking peer_dm_summary (back-compat)', async () => {
+  // A turn result without peer_dm_summary (e.g., a runTurn override in old
+  // tests) must not crash the scheduler. The halt check should treat the
+  // absent field as "no failures".
+  const expertUi = makeIdentity('expert-ui');
+  const activeExperts = [expertUi];
+  const unreadFlags = { 'expert-ui': 1 };
+
+  const { deps } = makeDeps({
+    hasUnread: async (expertId) => unreadFlags[expertId] ?? 0,
+    runTurn: async (expert) => {
+      unreadFlags[expert.id] = 0;
+      // Deliberately omit peer_dm_summary.
+      const result = makeTurnResult(expert.id);
+      delete result.peer_dm_summary;
+      return result;
+    },
+  });
+
+  const result = await drainPeerDMs(activeExperts, deps, {
+    specPath: '/tmp/spec.md',
+    drainContext: { phase: 'post-implementation-review', sliceId: 'slice-3' },
+  });
+
+  assert.equal(result.halt, null);
 });

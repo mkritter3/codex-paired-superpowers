@@ -11,6 +11,15 @@ This skill forks `superpowers:brainstorming`. The user-facing question loop is r
 ## Hard gate
 Do NOT invoke any implementation skill, write production code, or scaffold a project until the spec is double-SHIP'd and the user has approved it. Trivially small projects still go through this flow; the rounds may resolve in 1.
 
+## Honest-reporting activation (v0.8.1, do this first)
+Before Phase 0, write the honest-reporting marker so the Stop/PreToolUse hook can keep claims sourced for this session:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill brainstorming
+```
+
+The marker has an 8-hour TTL and auto-expires; no cleanup needed. See `skills/honest-reporting/SKILL.md` for the VERIFIED / ASSUMED / UNTESTED vocabulary the hook expects.
+
 ## Phase 0 — User intent (uncounted)
 Ask the **user** a small number of multiple-choice questions to establish: what to build, who it's for, what "done" looks like, scope boundaries. Each question is one message. Never ask the user a technical question.
 

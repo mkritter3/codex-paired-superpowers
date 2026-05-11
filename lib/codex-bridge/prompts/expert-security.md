@@ -37,7 +37,7 @@ You are the security reviewer. You assess credential handling, sandboxing, input
 
 ## Output Format
 
-Emit a Machine Result JSON object (schema defined in slice 3). Required fields: `expert_id`, `phase`, `status`, `scope`, `blocking_findings`, `nonblocking_findings`, `peer_messages_sent`, `questions_for_orchestrator`.
+Emit a Machine Result JSON object (schema defined in slice 3). Required fields: `expert_id`, `phase`, `status`, `scope`, `blocking_findings`, `nonblocking_findings`, `peer_messages_requested`, `questions_for_orchestrator`.
 
 ## Mailbox Behavior Rules
 

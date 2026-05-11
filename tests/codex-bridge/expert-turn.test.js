@@ -29,7 +29,7 @@ function makeIdentity(dir, body = '<the expert prompt body>') {
   return { id: 'expert-ui', role: 'ui', promptPath, source: 'builtin' };
 }
 
-function validMachineResult(expertId = 'expert-ui', phase = 'spec-review', status = 'SHIP') {
+function validMachineResult(expertId = 'expert-ui', phase = 'spec-review', status = 'SHIP', peerMessagesRequested = []) {
   return `## Findings\nLooks fine.\n\n## Machine Result\n\`\`\`json\n${JSON.stringify({
     expert_id: expertId,
     phase,
@@ -37,7 +37,7 @@ function validMachineResult(expertId = 'expert-ui', phase = 'spec-review', statu
     scope: 'ui',
     blocking_findings: [],
     nonblocking_findings: [],
-    peer_messages_sent: [],
+    peer_messages_requested: peerMessagesRequested,
     questions_for_orchestrator: [],
   })}\n\`\`\`\n`;
 }
@@ -147,7 +147,9 @@ function makeDepStubs(overrides = {}) {
     dispatch: [],
     appendTurn: [],
     breadcrumbs: [],
+    writeToMailbox: [],
   };
+  let mailboxSeq = 0;
   const deps = {
     readUnreadMessages: async () => {
       calls.readUnread++;
@@ -156,6 +158,11 @@ function makeDepStubs(overrides = {}) {
     markManyAsRead: async (root, id, ids) => {
       calls.markRead.push({ root, id, ids });
       return { marked: ids, skipped: [] };
+    },
+    writeToMailbox: async (root, recipient, message) => {
+      calls.writeToMailbox.push({ root, recipient, message });
+      mailboxSeq++;
+      return { id: `msg-stub-${mailboxSeq}` };
     },
     parseExpertOutput: (raw, opts) => {
       calls.parse++;
@@ -319,5 +326,197 @@ test('runTurnWithDeps sidecar append throws: breadcrumb written; result still re
   assert.equal(result.ok, true);
   assert.ok(calls.breadcrumbs.length >= 1);
   assert.match(calls.breadcrumbs[0].msg, /sidecar/i);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── v0.8.1 peer-DM enqueue ────────────────────────────────────────────────
+//
+// runTurnWithDeps must consume parsed.peer_messages_requested on parse
+// success, classify each item, and call writeToMailbox for valid ones.
+// Per-item failures DO NOT fail the turn — they are recorded under
+// peer_messages_failed for audit; the scheduler halts on summary.failed > 0.
+
+import { MailboxError } from '../../lib/codex-bridge/mailbox.js';
+
+test('v0.8.1 peer-DM: two valid requests both enqueued; summary records counts; sidecar carries audit', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [
+    { to: 'expert-ux', body: 'check panel state', summary: 'panel state q' },
+    { to: 'expert-architecture', body: 'review boundary', summary: 'boundary review' },
+  ];
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.peer_dm_summary, { enqueued: 2, failed: 0 });
+  assert.equal(calls.writeToMailbox.length, 2);
+  assert.equal(calls.writeToMailbox[0].recipient, 'expert-ux');
+  assert.equal(calls.writeToMailbox[0].message.from, 'expert-ui');
+  assert.equal(calls.writeToMailbox[0].message.text, 'check panel state');
+  assert.equal(calls.writeToMailbox[0].message.summary, 'panel state q');
+  // Sidecar turn record carries the audit.
+  const turn = calls.appendTurn[0];
+  assert.equal(turn.peer_messages_enqueued.length, 2);
+  assert.equal(turn.peer_messages_enqueued[0].to, 'expert-ux');
+  assert.ok(turn.peer_messages_enqueued[0].message_id.startsWith('msg-'));
+  assert.deepEqual(turn.peer_messages_failed, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: legacy peer_messages_sent (v0.8.0 alias) still enqueues', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  // Simulate parser normalization: parser sees legacy `peer_messages_sent`
+  // and writes it onto `peer_messages_requested`. We model the parser's
+  // post-normalization output here.
+  const legacyMessage = { to: 'expert-ux', summary: 'old shape — only summary' };
+  const { deps, calls } = makeDepStubs({
+    parseExpertOutput: () => ({
+      ok: true,
+      result: {
+        expert_id: 'expert-ui',
+        phase: 'spec-review',
+        status: 'SHIP',
+        scope: 'ui',
+        blocking_findings: [],
+        nonblocking_findings: [],
+        peer_messages_requested: [legacyMessage], // post-normalization
+        questions_for_orchestrator: [],
+      },
+      warnings: ['legacy-peer_messages_sent-normalized'],
+    }),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  assert.equal(result.peer_dm_summary.enqueued, 1);
+  // body fell back to summary
+  assert.equal(calls.writeToMailbox[0].message.text, 'old shape — only summary');
+  assert.equal(calls.writeToMailbox[0].message.summary, 'old shape — only summary');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: invalid recipient → recorded in failed; turn still ok', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [{ to: 'expert-FOO!!', body: 'x' }];
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  assert.equal(result.peer_dm_summary.enqueued, 0);
+  assert.equal(result.peer_dm_summary.failed, 1);
+  assert.equal(calls.writeToMailbox.length, 0, 'should not attempt write for invalid recipient');
+  const failed = calls.appendTurn[0].peer_messages_failed;
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].to, 'expert-FOO!!');
+  assert.equal(failed[0].reason, 'invalid-recipient');
+  assert.equal(failed[0].code, 'mailbox-recipient-malformed');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: self-DM → recorded in failed with reason self-dm', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [{ to: 'expert-ui', body: 'myself' }]; // identity is expert-ui
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  assert.equal(result.peer_dm_summary.failed, 1);
+  assert.equal(calls.writeToMailbox.length, 0);
+  assert.equal(calls.appendTurn[0].peer_messages_failed[0].reason, 'self-dm');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: empty body (no body, no summary) → recorded in failed', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [{ to: 'expert-ux' }]; // no body, no summary
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.peer_dm_summary.failed, 1);
+  assert.equal(calls.writeToMailbox.length, 0);
+  assert.equal(calls.appendTurn[0].peer_messages_failed[0].reason, 'empty-body');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: malformed item (not an object) → recorded in failed', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = ['not an object', { to: 'expert-ux', body: 'ok' }];
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.peer_dm_summary.enqueued, 1);
+  assert.equal(result.peer_dm_summary.failed, 1);
+  const failed = calls.appendTurn[0].peer_messages_failed;
+  assert.equal(failed[0].reason, 'malformed-item');
+  assert.equal(failed[0].to, null);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: body preferred when both body and summary present', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [{ to: 'expert-ux', body: 'FULL BODY', summary: 'short' }];
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.peer_dm_summary.enqueued, 1);
+  assert.equal(calls.writeToMailbox[0].message.text, 'FULL BODY');
+  assert.equal(calls.writeToMailbox[0].message.summary, 'short');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: writeToMailbox throws MailboxError → recorded in failed with code; turn still ok', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [{ to: 'expert-ux', body: 'x' }];
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+    writeToMailbox: async () => {
+      throw new MailboxError('mailbox-lock-timeout', 'lock contention');
+    },
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true, 'turn succeeds even when peer-DM write fails');
+  assert.equal(result.peer_dm_summary.failed, 1);
+  const failed = calls.appendTurn[0].peer_messages_failed;
+  assert.equal(failed[0].code, 'mailbox-lock-timeout');
+  assert.match(failed[0].reason, /lock contention/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: parse-fail path does NOT enqueue peer messages', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => 'unparseable',
+    parseExpertOutput: () => ({ ok: false, reason: 'missing-machine-block' }),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, false);
+  assert.equal(calls.writeToMailbox.length, 0, 'no peer enqueue on parse-fail');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1 peer-DM: no peer_messages_requested field → empty summary, no failures', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const { deps } = makeDepStubs({
+    // The validMachineResult helper now defaults to peer_messages_requested: []
+    // so the absent-array case is the default. Test asserts no false failures.
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.peer_dm_summary, { enqueued: 0, failed: 0 });
   rmSync(dir, { recursive: true, force: true });
 });

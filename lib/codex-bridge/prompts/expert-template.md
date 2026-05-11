@@ -20,7 +20,7 @@ Key questions this expert answers when reviewing an artifact.
 
 ## Output Format
 
-Pointer to the Machine Result JSON schema (slice 3). Required fields: expert_id, phase, status, scope, blocking_findings, nonblocking_findings, peer_messages_sent, questions_for_orchestrator.
+Pointer to the Machine Result JSON schema (slice 3). Required fields: expert_id, phase, status, scope, blocking_findings, nonblocking_findings, peer_messages_requested, questions_for_orchestrator.
 
 ## Mailbox Behavior Rules
 
