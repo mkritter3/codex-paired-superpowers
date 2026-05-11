@@ -8,8 +8,8 @@
       "description": "Six superpowers skills paired with Codex (GPT-5.5) as an L11 engineering partner; one persistent Codex thread per feature; 7-round revision loop with structured verdict protocol.",
       "version": "0.7.3.1",
       "source": {
-        "source": "github",
-        "repo": "mkritter3/codex-paired-superpowers"
+        "source": "url",
+        "url": "https://github.com/mkritter3/codex-paired-superpowers.git"
       }
     }
   ]
