@@ -266,9 +266,41 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.7.3.1 — mailbox auto-delivery for Sonnet subagents (PostToolUse hook). All implementation slices shipped; live Task-subagent verification (release gate) is the only remaining step before tag.
+v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook architecture intact, release-gate INCONCLUSIVE in Claude Code 2.1.138 (Task tool lacks the `cwd` parameter the hook design relies on; doesn't invalidate the architecture — see `docs/verification/v0.7.3.1-hook-fires.md`).
 
 ### Changelog
+
+- **v0.7.3.2** — patch: harden the model invariant in skill docs after a
+  real-world tool-call card showed Claude passing `model: "gpt-5.2-codex"`
+  to the codex MCP tool instead of `gpt-5.5`. Root cause: the codex MCP
+  tool's schema description includes `gpt-5.2` and `gpt-5.2-codex` as
+  example values (stale references from the upstream codex CLI's
+  docstring), and Claude was treating them as documentation hints rather
+  than docstring examples — silently using one as the literal `model`
+  argument. Failure mode is sticky: model is locked at thread-creation
+  time, every `codex-reply` inherits it, the whole feature's review loop
+  runs on the wrong model.
+
+  Three skill files updated with prominent ⚠️ MODEL INVARIANT callouts:
+
+  - `skills/brainstorming/codex-pairing.md`: new section right after the
+    tool table; explicitly names gpt-5.2/gpt-5.2-codex as stale examples
+    NOT to use; notes the post-creation-immutability of the thread model.
+  - `skills/brainstorming/SKILL.md`: the JSON example already had
+    `gpt-5.5`, now preceded by a strong "do NOT substitute schema-
+    description example values" warning plus a "Critical — model
+    invariant" paragraph explaining the failure mode.
+  - `skills/systematic-debugging/SKILL.md`: this was the actual leak path
+    (standalone bug → new thread, but no model guidance). Added explicit
+    MODEL INVARIANT paragraph requiring `gpt-5.5` + high reasoning when
+    opening a fresh thread.
+
+  Autopilot was checked — it only uses `codex-reply` (no model
+  parameter; inherits the thread's locked model), no new-thread path to
+  harden there.
+
+  No code changes; the bug is in Claude's interpretation of an upstream
+  schema description. Doc-only patch.
 
 - **v0.7.3.1** — closes the auto-delivery gap from v0.7.3. The mailbox proved
   coordination works empirically, but agents had to remember to poll between
