@@ -317,3 +317,44 @@ test('buildRepairPrompt: contains raw output, reason, expected id/phase, and ins
     'should remind that surrounding Markdown can be free-form',
   );
 });
+
+// ── Non-object JSON guard (round-1 codex critique) ────────────────────────
+//
+// JSON.parse accepts primitives and arrays. Without an explicit object
+// guard, the schema loop's `f in parsed` would throw TypeError on null /
+// primitives, escaping the parser instead of returning schema-violation.
+
+test('parser handles JSON null without throwing (returns schema-violation)', () => {
+  const result = parseExpertOutput(
+    '## Machine Result\n\n```json\nnull\n```',
+    {}
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'schema-violation');
+  assert.ok(/null/i.test(result.detail), 'detail should mention got=null');
+});
+
+test('parser handles JSON primitives (42, "str", true) without throwing', () => {
+  for (const payload of ['42', '"hello"', 'true', 'false']) {
+    const result = parseExpertOutput(
+      `## Machine Result\n\n\`\`\`json\n${payload}\n\`\`\``,
+      {}
+    );
+    assert.equal(result.ok, false, `payload=${payload}: expected ok=false`);
+    assert.equal(
+      result.reason,
+      'schema-violation',
+      `payload=${payload}: expected schema-violation reason`
+    );
+  }
+});
+
+test('parser handles JSON array (not object) without throwing', () => {
+  const result = parseExpertOutput(
+    '## Machine Result\n\n```json\n[1, 2, 3]\n```',
+    {}
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'schema-violation');
+  assert.ok(/array/i.test(result.detail), 'detail should mention got=array');
+});
