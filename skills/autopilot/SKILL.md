@@ -709,6 +709,56 @@ if (size > cfg.max_bytes) {
 
 All-unread overflow during `archiveAndReset` throws `MailboxError(code='mailbox-overflow-unread')` — orchestrator halts (no silent loss). Run `cleanupArchives` periodically (once per autopilot session is enough) to apply retention policy.
 
+##### Mailbox archival policy (v0.8.0)
+
+At **terminal-state halt** (autopilot is stopping forward progress —
+either `completed` / `abandoned-by-user` or any of the preserve-class
+halt reasons below), iterate every active expert in
+`expert_teammates.selected[]` and call:
+
+```js
+import { archive } from '<plugin>/lib/codex-bridge/expert-runtime.js';
+
+for (const expert of sidecar.expert_teammates.selected) {
+  if (expert.status === 'archived' || expert.status === 'failed') continue;
+  const result = await archive(
+    { id: expert.id },
+    haltReason,
+    { repoRoot }      // required for ARCHIVE reasons; ignored for PRESERVE
+  );
+  // result = { expert_id, status, archive_reason, archived_at }
+  // Persist via updateExpertStatus(specPath, expert.id, result.status === 'archived' ? 'archived' : expert.status)
+  // (PRESERVE reasons retain the prior status — the mailbox is kept for resume.)
+}
+```
+
+The policy from `lib/codex-bridge/expert-archive.js`:
+
+| Halt reason                              | Action   | Rationale                                              |
+|------------------------------------------|----------|--------------------------------------------------------|
+| `completed`                              | ARCHIVE  | Feature done; queued teammate state no longer needed.  |
+| `abandoned-by-user`                      | ARCHIVE  | Explicit cleanup intent.                               |
+| `external-commit-detected`               | PRESERVE | Operator must inspect why HEAD diverged.               |
+| `slice-blocker-from-mailbox`             | PRESERVE | Slice in-progress; user decides abort vs wait.         |
+| `expert-blocker-open`                    | PRESERVE | Blocking finding awaiting override/resolution.         |
+| `expert-peer-dm-drain-cap-exceeded`      | PRESERVE | Pending peer DMs must survive for resume.              |
+| `subagent-dispatch-failed`               | PRESERVE | Transient dispatch failure; retry needs queued state.  |
+| `reconcile-failed`                       | PRESERVE | Worktree unreliable; operator must inspect.            |
+| `validation-failed`                      | PRESERVE | Live verification halted; expert state may inform fix. |
+| `user-input-required`                    | PRESERVE | User answers may reshape queued DMs.                   |
+
+ARCHIVE drains the inbox via `archiveAndReset` (preserves read messages
+under `.codex-paired/archives/`, resets the inbox to unread-only).
+PRESERVE is a no-op on the mailbox — read messages stay, unread stay
+unread — so the next autopilot resume picks up where the last run
+stopped.
+
+Unknown halt reasons throw `ExpertArchiveError` code
+`unknown-halt-reason`. If you find yourself reaching for a new halt
+reason, extend the set in `expert-archive.js` deliberately (the
+audit-grep target is "every halt reason maps to ARCHIVE or PRESERVE,
+no silent skip").
+
 **v0.8.0 update.** B.4.5 now ALSO polls active expert inboxes (as recorded in `expert_teammates.selected[]`) alongside orchestrator + in-flight slice inboxes. If an active expert has unread messages at B.4.5:
 
 - Record the inbox state (don't immediately spawn — expert review should see reconciled implementation truth at B.5.5, not partial worker output).

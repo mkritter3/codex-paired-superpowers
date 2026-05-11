@@ -266,9 +266,78 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook architecture intact, release-gate INCONCLUSIVE in Claude Code 2.1.138 (Task tool lacks the `cwd` parameter the hook design relies on; doesn't invalidate the architecture — see `docs/verification/v0.7.3.1-hook-fires.md`).
+v0.8.0 — domain-expert teammates (peer-negotiated coordination, Claude-driven role composition, plugin-only recreation of agent-teams). Release-gate procedure documented at `docs/verification/v0.8.0-domain-experts.md` (PENDING until maintainer runs the smoke).
+
+Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook architecture intact, release-gate INCONCLUSIVE in Claude Code 2.1.138 (Task tool lacks the `cwd` parameter the hook design relies on; doesn't invalidate the architecture — see `docs/verification/v0.7.3.1-hook-fires.md`).
 
 ### Changelog
+
+- **v0.8.0** — domain-expert teammates. Adds a curated bundle of expert
+  roles (UI, UX, accessibility, performance, security, test, architecture,
+  ai-harness, frontend-design, payment-processing, python-development,
+  supabase-toolkit) that compose with the existing Codex L11 reviewer.
+  Experts are Claude-driven Agent dispatches with their own mailbox-rooted
+  inboxes; no native agent-teams runtime dependency.
+
+  **File map.** Curated expert prompts ship at
+  `lib/codex-bridge/prompts/expert-*.md`; users override by placing
+  `<repo>/.codex-paired/experts/<role>.md` in their project. The
+  `lib/codex-bridge/expert-runtime.js` facade exposes the 5-method
+  TeammateRuntime interface (`resolveIdentity`, `selectTeammates`,
+  `runTurn`, `pollInbox`, `archive`) so a future native Agent-Teams
+  adapter can swap the facade transparently.
+
+  **Phase inserts.** Autopilot Phase B gains 4 new sub-phases (per
+  `skills/autopilot/SKILL.md`):
+  - **B.0.5** — expert composition: Claude infers experts from spec
+    signal, validates fan-out (>=6 experts requires a rationale entry
+    in sidecar's `expert_teammates.fan_out_rationales[]`).
+  - **B.1.5** — optional expert pre-review before implementation
+    dispatch.
+  - **B.4.5-update** — between-turns polling now ALSO scans active
+    expert inboxes; unread mail schedules B.5.5 drain.
+  - **B.5.5** — expert post-review + peer-DM drain scheduler with caps
+    (max 2 respawns per expert; max 8 total expert turns per drain).
+
+  **Sentinel-halted-dispatch pattern.** Pre-dispatch expert blockers
+  append a sentinel dispatch record so `updateDispatchExpertBlocker`
+  resolves uniformly across pre- and post-dispatch findings. After the
+  sentinel is appended, halt with `expert-blocker-open` — which
+  PRESERVES the expert's mailbox per the archival policy below.
+
+  **Override authority.** Claude can technical-override expert blocking
+  findings only with concrete evidence (file path / line / command
+  output / reconciler result); product/UX/business overrides require
+  explicit human authorization (halt `expert-blocker-needs-user`).
+  Rubber-stamping a non-technical override is a contract violation —
+  the rationale field is auditable.
+
+  **Caps.** Max 2 respawns per expert per slice; max 8 total expert
+  turns per B.5.5 drain. Cap-exceeded halts with
+  `expert-peer-dm-drain-cap-exceeded` (PRESERVES mailboxes).
+
+  **Halt-reason archival policy.** `lib/codex-bridge/expert-archive.js`
+  implements the halt-reason-driven policy from spec §Mailbox Archival.
+  ARCHIVE (drain + rotate) for `completed`, `abandoned-by-user`.
+  PRESERVE (keep for resume/debug) for `external-commit-detected`,
+  `slice-blocker-from-mailbox`, `expert-blocker-open`,
+  `expert-peer-dm-drain-cap-exceeded`, `subagent-dispatch-failed`,
+  `reconcile-failed`, `validation-failed`, `user-input-required`.
+  Unknown halt reasons throw `ExpertArchiveError` code
+  `unknown-halt-reason` — the set must be extended deliberately.
+
+  **Compatibility.** This is a plugin-only recreation of the
+  agent-teams pattern (no native Anthropic Agent-Teams API dependency).
+  A `NativeTeammateRuntime` adapter is deferred to a future release
+  once Claude Code exposes a programmatic Agent dispatch surface.
+
+  **Codex-paired discipline shipped this feature.** Spec hardened in 2
+  Codex rounds; implementation plan in 6 Codex rounds; per-slice review
+  caught 9+ real bugs across all 7 slices before they reached the
+  trunk. Slice 7 ships the release-gate smoke as a manual user
+  procedure (per spec §9.3 escape hatch) because the Agent/Task surface
+  is exposed only inside a live Claude Code session — see
+  `docs/verification/v0.8.0-domain-experts.md` for the procedure.
 
 - **v0.7.3.2** — patch: harden the model invariant in skill docs after a
   real-world tool-call card showed Claude passing `model: "gpt-5.2-codex"`

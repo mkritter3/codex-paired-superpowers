@@ -54,11 +54,14 @@ test('facade.pollInbox returns unread messages for the given identity', async ()
   }
 });
 
-test('facade.archive is a stub that records the call (slice 7 wires the real archive)', async () => {
-  const result = await facade.archive({ id: 'expert-ui' }, 'phase-advanced');
-  assert.equal(result.stubbed, true);
-  assert.equal(result.identity, 'expert-ui');
-  assert.equal(result.haltReason, 'phase-advanced');
+test('facade.archive is wired to expert-archive (slice 7 production impl)', async () => {
+  // Use a PRESERVE halt reason — no mailbox FS side-effect, no deps.repoRoot
+  // required, exercises the production code path end-to-end.
+  const result = await facade.archive({ id: 'expert-ui' }, 'expert-blocker-open');
+  assert.equal(result.expert_id, 'expert-ui');
+  assert.equal(result.status, 'preserved-for-resume');
+  assert.equal(result.archive_reason, 'expert-blocker-open');
+  assert.match(result.archived_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('facade.runTurn is the production wrapper (callable; defaults to runTurnWithDeps without overrides)', async () => {
