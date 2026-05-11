@@ -357,13 +357,14 @@ Apply these checks in order. The first failure halts the entire candidate window
 
 #### Phase B.1.5 — Optional expert pre-review (v0.8.0)
 
-For each expert tagged with `pre-dispatch` in its registry phases (currently `architecture` and `test` per `agents/dispatchers.json`), run `expert-runtime.runTurn(request)` where `request` is the single-object shape defined in `lib/codex-bridge/expert-turn.js`:
+For each expert tagged with `pre-dispatch` in its registry phases (currently `architecture` and `test` per `agents/dispatchers.json`), drive the expert turn via the **two-step orchestration pattern**. Claude Code does not expose the Agent tool to Node modules, so the runtime cannot dispatch the subagent itself — Claude (orchestrator) drives the Agent dispatch, and the runtime drives everything else around it.
+
+**Step 1: Assemble the spawn prompt + dispatch the Task subagent yourself.**
 
 ```js
-const { runTurn } = await import('<plugin>/lib/codex-bridge/expert-runtime.js');
-
-const result = await runTurn({
-  identity: expertIdentity,           // from selectTeammates result
+const { assembleSpawnPrompt } = await import('<plugin>/lib/codex-bridge/expert-turn.js');
+const request = {
+  identity: expertIdentity,            // from selectTeammates result
   repoRoot: <repoRoot>,
   specPath: <specPath>,
   specSnippet: <slice plan section as context>,
@@ -372,11 +373,30 @@ const result = await runTurn({
   sidecarParticipantState: <prior turn summaries for this expert, if any>,
   task: 'Pre-dispatch review of the planned slice. Surface blocking ' +
         'architectural / test-coverage concerns before implementation begins.',
+};
+// Need unreadMessages array to render the prompt; readUnreadMessages is exported by mailbox.js.
+const { readUnreadMessages } = await import('<plugin>/lib/codex-bridge/mailbox.js');
+const unreadMessages = await readUnreadMessages(request.repoRoot, request.identity.id);
+const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
+```
+
+Then YOU (Claude as orchestrator) dispatch the Task tool with `prompt` as the subagent's instructions. Capture the subagent's final response as `taskResponseText`.
+
+**Step 2: Drive the rest of the pipeline via `runTurnWithDeps`** with an `agentDispatch` impl that just returns `taskResponseText`:
+
+```js
+const { runTurnWithDeps } = await import('<plugin>/lib/codex-bridge/expert-turn.js');
+const result = await runTurnWithDeps(request, {
+  agentDispatch: async () => taskResponseText,
 });
 // result: { ok: true, result: ParsedMachineResult } | { ok: false, reason: ... }
 ```
 
-Do NOT call `runTurn(expert, {phase})` with two arguments — the facade expects a single `request` object. The `(expert, drainContext)` two-arg shape is the SCHEDULER's internal wrapper signature used inside B.5.5's `drainPeerDMs` deps, not the public `runTurn` API.
+This runs through: re-read unread → re-assemble prompt (idempotent + cheap) → call your `agentDispatch` stub → parse → repair if needed → mark-read on success → append sidecar turn.
+
+**DO NOT call `runTurn(request)` directly.** The default `agentDispatch` is intentionally unwired (throws with a clear message pointing here) because Claude Code's Agent surface is not callable from a Node module. The two-step pattern above is the executable orchestration contract for v0.8.0.
+
+Do NOT call `runTurn(expert, {phase})` with two arguments — that's the scheduler's INTERNAL wrapper signature inside B.5.5's `drainPeerDMs` deps, not a public API.
 
 If all pre-review experts SHIP (no blocking findings), held turn records flow through to B.7 where they are attached to the dispatch record's `expert_blockers: []` (empty) + `experts_selected[]` + `expert_turn_ids[]`. Normal flow continues to B.2.
 
@@ -817,9 +837,31 @@ const { drainPeerDMs } = await import('<plugin>/lib/codex-bridge/expert-dm-sched
 const drainResult = await drainPeerDMs(
   activeExperts,
   {
-    hasUnread: (expertId) => /* wrapper over mailbox.readUnreadMessages */,
-    runTurn: (expert, ctx) => /* wrapper over expert-runtime.runTurn */,
-    readExpertTurns: (specPath, ctx) => /* wrapper over sidecar.readExpertTurns */,
+    hasUnread: async (expertId) => (await readUnreadMessages(repoRoot, expertId)).length,
+    // runTurn wrapper for the scheduler: applies the same two-step pattern
+    // as B.1.5 (Claude dispatches the Task subagent itself; passes the
+    // response as agentDispatch). The scheduler invokes this once per
+    // turn it schedules.
+    runTurn: async (expert, drainContext) => {
+      const request = {
+        identity: expert,
+        repoRoot,
+        specPath,
+        specSnippet: <reconciled slice diff snippet>,
+        phase: drainContext.phase,
+        sliceId: drainContext.sliceId,
+        sidecarParticipantState: <prior turn summaries>,
+        task: 'Post-implementation review of the reconciled slice.',
+      };
+      const unreadMessages = await readUnreadMessages(repoRoot, expert.id);
+      const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
+      // YOU (Claude) dispatch the Task tool here with `prompt`, capture
+      // taskResponseText, then:
+      return await runTurnWithDeps(request, {
+        agentDispatch: async () => taskResponseText,
+      });
+    },
+    readExpertTurns,  // sidecar.readExpertTurns directly
     writeBreadcrumb,
   },
   {
