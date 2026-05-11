@@ -104,6 +104,39 @@ test('assembleSpawnPrompt handles empty unread message list gracefully', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('assembleSpawnPrompt embeds the real system-rubric.md content (not a hardcoded placeholder)', () => {
+  // Codex round-1 caught: a substring assertion on "L11" would pass even
+  // if assembleSpawnPrompt omitted the actual rubric. This test pins the
+  // contract by checking signature strings that only appear in
+  // lib/codex-bridge/prompts/system-rubric.md, so the test fails if the
+  // rubric content is dropped or replaced with a stub.
+  const dir = makeTmp();
+  const identity = makeIdentity(dir);
+  const prompt = assembleSpawnPrompt({
+    identity,
+    specPath: '/tmp/s.md',
+    specSnippet: 'snip',
+    phase: 'spec-review',
+    sidecarParticipantState: '',
+    unreadMessages: [],
+    task: 'do the thing',
+  });
+  // These phrases come straight from prompts/system-rubric.md.
+  assert.ok(
+    prompt.includes('L11 Engineering Partner'),
+    'should embed the "L11 Engineering Partner" heading from system-rubric.md',
+  );
+  assert.ok(
+    prompt.includes('Never rubber-stamp'),
+    'should embed the "Never rubber-stamp" behavioral rule from system-rubric.md',
+  );
+  assert.ok(
+    prompt.includes('Pre-SHIP checklist'),
+    'should embed the "Pre-SHIP checklist" section from system-rubric.md',
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
 // ── runTurnWithDeps contract ───────────────────────────────────────────────
 
 function makeDepStubs(overrides = {}) {
@@ -219,7 +252,7 @@ test('runTurnWithDeps parse fail + repair succeeds: messages marked read only af
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('runTurnWithDeps parse fail + repair fails: messages NOT marked read; failure_reason=unparseable-output', async () => {
+test('runTurnWithDeps parse fail + repair fails: messages NOT marked read BUT mailbox_message_ids_injected preserves audit trail', async () => {
   const { dir, spec } = makeSpec();
   const identity = makeIdentity(dir);
   const msg = { id: 'msg-y', from: 'orchestrator', text: 't', timestamp: '2026-05-11T00:00:00.000Z' };
@@ -235,11 +268,15 @@ test('runTurnWithDeps parse fail + repair fails: messages NOT marked read; failu
   assert.equal(calls.appendTurn.length, 1);
   assert.equal(calls.appendTurn[0].failure_reason, 'unparseable-output');
   assert.equal(calls.appendTurn[0].verdict, 'REVISE');
-  assert.deepEqual(calls.appendTurn[0].mailbox_message_ids_injected, []);
+  // Audit trail: messages were INJECTED into the prompt (the expert saw them),
+  // even though parse failed. mark-read remains separate (not called above).
+  // Per spec §Rehydration State the injected ids must be preserved on failure
+  // for restart/audit context. (Codex round-1 critique.)
+  assert.deepEqual(calls.appendTurn[0].mailbox_message_ids_injected, ['msg-y']);
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('runTurnWithDeps agent dispatch throws: messages NOT marked read; failure_reason=dispatch-error', async () => {
+test('runTurnWithDeps agent dispatch throws: messages NOT marked read BUT mailbox_message_ids_injected preserves audit trail', async () => {
   const { dir, spec } = makeSpec();
   const identity = makeIdentity(dir);
   const msg = { id: 'msg-z', from: 'orchestrator', text: 't', timestamp: '2026-05-11T00:00:00.000Z' };
@@ -253,7 +290,8 @@ test('runTurnWithDeps agent dispatch throws: messages NOT marked read; failure_r
   assert.equal(calls.markRead.length, 0);
   assert.equal(calls.appendTurn.length, 1);
   assert.equal(calls.appendTurn[0].failure_reason, 'dispatch-error');
-  assert.deepEqual(calls.appendTurn[0].mailbox_message_ids_injected, []);
+  // Same audit-trail contract on the dispatch-error path.
+  assert.deepEqual(calls.appendTurn[0].mailbox_message_ids_injected, ['msg-z']);
   rmSync(dir, { recursive: true, force: true });
 });
 
