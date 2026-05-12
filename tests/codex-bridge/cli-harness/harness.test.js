@@ -5,8 +5,23 @@
 // normalized DispatchResult.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { dispatch } from '../../../lib/codex-bridge/cli-harness/harness.js';
+
+const __filename__ = fileURLToPath(import.meta.url);
+const __dirname__ = dirname(__filename__);
+const FAKE_OLLAMA = join(
+  __dirname__,
+  '..',
+  '..',
+  'fixtures',
+  'fake-cli',
+  'ollama.sh',
+);
 
 // A fake adapter that the tests can register via the optional `adapters`
 // dependency-injection seam, so we don't depend on real CLI fixtures here.
@@ -100,4 +115,42 @@ test('harness.dispatch records a non-negative duration_ms', async () => {
   );
   assert.equal(typeof result.duration_ms, 'number');
   assert.ok(result.duration_ms >= 0);
+});
+
+// Codex slice-review polish (slice-2-d1): exercise the real adapter
+// registry end-to-end for Ollama. The existing tests use the DI seam
+// (`deps.adapters: Map`); this confirms harness → registry → adapter wiring
+// works without the test-only DI bypass.
+test('harness.dispatch routes {cli:"ollama",variant} through the real registry to the adapter', async () => {
+  const argsDir = mkdtempSync(join(tmpdir(), 'harness-ollama-route-'));
+  const argsOut = join(argsDir, 'args.txt');
+
+  const result = await dispatch(
+    { cli: 'ollama', variant: 'kimi-k2.6' },
+    'system',
+    'user',
+    {
+      // Override the command to the fake CLI; the registry/variant
+      // resolution path is what's under test, not the binary.
+      command: FAKE_OLLAMA,
+      env: {
+        FAKE_CLI_OUTPUT: 'routed via real registry',
+        OLLAMA_FAKE_ARGS_FILE: argsOut,
+      },
+    },
+    // NO `deps.adapters` — force the real registry path.
+  );
+
+  assert.equal(result.exit, 0);
+  assert.equal(result.responseText, 'routed via real registry');
+  assert.equal(result.adapterMeta.model, 'kimi-k2.6:cloud');
+
+  // Variant resolution proof at the harness layer.
+  const argv = readFileSync(argsOut, 'utf8')
+    .split('\n')
+    .filter((l) => l.length > 0);
+  assert.ok(
+    argv.includes('kimi-k2.6:cloud'),
+    `expected argv to include resolved model; got ${JSON.stringify(argv)}`,
+  );
 });

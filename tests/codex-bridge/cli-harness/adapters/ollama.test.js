@@ -229,3 +229,19 @@ test('ollama adapter: stdout truncation triggers stdout-truncated warning', asyn
     `expected stdout-truncated warning, got ${JSON.stringify(result.warnings)}`,
   );
 });
+
+// Codex slice-review polish (slice-2-d2): the Ollama adapter shares the
+// same buffer-cap branches as the codex adapter, but only stdout-truncated
+// was tested directly. This pins the symmetric stderr branch.
+test('ollama adapter: stderr truncation triggers stderr-truncated warning', async () => {
+  const result = await dispatch('system', 'user', {
+    command: FAKE_OLLAMA,
+    variant: 'kimi-k2.6',
+    env: { FAKE_CLI_STDERR: 'x'.repeat(1000) },
+    maxBufferBytes: 100,
+  });
+  assert.ok(
+    result.warnings.includes('stderr-truncated'),
+    `expected stderr-truncated warning, got ${JSON.stringify(result.warnings)}`,
+  );
+});
