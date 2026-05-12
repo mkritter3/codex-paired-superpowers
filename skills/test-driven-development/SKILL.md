@@ -73,14 +73,18 @@ const detectorResult = await detectAvailableCLIs(repoRoot);
 const availableCLIs  = availableCLISet(detectorResult);
 
 const dispatchFns = new Map();
-for (const adapter of ['codex', 'claude']) {     // expert-test ladder
-  if (!availableCLIs.has(adapter)) continue;
-  dispatchFns.set(`expert-test@${adapter}`, {
+for (const cli of ['codex', 'claude']) {     // expert-test ladder (cli names, not adapters)
+  if (!availableCLIs.has(cli)) continue;
+  // Sidecar 'adapter' audit field MUST match the actual transport. Inject it
+  // into the request before calling runTurnWithDeps — otherwise slice-5b's
+  // default ('claude-task') silently mislabels codex panelists.
+  const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
+  dispatchFns.set(`expert-test@${cli}`, {
     fn: async (req) => {
       const responseText = await /* adapter dispatch */;
-      return runTurnWithDeps(req, { agentDispatch: async () => responseText });
+      return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
     },
-    runtime_kind: adapter === 'claude' ? 'claude-task' : 'cli-harness',
+    runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });
 }
 
@@ -100,9 +104,13 @@ Skill arg `--single` skips panel mode and runs **single dispatch** via `runTurnW
 - Only one CLI is available and `panel-quorum-unavailable` would block progress.
 
 ```js
-// Single dispatch (override path)
+// Single dispatch (override path). Resolve cli, then derive adapter and
+// inject it before calling runTurnWithDeps so the sidecar audit field
+// matches the actual transport.
+const resolved = resolveAdapter('expert-test', availableCLIs, /* userRouting */ null);
+const adapter = resolved.cli === 'claude' ? 'claude-task' : `cli-harness:${resolved.cli}`;
 const request = { identity: expertTest, repoRoot, specPath, specSnippet,
-                  phase: 'tdd-review', sliceId, task: '...' };
+                  phase: 'tdd-review', sliceId, adapter, task: '...' };
 const result = await runTurnWithDeps(request, {
   agentDispatch: async () => responseText,
 });

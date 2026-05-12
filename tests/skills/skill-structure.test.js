@@ -327,6 +327,102 @@ test('all 6 skills still reference codex MCP tool name (no accidental rename)', 
   }
 });
 
+// ── Round-1 slice-review structural fixes (Codex critique) ─────────────────
+//
+// Codex flagged three prose errors in round-1 slice-7a review that would
+// route or audit incorrectly under real orchestration:
+//   1. resolveAdapter called with identity.role (short form) instead of
+//      identity.id ("expert-XXX"); recommendation keys use the id form.
+//   2. Resolver prose claimed null return + `resolved.adapter` field, but
+//      the real resolver THROWS RoleRoutingError and returns `{cli, ...}`.
+//   3. Panel `dispatch_fn` wrappers called `runTurnWithDeps(req, ...)` with
+//      no adapter binding, so slice 5b defaulted to 'claude-task' and
+//      codex panelists would be audited as claude.
+// These tests pin the corrected prose so the same drift can't recur silently.
+
+const SKILLS_THAT_CALL_RESOLVE_ADAPTER = [
+  'brainstorming',
+  'subagent-driven-development',
+  'systematic-debugging',
+  'autopilot',
+];
+
+for (const skill of SKILLS_THAT_CALL_RESOLVE_ADAPTER) {
+  test(`${skill}: resolveAdapter is called with identity.id (not identity.role)`, () => {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('resolveAdapter(identity.id'),
+      `${skill}/SKILL.md must call resolveAdapter with identity.id ` +
+        `(recommendation keys are "expert-XXX", which is identity.id, not identity.role)`,
+    );
+    assert.equal(
+      content.includes('resolveAdapter(identity.role'),
+      false,
+      `${skill}/SKILL.md must NOT call resolveAdapter(identity.role, ...) — ` +
+        `that resolves the short role name and throws UNKNOWN_ROLE at dispatch time`,
+    );
+  });
+
+  test(`${skill}: prose uses resolved.cli (not resolved.adapter)`, () => {
+    const content = readSkill(skill);
+    // The resolver returns { cli, variant, ... }. There is no .adapter field
+    // — that's a derived value the orchestrator computes for the sidecar.
+    assert.equal(
+      content.includes('resolved.adapter'),
+      false,
+      `${skill}/SKILL.md must NOT reference resolved.adapter — ` +
+        `the resolver returns { cli, variant, ... }; compute adapter from cli`,
+    );
+    assert.ok(
+      content.includes('resolved.cli'),
+      `${skill}/SKILL.md must use resolved.cli (the real resolver return shape)`,
+    );
+  });
+
+  test(`${skill}: prose treats resolveAdapter as throwing (not null-returning)`, () => {
+    const content = readSkill(skill);
+    // The resolver throws RoleRoutingError; describing it as returning null
+    // would lead orchestrators to drop the throw and emit silent failures.
+    assert.equal(
+      content.includes('returns `null`'),
+      false,
+      `${skill}/SKILL.md must NOT say resolveAdapter returns null — ` +
+        `it throws RoleRoutingError; the prose must show try/catch`,
+    );
+    assert.equal(
+      content.includes('resolved === null'),
+      false,
+      `${skill}/SKILL.md must NOT show resolved === null check — ` +
+        `the resolver throws on failure, it never returns null`,
+    );
+    assert.ok(
+      content.includes('RoleRoutingError'),
+      `${skill}/SKILL.md must reference RoleRoutingError (the thrown failure type)`,
+    );
+  });
+}
+
+const SKILLS_WITH_PANEL_DISPATCH_WRAPPERS = [
+  'brainstorming',
+  'writing-plans',
+  'test-driven-development',
+];
+
+for (const skill of SKILLS_WITH_PANEL_DISPATCH_WRAPPERS) {
+  test(`${skill}: panel dispatch_fn wrappers inject adapter into runTurnWithDeps`, () => {
+    const content = readSkill(skill);
+    // Slice-5b defaults missing request.adapter to 'claude-task'. The wrapper
+    // MUST spread `adapter` into the request before calling runTurnWithDeps,
+    // otherwise codex panelists are audited as claude (round-1 critique fix).
+    assert.ok(
+      content.includes('runTurnWithDeps({ ...req, adapter }'),
+      `${skill}/SKILL.md panel wrappers must call runTurnWithDeps({ ...req, adapter }, ...) ` +
+        `— a bare runTurnWithDeps(req, ...) leaves the sidecar adapter audit field defaulted ` +
+        `to 'claude-task' regardless of the actual transport`,
+    );
+  });
+}
+
 test('every skill preserves honest-reporting activation block', () => {
   // v0.8.1 honest-reporting marker activation. Must survive every prose
   // refresh (Stop/PreToolUse hook depends on the marker file).

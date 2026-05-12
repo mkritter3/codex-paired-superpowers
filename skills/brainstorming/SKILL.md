@@ -178,16 +178,35 @@ const { detectAvailableCLIs, availableCLISet } =
 const { resolveAdapter } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
 
+const { RoleRoutingError } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/errors.js');
+
 const detectorResult = await detectAvailableCLIs(repoRoot);
 const availableCLIs  = availableCLISet(detectorResult);
 
 for (const identity of result.selected) {
-  const resolved = resolveAdapter(identity.role, availableCLIs, /* userRouting */ null);
-  // resolved.adapter ∈ {'claude-task', 'codex', 'ollama', 'gemini', ...}
+  let resolved;
+  try {
+    // Resolver is keyed by the recommendation role id (e.g. "expert-architecture"),
+    // which is identity.id — NOT identity.role (the short form "architecture").
+    resolved = resolveAdapter(identity.id, availableCLIs, /* userRouting */ null);
+  } catch (err) {
+    if (err instanceof RoleRoutingError && err.code === 'no-supported-cli-for-role') {
+      // Spec-review is advisory: proceed without this expert.
+      continue;
+    }
+    throw err; // override-cli-unavailable / override-variant-unknown halt the flow.
+  }
+  // resolved.cli ∈ {'claude','codex','ollama','gemini','qwen'}; resolved.variant may be null.
+  const adapter = resolved.cli === 'claude'
+    ? 'claude-task'
+    : `cli-harness:${resolved.cli}`;
 }
 ```
 
-If `resolveAdapter` returns `null` (no available CLI in the ladder), the orchestrator MAY halt with `cli-dispatch-failed` for that role OR proceed without that expert (configurable per skill — for spec-review, prefer "proceed without" since spec-review is advisory).
+`resolveAdapter` THROWS `RoleRoutingError` (it does not return `null`). Codes:
+- `no-supported-cli-for-role` — full ladder walk found nothing. For spec-review (advisory), proceed without that expert; for review-gate phases, halt with `cli-dispatch-failed`.
+- `override-cli-unavailable` / `override-variant-unknown` — explicit user override on a missing CLI/variant. Always halt; never silently degrade.
 
 ### Step 3 — Dispatch per expert (single mode default)
 
@@ -209,6 +228,7 @@ const request = {
   specSnippet:            currentCodexDraft,
   phase:                  'spec-review',
   sliceId:                null,            // spec-phase is not slice-scoped
+  adapter,                                 // from Step 2: 'claude-task' | 'cli-harness:<cli>'
   sidecarParticipantState: <prior turn summaries for this expert, if any>,
   task:                   'Critique the spec draft. Surface blocking concerns; emit verdict.',
 };
@@ -230,16 +250,23 @@ If the composer flags the phase as high-stakes (e.g., security-sensitive spec, f
 const { dispatchPanel } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
 
+// member_id composite uses identity.id (the "expert-XXX" form recognized by
+// the role resolver and Machine Result expert_id matching), NOT identity.role.
 const dispatchFns = new Map();
-for (const adapter of ['codex', 'claude-task']) {
-  dispatchFns.set(`${identity.role}@${adapter}`, async (req) => {
-    // adapter-specific: claude-task → Task tool; cli-harness → harness.dispatch
-    const responseText = await /* adapter dispatch */;
-    return runTurnWithDeps(req, { agentDispatch: async () => responseText });
+for (const cli of ['codex', 'claude']) {
+  if (!availableCLIs.has(cli)) continue;
+  const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
+  dispatchFns.set(`${identity.id}@${cli}`, {
+    fn: async (req) => {
+      // adapter-specific: claude → Task tool; cli-harness → harness.dispatch
+      const responseText = await /* adapter dispatch */;
+      return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
+    },
+    runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });
 }
 
-const panelOutcome = await dispatchPanel(identity.role, request, dispatchFns, {
+const panelOutcome = await dispatchPanel(identity.id, request, dispatchFns, {
   panel_min_size: 2,
   panel_max_size: 3,
 });

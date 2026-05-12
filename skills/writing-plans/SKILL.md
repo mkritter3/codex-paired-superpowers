@@ -134,17 +134,24 @@ const { dispatchPanel } =
 const detectorResult = await detectAvailableCLIs(repoRoot);
 const availableCLIs  = availableCLISet(detectorResult);
 
-// expert-test preference ladder: [codex, claude]
+// expert-test preference ladder: [codex, claude]. The map key is the
+// member_id composite "role@cli"; the value carries the dispatch_fn AND
+// the runtime_kind metadata the panel dispatcher reads.
 const dispatchFns = new Map();
-for (const adapter of ['codex', 'claude']) {
-  if (!availableCLIs.has(adapter)) continue;
-  dispatchFns.set(`expert-test@${adapter}`, {
+for (const cli of ['codex', 'claude']) {
+  if (!availableCLIs.has(cli)) continue;
+  // The sidecar 'adapter' audit field must match the actual transport. The
+  // wrapper injects it into the request BEFORE calling runTurnWithDeps —
+  // otherwise slice 5b defaults to 'claude-task' and codex panelists would
+  // be audited as claude (the round-2 critique fix).
+  const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
+  dispatchFns.set(`expert-test@${cli}`, {
     fn: async (req) => {
       // adapter-specific: codex via cli-harness; claude via Task
       const responseText = await /* adapter-specific dispatch */;
-      return runTurnWithDeps(req, { agentDispatch: async () => responseText });
+      return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
     },
-    runtime_kind: adapter === 'claude' ? 'claude-task' : 'cli-harness',
+    runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });
 }
 ```

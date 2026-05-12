@@ -96,16 +96,35 @@ const { detectAvailableCLIs, availableCLISet } =
 const { resolveAdapter } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
 
+const { RoleRoutingError } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/errors.js');
+
 const detectorResult = await detectAvailableCLIs(repoRoot);
 const availableCLIs  = availableCLISet(detectorResult);
 
+const resolutions = [];
 for (const identity of result.selected) {
-  const resolved = resolveAdapter(identity.role, availableCLIs, /* userRouting */ null);
-  // resolved.adapter ∈ {'claude-task', 'codex', 'ollama', 'gemini', ...}
+  let resolved;
+  try {
+    // Resolver is keyed by identity.id ("expert-architecture"), NOT identity.role ("architecture").
+    resolved = resolveAdapter(identity.id, availableCLIs, /* userRouting */ null);
+  } catch (err) {
+    if (err instanceof RoleRoutingError) {
+      // Per-slice expert review is gate-class — fail-closed.
+      throw new Error(`cli-dispatch-failed: ${identity.id} (${err.code})`);
+    }
+    throw err;
+  }
+  // resolved.cli ∈ {'claude','codex','ollama','gemini','qwen'}; resolved.variant may be null.
+  // Translate to the sidecar adapter value runTurnWithDeps records.
+  const adapter = resolved.cli === 'claude'
+    ? 'claude-task'
+    : `cli-harness:${resolved.cli}`;
+  resolutions.push({ identity, resolved, adapter });
 }
 ```
 
-If `resolveAdapter` returns `null` for a selected expert (no available CLI in the ladder + no override), halt with `cli-dispatch-failed` for that slice — fail-closed (per spec § 5).
+`resolveAdapter` THROWS `RoleRoutingError` (codes: `no-supported-cli-for-role`, `override-cli-unavailable`, `override-variant-unknown`) — it does not return `null`. For per-slice review, all three codes halt with `cli-dispatch-failed` — fail-closed (per spec § 5).
 
 ### Step 3 — Dispatch each expert via `runTurnWithDeps`
 
@@ -117,7 +136,7 @@ const { runTurnWithDeps, assembleSpawnPrompt } =
 const { readUnreadMessages } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
 
-for (const identity of result.selected) {
+for (const { identity, resolved, adapter } of resolutions) {
   const request = {
     identity,
     repoRoot,
@@ -125,12 +144,14 @@ for (const identity of result.selected) {
     specSnippet:            sliceDiffSnippet,
     phase:                  'post-implementation-review',
     sliceId,
+    adapter,                                // sidecar audit field; must match the actual transport.
     sidecarParticipantState: <prior turn summaries>,
     task:                    'Review the slice diff. Surface blocking findings + DMs.',
   };
   const unreadMessages = await readUnreadMessages(repoRoot, identity.id);
   const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
-  // ... orchestrator dispatches Task/harness, captures responseText ...
+  // ... orchestrator dispatches via resolved.cli (Task tool for 'claude'; cli-harness for others)
+  //     and captures responseText ...
   const turnResult = await runTurnWithDeps(request, {
     agentDispatch: async () => responseText,
   });

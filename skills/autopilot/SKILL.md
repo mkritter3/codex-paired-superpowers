@@ -307,7 +307,7 @@ The role-composer enforces the fan-out contract via `role-composer-fan-out-unjus
 The v0.9.0 dispatcher introduces three named seams that B.0.5 / B.1.5 / B.5.5 now go through. The phases' logic is unchanged; only the API names + adapter-resolution layer are new:
 
 1. **`composeExperts`** (v0.8.0, unchanged) — picks experts from signals.
-2. **`detectAvailableCLIs` + `resolveAdapter`** (v0.9.0 new) — for each selected expert, walks the preference ladder, returns the adapter (`claude-task` | `codex` | `ollama{<variant>}` | `gemini`). User overrides in `.codex-paired/role-routing.json` take precedence. Unavailable CLIs **never silently degrade** — explicit override of an unavailable CLI is a hard halt (`cli-dispatch-failed`).
+2. **`detectAvailableCLIs` + `resolveAdapter`** (v0.9.0 new) — for each selected expert, walks the preference ladder and returns `{cli, variant, ...}` where `cli ∈ {'claude','codex','ollama','gemini','qwen'}`. Sidecar adapter value is derived: `cli === 'claude'` → `'claude-task'`; otherwise `'cli-harness:${cli}'`. User overrides in `.codex-paired/role-routing.json` take precedence. The resolver THROWS `RoleRoutingError` on failure (codes: `no-supported-cli-for-role`, `override-cli-unavailable`, `override-variant-unknown`); for gate-class reviews this becomes a `cli-dispatch-failed` halt — never silently degrade.
 3. **`runTurnWithDeps`** (v0.9.0 — extended for replay-field persistence + `suppressPeerMessages`) — single-expert dispatch wrapping the adapter-specific `agentDispatch`.
 4. **`dispatchPanel`** (v0.9.0 slice 6) — panel-mode dispatch for `paired-reviewer` at the release gate AND for any `high_stakes: true` slice's `expert-security` + `expert-architecture` reviews. Builds a `dispatchFns: Map<member_id, fn>` map where each entry wraps `runTurnWithDeps` with an adapter-specific identity.
 
@@ -326,10 +326,26 @@ const { dispatchPanel } =
 const detectorResult = await detectAvailableCLIs(repoRoot);
 const availableCLIs  = availableCLISet(detectorResult);
 
+const { RoleRoutingError } =
+  await import('<plugin>/lib/codex-bridge/role-routing/errors.js');
+
 for (const identity of result.selected) {
-  const resolved = resolveAdapter(identity.role, availableCLIs, projectRouting);
-  // resolved.adapter ∈ {'claude-task', 'codex', 'ollama', 'gemini', ...}
-  // resolved === null → halt 'cli-dispatch-failed' for this role
+  let resolved;
+  try {
+    // Resolver is keyed by identity.id ("expert-architecture"), NOT identity.role.
+    resolved = resolveAdapter(identity.id, availableCLIs, projectRouting);
+  } catch (err) {
+    if (err instanceof RoleRoutingError) {
+      // Gate-class review: any RoleRoutingError halts with 'cli-dispatch-failed'.
+      throw new Error(`cli-dispatch-failed: ${identity.id} (${err.code})`);
+    }
+    throw err;
+  }
+  // resolved.cli ∈ {'claude','codex','ollama','gemini','qwen'}; resolved.variant may be null.
+  const adapter = resolved.cli === 'claude'
+    ? 'claude-task'
+    : `cli-harness:${resolved.cli}`;
+  // The orchestrator then calls runTurnWithDeps({...request, adapter}, {agentDispatch}).
 }
 ```
 

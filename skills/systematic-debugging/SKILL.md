@@ -93,7 +93,28 @@ const { runTurnWithDeps, assembleSpawnPrompt } =
 const { readUnreadMessages } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
 
+const { detectAvailableCLIs, availableCLISet } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/availability/detector.js');
+const { resolveAdapter } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
+const { RoleRoutingError } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/errors.js');
+
+const detectorResult = await detectAvailableCLIs(repoRoot);
+const availableCLIs  = availableCLISet(detectorResult);
+
 for (const identity of result.selected) {
+  let resolved;
+  try {
+    // Resolver is keyed by identity.id ("expert-architecture"), not identity.role.
+    resolved = resolveAdapter(identity.id, availableCLIs, /* userRouting */ null);
+  } catch (err) {
+    if (err instanceof RoleRoutingError) continue;  // hypothesis review is advisory
+    throw err;
+  }
+  const adapter = resolved.cli === 'claude'
+    ? 'claude-task'
+    : `cli-harness:${resolved.cli}`;
   const request = {
     identity,
     repoRoot,
@@ -101,11 +122,12 @@ for (const identity of result.selected) {
     specSnippet:            hypothesisText,
     phase:                  'hypothesis-review',
     sliceId:                bugId,  // debug:<bug-id> sidecar phase
+    adapter,                        // audit field must match the transport
     sidecarParticipantState: <prior turn summaries>,
     task:                    'Critique the root-cause hypothesis. Is this the ' +
                              'simplest explanation? What did Claude miss?',
   };
-  // ... orchestrator dispatches Task/harness, captures responseText ...
+  // ... orchestrator dispatches via resolved.cli, captures responseText ...
   const turnResult = await runTurnWithDeps(request, {
     agentDispatch: async () => responseText,
   });
@@ -120,7 +142,7 @@ If the bug is **security-relevant** (auth/credential/escalation) OR the user exp
 const { dispatchPanel } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
 
-const panelOutcome = await dispatchPanel(identity.role, request, dispatchFns, {
+const panelOutcome = await dispatchPanel(identity.id, request, dispatchFns, {
   panel_min_size: 2,
   panel_max_size: 3,
 });
