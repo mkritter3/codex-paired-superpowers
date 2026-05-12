@@ -1,0 +1,5 @@
+{
+  "name": "qwen",
+  "command": "qwen",
+  "_status": "PLACEHOLDER — adapter implementation deferred to a future release. Referenced by expert-backend preference ladder so role routing can detect it as unavailable and fall back to codex/claude."
+}

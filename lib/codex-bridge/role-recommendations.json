@@ -1,0 +1,47 @@
+{
+  "paired-reviewer": {
+    "preference": ["codex", "claude"],
+    "rationale": "L11 anti-yes-man rigor benefits from cross-model; codex strongest",
+    "permissions": "read-only"
+  },
+  "expert-architecture": {
+    "preference": ["codex", "claude"],
+    "rationale": "Deep architectural reasoning; codex strongest",
+    "permissions": "read-only"
+  },
+  "expert-ai-harness": {
+    "preference": ["codex", "claude"],
+    "rationale": "AI pipeline correctness; codex strongest",
+    "permissions": "read-only"
+  },
+  "expert-test": {
+    "preference": ["codex", "claude"],
+    "rationale": "Test boundary design; codex strongest",
+    "permissions": "read-only"
+  },
+  "expert-security": {
+    "preference": ["codex", "gemini", "claude"],
+    "rationale": "Threat-model thinking; codex/gemini strongest",
+    "permissions": "read-only"
+  },
+  "expert-backend": {
+    "preference": ["codex", "qwen", "claude"],
+    "rationale": "Storage/transactions; codex or qwen-coder when installed",
+    "permissions": "read-only"
+  },
+  "expert-ui": {
+    "preference": ["claude", "gemini", "ollama{kimi-k2.6}", "ollama{glm-5.1}", "codex"],
+    "rationale": "Render hazards and prop surfaces; claude well-suited; deep fallback ladder for cross-model diversity",
+    "permissions": "read-only"
+  },
+  "expert-ux": {
+    "preference": ["claude", "gemini", "ollama{kimi-k2.6}", "ollama{glm-5.1}", "codex"],
+    "rationale": "Workflow alignment and copy judgment",
+    "permissions": "read-only"
+  },
+  "implementer": {
+    "preference": ["claude", "codex"],
+    "rationale": "Code writing; claude default fits Claude Code session",
+    "permissions": "write-allowed"
+  }
+}
