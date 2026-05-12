@@ -423,6 +423,41 @@ for (const skill of SKILLS_WITH_PANEL_DISPATCH_WRAPPERS) {
   });
 }
 
+// Autopilot uses the single-mode pattern (build request, call runTurnWithDeps(request, ...)),
+// so the panel-wrapper substring doesn't apply. Instead, every runTurnWithDeps call site
+// in autopilot must show the request carrying an `adapter` field — pinned structurally
+// by counting the literal `adapter,` field appearances in autopilot's dispatch snippets
+// (round-2 critique fix).
+test('autopilot: every runTurnWithDeps dispatch snippet binds adapter into the request', () => {
+  const content = readSkill('autopilot');
+
+  // Count bare `runTurnWithDeps(request,` and bare `runTurnWithDeps(req,` invocations.
+  // Any such call must be paired with an `adapter,` field in the surrounding request.
+  // The cleanest structural guard: forbid the bare pattern entirely AND require the
+  // adapter-binding pattern to appear at least as many times as runTurnWithDeps calls
+  // (so every dispatch site documents the audit-field contract).
+  const runTurnCalls =
+    (content.match(/runTurnWithDeps\(request,/g) || []).length +
+    (content.match(/runTurnWithDeps\(req,/g) || []).length +
+    (content.match(/runTurnWithDeps\(\{ \.\.\.req, adapter \},/g) || []).length;
+  const adapterBindings =
+    (content.match(/^\s*adapter,/gm) || []).length +
+    (content.match(/runTurnWithDeps\(\{ \.\.\.req, adapter \},/g) || []).length;
+
+  assert.ok(
+    runTurnCalls > 0,
+    'autopilot/SKILL.md must contain at least one runTurnWithDeps dispatch snippet',
+  );
+  assert.ok(
+    adapterBindings >= runTurnCalls,
+    `autopilot/SKILL.md has ${runTurnCalls} runTurnWithDeps call site(s) but only ` +
+      `${adapterBindings} adapter binding(s). Every dispatch snippet must bind adapter ` +
+      `into the request (or be a panel wrapper using { ...req, adapter }). Without ` +
+      `binding, slice-5b defaults the sidecar audit field to 'claude-task' regardless ` +
+      `of the actual transport (round-2 critique fix).`,
+  );
+});
+
 test('every skill preserves honest-reporting activation block', () => {
   // v0.8.1 honest-reporting marker activation. Must survive every prose
   // refresh (Stop/PreToolUse hook depends on the marker file).

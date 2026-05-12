@@ -419,6 +419,13 @@ For each expert tagged with `pre-dispatch` in its registry phases (currently `ar
 
 ```js
 const { assembleSpawnPrompt } = await import('<plugin>/lib/codex-bridge/expert-turn.js');
+// adapter is derived from the v0.9.0 resolution step (resolveAdapter →
+// resolved.cli) BEFORE this request is built. It MUST be present or
+// runTurnWithDeps defaults the sidecar audit field to 'claude-task'
+// regardless of the actual transport (slice 5b contract).
+const adapter = resolved.cli === 'claude'
+  ? 'claude-task'
+  : `cli-harness:${resolved.cli}`;
 const request = {
   identity: expertIdentity,            // from selectTeammates result
   repoRoot: <repoRoot>,
@@ -426,6 +433,7 @@ const request = {
   specSnippet: <slice plan section as context>,
   phase: 'pre-dispatch',
   sliceId: <currentSliceId>,
+  adapter,                              // sidecar audit field; must match transport
   sidecarParticipantState: <prior turn summaries for this expert, if any>,
   task: 'Pre-dispatch review of the planned slice. Surface blocking ' +
         'architectural / test-coverage concerns before implementation begins.',
@@ -914,6 +922,13 @@ const drainResult = await drainPeerDMs(
     // response as agentDispatch). The scheduler invokes this once per
     // turn it schedules.
     runTurn: async (expert, drainContext) => {
+      // v0.9.0: resolve the expert's adapter from the recommendation ladder
+      // (same as B.0.5 / B.1.5). The map MUST be passed through drainContext
+      // by the orchestrator — drainPeerDMs does not call resolveAdapter itself.
+      const resolved = drainContext.resolvedByExpertId[expert.id];
+      const adapter = resolved.cli === 'claude'
+        ? 'claude-task'
+        : `cli-harness:${resolved.cli}`;
       const request = {
         identity: expert,
         repoRoot,
@@ -921,13 +936,15 @@ const drainResult = await drainPeerDMs(
         specSnippet: <reconciled slice diff snippet>,
         phase: drainContext.phase,
         sliceId: drainContext.sliceId,
+        adapter,                          // sidecar audit field; must match transport
         sidecarParticipantState: <prior turn summaries>,
         task: 'Post-implementation review of the reconciled slice.',
       };
       const unreadMessages = await readUnreadMessages(repoRoot, expert.id);
       const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
-      // YOU (Claude) dispatch the Task tool here with `prompt`, capture
-      // taskResponseText, then:
+      // YOU (Claude) dispatch the appropriate transport (Task tool for
+      // 'claude'; cli-harness for everything else), capture taskResponseText,
+      // then:
       return await runTurnWithDeps(request, {
         agentDispatch: async () => taskResponseText,
       });
