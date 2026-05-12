@@ -656,3 +656,138 @@ test('v0.8.1.1 peer-DM cap: scheduler halt still triggered (peer_dm_summary.fail
   const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
   assert.ok(result.peer_dm_summary.failed > 0, 'scheduler halt signal is set');
 });
+
+// ── v0.9.0 slice 5b round-1 fix: production write path supplies replay fields ─
+//
+// `runTurnWithDeps` on its success path must compute the replay/response
+// audit fields and pass them to appendExpertTurn so they are persisted into
+// the sidecar. Before the fix, helpers like storeResponse/computeInputsHash
+// existed but the runtime never invoked them.
+
+import { createHash } from 'node:crypto';
+import { writeFileSync as fsWriteFileSync, readFileSync as fsReadFileSync, mkdirSync as fsMkdirSync, existsSync as fsExistsSync } from 'node:fs';
+import { join as pathJoin } from 'node:path';
+import { storeResponse, readResponse, computeInputsHash } from '../../lib/codex-bridge/sidecar.js';
+
+function sha256HexUtf8(s) {
+  return createHash('sha256').update(s, 'utf8').digest('hex');
+}
+
+function makeRolePromptFile(dir, roleId, version, body) {
+  const promptPath = pathJoin(dir, `${roleId}.md`);
+  const file = `---\nversion: ${version}\nrole_id: ${roleId}\n---\n${body}`;
+  fsWriteFileSync(promptPath, file);
+  return { promptPath, file, fileHashHex: sha256HexUtf8(file) };
+}
+
+test('runTurnWithDeps success path: persisted turn carries all replay/response audit fields', async () => {
+  const { dir, spec } = makeSpec();
+  const { promptPath, fileHashHex } = makeRolePromptFile(
+    dir,
+    'expert-ui',
+    'v0.9.0-r1',
+    '<the expert prompt body>',
+  );
+  const identity = { id: 'expert-ui', role: 'ui', promptPath, source: 'builtin' };
+  const responseText = 'OK SHIP from agent';
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => responseText + '\n' + validMachineResult(),
+  });
+  const request = {
+    ...baseRequest(dir, identity, spec),
+    specSnippet: 'a small snippet',
+    task: 'do the review',
+  };
+  const result = await runTurnWithDeps(request, deps);
+  assert.equal(result.ok, true);
+
+  const turn = calls.appendTurn[0];
+  // Response fields.
+  assert.ok(turn.response_hash, 'response_hash should be populated');
+  assert.match(turn.response_hash, /^sha256:[a-f0-9]{64}$/);
+  assert.ok(
+    typeof turn.response_text_inline === 'string' || typeof turn.response_ref === 'string',
+    'response must be stored either inline or via ref',
+  );
+  // Replay fields.
+  assert.equal(turn.role_prompt_hash, `sha256:${fileHashHex}`);
+  assert.equal(turn.role_prompt_version, 'v0.9.0-r1');
+  assert.equal(turn.spec_path, spec);
+  assert.equal(turn.spec_snippet_hash, `sha256:${sha256HexUtf8('a small snippet')}`);
+  assert.match(turn.inputs_hash, /^sha256:[a-f0-9]{64}$/);
+  // Adapter defaults to "claude-task" when not provided.
+  assert.equal(turn.adapter, 'claude-task');
+  assert.equal(turn.requested_role, 'expert-ui');
+  assert.equal(turn.task, 'do the review');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('runTurnWithDeps success path: inputs_hash matches computeInputsHash over the same inputs', async () => {
+  const { dir, spec } = makeSpec();
+  const { promptPath, fileHashHex } = makeRolePromptFile(
+    dir,
+    'expert-ui',
+    'v0.9.0-r1',
+    'body content',
+  );
+  const identity = { id: 'expert-ui', role: 'ui', promptPath, source: 'builtin' };
+  const specSnippet = 'snip-xyz';
+  const phase = 'spec-review';
+  const task = 'review';
+  const msg = { id: 'mb-1', from: 'orchestrator', text: 'hello', timestamp: '2026-05-11T00:00:00.000Z' };
+  const { deps, calls } = makeDepStubs({
+    readUnreadMessages: async () => [msg],
+  });
+  await runTurnWithDeps(
+    { ...baseRequest(dir, identity, spec), specSnippet, phase, task },
+    deps,
+  );
+  const turn = calls.appendTurn[0];
+  const expected = computeInputsHash({
+    rolePromptHash: fileHashHex,
+    specSnippetHash: sha256HexUtf8(specSnippet),
+    mailboxMessageIds: ['mb-1'],
+    phase,
+    task,
+    roleId: 'expert-ui',
+  });
+  assert.equal(turn.inputs_hash, expected);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('runTurnWithDeps success path: 100KB response → persisted turn uses response_ref + readResponse retrieves original text', async () => {
+  const { dir, spec } = makeSpec();
+  const { promptPath } = makeRolePromptFile(dir, 'expert-ui', 'v0.9.0-r1', 'body');
+  const identity = { id: 'expert-ui', role: 'ui', promptPath, source: 'builtin' };
+  const big = 'B'.repeat(100 * 1024); // 100KB > 50KB cap
+  const machineResult = validMachineResult();
+  // Append big payload BEFORE machine result so raw response > 50KB.
+  const rawResponse = big + '\n' + machineResult;
+  const { deps, calls } = makeDepStubs({
+    agentDispatch: async () => rawResponse,
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  const turn = calls.appendTurn[0];
+  assert.ok(turn.response_ref, 'large response should use response_ref');
+  assert.equal(turn.response_text_inline, undefined);
+  assert.match(turn.response_ref, /^responses\/sha256-[a-f0-9]{64}\.txt$/);
+  // readResponse against the tmp repo dir reproduces the original text + verifies hash.
+  const retrieved = readResponse(dir, turn);
+  assert.equal(retrieved, rawResponse);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('runTurnWithDeps success path: request.adapter overrides default "claude-task"', async () => {
+  const { dir, spec } = makeSpec();
+  const { promptPath } = makeRolePromptFile(dir, 'expert-ui', 'v0.9.0-r1', 'body');
+  const identity = { id: 'expert-ui', role: 'ui', promptPath, source: 'builtin' };
+  const { deps, calls } = makeDepStubs();
+  await runTurnWithDeps(
+    { ...baseRequest(dir, identity, spec), adapter: 'codex' },
+    deps,
+  );
+  const turn = calls.appendTurn[0];
+  assert.equal(turn.adapter, 'codex');
+  rmSync(dir, { recursive: true, force: true });
+});

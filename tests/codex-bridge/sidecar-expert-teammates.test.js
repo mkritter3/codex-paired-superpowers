@@ -755,3 +755,225 @@ test('appendExpertTurn v0.8.1.1: regular per-item failure (no overflow fields) s
   assert.equal('overflow_count' in failed, false);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.9.0 slice 5b round-1 fix: replay/response audit field persistence ────
+//
+// These tests pin the PERSIST → LOAD → REPLAY/READ cycle. Before this fix,
+// appendExpertTurn whitelisted a fixed set of fields and silently dropped any
+// replay or response-audit fields supplied by the caller — so storeResponse(),
+// readResponse() and replayTurn() couldn't be exercised against real persisted
+// turns.
+
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { storeResponse, readResponse, computeInputsHash } from '../../lib/codex-bridge/sidecar.js';
+import { replayTurn } from '../../lib/codex-bridge/replay.js';
+
+function sha256Hex(s) {
+  return createHash('sha256').update(s, 'utf8').digest('hex');
+}
+
+test('appendExpertTurn → loadSidecar: inline response preserved + readResponse retrieves it', () => {
+  const { dir, spec } = makeSpec();
+  const responseText = 'Looks fine. SHIP.';
+  const responseHash = `sha256:${sha256Hex(responseText)}`;
+  appendExpertTurn(spec, validTurn({
+    response_text_inline: responseText,
+    response_hash: responseHash,
+  }));
+  const sc = loadSidecar(spec);
+  const turn = sc.expert_teammates.turns[0];
+  assert.equal(turn.response_text_inline, responseText);
+  assert.equal(turn.response_hash, responseHash);
+  assert.equal(readResponse(dir, turn), responseText);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn → loadSidecar: overflow response_ref preserved + readResponse retrieves from disk', () => {
+  const { dir, spec } = makeSpec();
+  // Force overflow: store at maxInlineBytes=1 so the bytes go to disk.
+  const big = 'X'.repeat(100);
+  const stored = storeResponse(dir, big, { maxInlineBytes: 1 });
+  assert.ok(stored.response_ref, 'precondition: overflow path used');
+  appendExpertTurn(spec, validTurn({
+    response_ref: stored.response_ref,
+    response_hash: stored.response_hash,
+  }));
+  const sc = loadSidecar(spec);
+  const turn = sc.expert_teammates.turns[0];
+  assert.equal(turn.response_ref, stored.response_ref);
+  assert.equal(turn.response_hash, stored.response_hash);
+  assert.equal(turn.response_text_inline, undefined);
+  assert.equal(readResponse(dir, turn), big);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn → loadSidecar → replayTurn: full replay reconstruction works on persisted turn', () => {
+  const { dir, spec } = makeSpec();
+  const rolePromptBody = 'You are the expert-architecture reviewer.';
+  const rolePromptFile = `---\nversion: v0.9.0-r1\nrole_id: expert-architecture\n---\n${rolePromptBody}`;
+  const rolePromptHashHex = sha256Hex(rolePromptFile);
+  const specSnippet = 'spec snippet';
+  const specSnippetHashHex = sha256Hex(specSnippet);
+  const mailboxIds = ['msg-1', 'msg-2'];
+  const phase = 'spec-review';
+  const task = 'review architecture';
+  const roleId = 'expert-architecture';
+  const responseText = 'OK SHIP';
+  const stored = storeResponse(dir, responseText);
+  const inputsHash = computeInputsHash({
+    rolePromptHash: rolePromptHashHex,
+    specSnippetHash: specSnippetHashHex,
+    mailboxMessageIds: mailboxIds,
+    phase,
+    task,
+    roleId,
+  });
+
+  appendExpertTurn(spec, validTurn({
+    expert_id: roleId,
+    phase,
+    mailbox_message_ids_injected: mailboxIds,
+    mailbox_message_ids: mailboxIds,
+    role_prompt_hash: `sha256:${rolePromptHashHex}`,
+    role_prompt_version: 'v0.9.0-r1',
+    spec_path: '/abs/spec.md',
+    spec_snippet_hash: `sha256:${specSnippetHashHex}`,
+    inputs_hash: inputsHash,
+    response_text_inline: stored.response_text_inline,
+    response_hash: stored.response_hash,
+    adapter: 'codex',
+    requested_role: roleId,
+    task,
+  }));
+
+  const sc = loadSidecar(spec);
+  const turn = sc.expert_teammates.turns[0];
+  // All replay fields preserved.
+  assert.equal(turn.role_prompt_hash, `sha256:${rolePromptHashHex}`);
+  assert.equal(turn.role_prompt_version, 'v0.9.0-r1');
+  assert.equal(turn.spec_path, '/abs/spec.md');
+  assert.equal(turn.spec_snippet_hash, `sha256:${specSnippetHashHex}`);
+  assert.equal(turn.inputs_hash, inputsHash);
+  assert.equal(turn.adapter, 'codex');
+  assert.equal(turn.requested_role, roleId);
+  assert.equal(turn.task, task);
+  assert.deepEqual(turn.mailbox_message_ids, mailboxIds);
+
+  // Replay the loaded turn.
+  const result = replayTurn(turn, {
+    loadRolePrompt: () => ({ content: rolePromptBody, hash: rolePromptHashHex, version: 'v0.9.0-r1' }),
+    readMailboxMessages: (_root, ids) =>
+      ids.map((id, i) => ({ id, from: 'orchestrator', text: `body-${i}`, timestamp: '2026-05-11T00:00:00.000Z' })),
+    readSpecSnippet: () => specSnippet,
+    repoRoot: dir,
+    adapter: 'codex',
+  });
+  assert.equal(result.inputsHashMatches, true, 'inputs_hash must match after persist→load round-trip');
+  assert.equal(result.responseHashMatches, true, 'response_hash must match');
+  assert.deepEqual(result.warnings, [], `no warnings expected (got: ${JSON.stringify(result.warnings)})`);
+  assert.ok(result.assembledPrompt.includes(rolePromptBody));
+  assert.ok(result.assembledPrompt.includes(specSnippet));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: rejects when both response_text_inline AND response_ref supplied (mutually exclusive)', () => {
+  const { dir, spec } = makeSpec();
+  const text = 'inline';
+  const hash = `sha256:${sha256Hex(text)}`;
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_text_inline: text,
+      response_ref: `responses/sha256-${'a'.repeat(64)}.txt`,
+      response_hash: hash,
+    })),
+    /response_text_inline.*response_ref|mutually exclusive/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: validates response_hash format (sha256:<64hex>)', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_text_inline: 'x',
+      response_hash: 'not-a-valid-hash',
+    })),
+    /response_hash/i,
+  );
+  // Wrong prefix
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_text_inline: 'x',
+      response_hash: `md5:${'a'.repeat(64)}`,
+    })),
+    /response_hash/i,
+  );
+  // Wrong hex length
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_text_inline: 'x',
+      response_hash: `sha256:${'a'.repeat(63)}`,
+    })),
+    /response_hash/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: validates response_ref format (responses/sha256-<64hex>.txt)', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_ref: 'not/a/valid/ref.txt',
+      response_hash: `sha256:${'b'.repeat(64)}`,
+    })),
+    /response_ref/i,
+  );
+  // Wrong directory
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_ref: `other/sha256-${'b'.repeat(64)}.txt`,
+      response_hash: `sha256:${'b'.repeat(64)}`,
+    })),
+    /response_ref/i,
+  );
+  // Wrong hex length
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      response_ref: `responses/sha256-${'b'.repeat(63)}.txt`,
+      response_hash: `sha256:${'b'.repeat(64)}`,
+    })),
+    /response_ref/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: validates inputs_hash + role_prompt_hash + spec_snippet_hash formats', () => {
+  const { dir, spec } = makeSpec();
+  for (const field of ['inputs_hash', 'role_prompt_hash', 'spec_snippet_hash']) {
+    assert.throws(
+      () => appendExpertTurn(spec, validTurn({ [field]: 'sha1:short' })),
+      new RegExp(field, 'i'),
+    );
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: validates mailbox_message_ids when present (array of non-empty strings)', () => {
+  const { dir, spec } = makeSpec();
+  // wrong type
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ mailbox_message_ids: 'not-an-array' })),
+    /mailbox_message_ids/i,
+  );
+  // empty string in array
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ mailbox_message_ids: ['ok', ''] })),
+    /mailbox_message_ids/i,
+  );
+  // valid round-trip
+  appendExpertTurn(spec, validTurn({ mailbox_message_ids: ['m-a', 'm-b'] }));
+  const sc = loadSidecar(spec);
+  assert.deepEqual(sc.expert_teammates.turns[0].mailbox_message_ids, ['m-a', 'm-b']);
+  rmSync(dir, { recursive: true, force: true });
+});
