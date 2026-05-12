@@ -977,3 +977,104 @@ test('appendExpertTurn: validates mailbox_message_ids when present (array of non
   assert.deepEqual(sc.expert_teammates.turns[0].mailbox_message_ids, ['m-a', 'm-b']);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.9.0 slice 8 follow-up: resolution-audit fields per spec § 7 Tier 1 ──
+
+test('appendExpertTurn: persists full resolution-audit block when present', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn({
+    resolved_cli: 'codex',
+    resolution_source: 'recommendation',
+    preference_index: 0,
+    preference_ladder: ['codex', 'claude'],
+    unavailable_candidates: [],
+    fallback_reason: null,
+  }));
+  const t = loadSidecar(spec).expert_teammates.turns[0];
+  assert.equal(t.resolved_cli, 'codex');
+  assert.equal(t.resolution_source, 'recommendation');
+  assert.equal(t.preference_index, 0);
+  assert.deepEqual(t.preference_ladder, ['codex', 'claude']);
+  assert.deepEqual(t.unavailable_candidates, []);
+  // fallback_reason must be persisted as null explicitly (not absent), so
+  // gate criterion 3's `f in t` presence check passes when no fallback.
+  assert.ok('fallback_reason' in t, 'fallback_reason field must be present in the turn record');
+  assert.equal(t.fallback_reason, null);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: preference_index accepts -1 (override path)', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn({
+    resolved_cli: 'codex',
+    resolution_source: 'override',
+    preference_index: -1,
+    preference_ladder: ['codex', 'claude'],
+    unavailable_candidates: [],
+    fallback_reason: null,
+  }));
+  const t = loadSidecar(spec).expert_teammates.turns[0];
+  assert.equal(t.preference_index, -1);
+  assert.equal(t.resolution_source, 'override');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: fallback_reason as non-empty string round-trips', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn({
+    resolved_cli: 'claude',
+    resolution_source: 'recommendation',
+    preference_index: 1,
+    preference_ladder: ['codex', 'claude'],
+    unavailable_candidates: ['codex'],
+    fallback_reason: 'Preferred codex unavailable; fell back to claude.',
+  }));
+  const t = loadSidecar(spec).expert_teammates.turns[0];
+  assert.equal(t.fallback_reason, 'Preferred codex unavailable; fell back to claude.');
+  assert.deepEqual(t.unavailable_candidates, ['codex']);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: rejects non-integer preference_index', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ preference_index: 1.5 })),
+    /preference_index/i,
+  );
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ preference_index: '0' })),
+    /preference_index/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: rejects preference_ladder with empty-string entries', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ preference_ladder: ['codex', ''] })),
+    /preference_ladder/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: rejects fallback_reason as empty string', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({ fallback_reason: '' })),
+    /fallback_reason/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn: resolution-audit fields are optional (omit → not persisted)', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn());  // no resolution fields
+  const t = loadSidecar(spec).expert_teammates.turns[0];
+  assert.ok(!('resolved_cli' in t));
+  assert.ok(!('resolution_source' in t));
+  assert.ok(!('preference_index' in t));
+  assert.ok(!('preference_ladder' in t));
+  assert.ok(!('unavailable_candidates' in t));
+  assert.ok(!('fallback_reason' in t));
+  rmSync(dir, { recursive: true, force: true });
+});

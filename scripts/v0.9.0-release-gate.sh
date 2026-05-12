@@ -295,9 +295,14 @@ async function main() {
       return;
     }
 
-    // Collect all expert turns from the sidecar (v0.9.0 schema supports
-    // both flat rounds[].expert_turns[] and role_sessions[role].turns[]).
+    // Collect all expert turns from the sidecar. The canonical write path
+    // (sidecar.js appendExpertTurn) appends to expert_teammates.turns[]; the
+    // v0.9.0 schema also supports rounds[].expert_turns[] and
+    // role_sessions[role].turns[] for back-compat / future use.
     const turns = [];
+    if (sidecar.expert_teammates && Array.isArray(sidecar.expert_teammates.turns)) {
+      turns.push(...sidecar.expert_teammates.turns);
+    }
     if (Array.isArray(sidecar.rounds)) {
       for (const r of sidecar.rounds) {
         if (Array.isArray(r.expert_turns)) turns.push(...r.expert_turns);
