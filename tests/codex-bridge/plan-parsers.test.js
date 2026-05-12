@@ -239,3 +239,70 @@ test('parseSliceHighStakes rejects malformed variants (strict parser)', () => {
     );
   }
 });
+
+// ── v0.9.1 hardening: fenced code blocks must NOT flip the parser ──────────
+
+test('parseSliceHighStakes ignores ``` fenced code blocks (docs example case)', () => {
+  // A plan section showing a usage example in a fenced block must NOT
+  // silently enable high-stakes review. Codex-flagged real-world failure.
+  const section = [
+    '## Slice 7: Document the high_stakes flag',
+    '',
+    'To opt in, add the bold-line frontmatter:',
+    '',
+    '```markdown',
+    '**high_stakes: true**',
+    '```',
+    '',
+    'This slice itself is not high-stakes.',
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), false);
+});
+
+test('parseSliceHighStakes ignores ~~~ fenced code blocks', () => {
+  const section = [
+    '## Slice 7',
+    '~~~',
+    '**high_stakes: true**',
+    '~~~',
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), false);
+});
+
+test('parseSliceHighStakes ignores fences with language tags', () => {
+  const section = [
+    '## Slice 7',
+    '```yaml',
+    '**high_stakes: true**',
+    '```',
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), false);
+});
+
+test('parseSliceHighStakes still detects high_stakes line OUTSIDE a fence after a fence', () => {
+  // Defense against an overly-greedy fence state machine: a closed fence
+  // must not swallow the rest of the section.
+  const section = [
+    '## Slice 7',
+    '```',
+    'example: **high_stakes: false** (in docs)',
+    '```',
+    '',
+    'Actual slice frontmatter follows:',
+    '**high_stakes: true**',
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), true);
+});
+
+test('parseSliceHighStakes: ``` does not close a ~~~ fence (marker style isolation)', () => {
+  // A line starting with ``` inside a ~~~ fence is just content, not a close.
+  const section = [
+    '## Slice 7',
+    '~~~',
+    '```',
+    '**high_stakes: true**',
+    '```',
+    '~~~',
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), false);
+});

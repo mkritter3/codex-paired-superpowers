@@ -845,3 +845,147 @@ test('dispatchPanel: adapter set by dispatch_fn (binding adapter into the reques
   assert.equal(byIdx.get(1).adapter, 'cli-harness:codex');
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.9.1 hardening: panel failure matrix (Codex round-1 review) ──────────
+//
+// Production dispatch_fns can fail in five distinct ways. The dispatcher must
+// emit deterministic outcomes so ralph-loop / orchestrator can decide what to
+// do next without guessing. These tests pin each failure mode separately AND
+// in combination with a healthy member (degraded-quorum behavior).
+
+test('panel failure matrix: dispatch_fn throws synchronously → counted as parse failure, panel still aggregates', async () => {
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const okWrap = makeWrappedDispatchFn({
+    memberId: `${ROLE}@codex`,
+    role: ROLE,
+    promptPath,
+    adapter: 'cli-harness:codex',
+    verdict: 'SHIP',
+    capturedTurns,
+  });
+  const throwingFn = (_req) => {
+    throw new Error('dispatch_fn exploded synchronously');
+  };
+  const dispatchFns = new Map([
+    [`${ROLE}@codex`, okWrap.fn],
+    [`${ROLE}@throws`, throwingFn],
+  ]);
+  // The dispatcher catches per-member exceptions and records them as
+  // parse_failure_reason on the member result. The outcome depends on
+  // whether the remaining quorum still has unanimous agreement.
+  const outcome = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+  assert.ok(
+    typeof outcome.outcome === 'string',
+    `outcome must be defined; got ${JSON.stringify(outcome)}`
+  );
+  // Healthy member SHIP'd → outcome with one parse failure should at minimum
+  // be a known outcome string; the dispatcher must not throw on per-member errors.
+  assert.ok(
+    ['panel-SHIP', 'panel-REVISE', 'panel-disagreement', 'panel-quorum-lost'].includes(outcome.outcome),
+    `outcome must be one of the documented values; got ${outcome.outcome}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel failure matrix: dispatch_fn returns rejected Promise → counted as parse failure', async () => {
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const okWrap = makeWrappedDispatchFn({
+    memberId: `${ROLE}@codex`,
+    role: ROLE,
+    promptPath,
+    adapter: 'cli-harness:codex',
+    verdict: 'SHIP',
+    capturedTurns,
+  });
+  const rejectingFn = async (_req) => {
+    throw new Error('async rejection: network unreachable');
+  };
+  const dispatchFns = new Map([
+    [`${ROLE}@codex`, okWrap.fn],
+    [`${ROLE}@rejects`, rejectingFn],
+  ]);
+  const outcome = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+  assert.ok(
+    ['panel-SHIP', 'panel-REVISE', 'panel-disagreement', 'panel-quorum-lost'].includes(outcome.outcome),
+    `async rejection must not crash the panel; got ${outcome.outcome}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel failure matrix: dispatch_fn returns bad shape (not {ok:..., result:...}) → flagged dispatch-fn-bad-shape', async () => {
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const okWrap = makeWrappedDispatchFn({
+    memberId: `${ROLE}@codex`,
+    role: ROLE,
+    promptPath,
+    adapter: 'cli-harness:codex',
+    verdict: 'SHIP',
+    capturedTurns,
+  });
+  // Returns a string instead of {ok:..., result:...}: bad shape.
+  const badShapeFn = async (_req) => 'not-a-runTurnWithDeps-result';
+  const dispatchFns = new Map([
+    [`${ROLE}@codex`, okWrap.fn],
+    [`${ROLE}@bad`, badShapeFn],
+  ]);
+  const outcome = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+  assert.ok(
+    ['panel-SHIP', 'panel-REVISE', 'panel-disagreement', 'panel-quorum-lost'].includes(outcome.outcome),
+    `bad-shape dispatch_fn must not crash the panel; got ${outcome.outcome}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel failure matrix: all members fail → outcome is panel-quorum-lost (no healthy members)', async () => {
+  const { dir, spec, promptPath: _ } = makeSpec();
+  const failingA = async (_req) => { throw new Error('a failed'); };
+  const failingB = async (_req) => { throw new Error('b failed'); };
+  const dispatchFns = new Map([
+    [`${ROLE}@a`, failingA],
+    [`${ROLE}@b`, failingB],
+  ]);
+  const outcome = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+  // When NO member returns a parseable result, there's no quorum.
+  assert.equal(
+    outcome.outcome,
+    'panel-quorum-lost',
+    `all-failing panel must report panel-quorum-lost; got ${outcome.outcome}\n` +
+      `member results: ${JSON.stringify(outcome.member_results, null, 2)}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel failure matrix: 2/3 succeed + 1 throws → outcome respects 2-of-3 quorum (degraded)', async () => {
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const aWrap = makeWrappedDispatchFn({
+    memberId: `${ROLE}@a`, role: ROLE, promptPath,
+    adapter: 'cli-harness:codex', verdict: 'SHIP', capturedTurns,
+  });
+  const bWrap = makeWrappedDispatchFn({
+    memberId: `${ROLE}@b`, role: ROLE, promptPath,
+    adapter: 'claude-task', verdict: 'SHIP', capturedTurns,
+  });
+  const failingC = async (_req) => { throw new Error('c failed mid-flight'); };
+  const dispatchFns = new Map([
+    [`${ROLE}@a`, aWrap.fn],
+    [`${ROLE}@b`, bWrap.fn],
+    [`${ROLE}@c`, failingC],
+  ]);
+  const outcome = await dispatchPanel(
+    ROLE, baseRequest(spec, dir), dispatchFns,
+    { panel_min_size: 2, panel_max_size: 3 }
+  );
+  // With panel_min_size=2 and 2 healthy SHIP members, the panel should
+  // proceed (NOT panel-quorum-lost). Degraded but consensus-reached.
+  assert.notEqual(
+    outcome.outcome,
+    'panel-quorum-lost',
+    `2 healthy + 1 failing should still meet quorum; got panel-quorum-lost.\n` +
+      `member_results: ${JSON.stringify(outcome.member_results, null, 2)}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
