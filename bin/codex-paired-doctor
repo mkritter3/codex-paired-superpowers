@@ -153,7 +153,19 @@ fi
 
 # ── Output ────────────────────────────────────────────────────────────────
 if [ "$WANT_JSON" -eq 1 ]; then
-  # Emit machine-readable JSON (one summary + array of checks)
+  # Run availability report in JSON mode and embed the result. Round-1
+  # fix: previously --json --force ran the standard checks but dropped
+  # the availability section entirely, leaving programmatic consumers
+  # blind to which CLIs are installed and routable.
+  AVAIL_JSON=""
+  if [ -f "$PLUGIN_ROOT/lib/codex-bridge/availability/doctor-report.js" ] && command -v node >/dev/null 2>&1; then
+    if [ "$FORCE_AVAILABILITY" -eq 1 ]; then
+      AVAIL_JSON=$(node "$PLUGIN_ROOT/lib/codex-bridge/availability/doctor-report.js" --json --force 2>/dev/null || true)
+    else
+      AVAIL_JSON=$(node "$PLUGIN_ROOT/lib/codex-bridge/availability/doctor-report.js" --json 2>/dev/null || true)
+    fi
+  fi
+  # Emit machine-readable JSON (one summary + array of checks + availability)
   printf '{\n'
   printf '  "summary": {"pass": %d, "warn": %d, "fail": %d},\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
   printf '  "checks": [\n'
@@ -165,7 +177,13 @@ if [ "$WANT_JSON" -eq 1 ]; then
     # JSON-escape via node since detail/fix may contain quotes
     node -e "process.stdout.write(JSON.stringify({status: process.argv[1], name: process.argv[2], detail: process.argv[3], fix: process.argv[4] || null}))" "$status" "$name" "$detail" "$fix" | sed 's/^/    /'
   done
-  printf '\n  ]\n}\n'
+  printf '\n  ]'
+  if [ -n "$AVAIL_JSON" ]; then
+    printf ',\n  "availability": %s' "$AVAIL_JSON"
+  else
+    printf ',\n  "availability": null'
+  fi
+  printf '\n}\n'
 else
   echo "codex-paired-superpowers doctor — checks against PLUGIN_ROOT=$PLUGIN_ROOT"
   echo ""
