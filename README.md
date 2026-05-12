@@ -2,6 +2,21 @@
 
 Fork of six [superpowers](https://github.com/obra/superpowers) skills paired with Codex (GPT-5.5 high reasoning) as an L11 engineering partner.
 
+## v0.9.0 — Model-routed dev team (latest)
+
+v0.9.0 replaces the single-CLI assumption with a routing-aware dispatch layer that picks the best-suited CLI per expert role from a preference ladder.
+
+- **CLI harness** (`lib/codex-bridge/cli-harness/`) — spawn-based dispatcher for Codex and Ollama Cloud; normalized `DispatchResult` shape across all adapters; `AbortController`-based timeout + cleanup
+- **Role routing** — `role-routing.json` + `role-recommendations.json` preference ladder; `resolveAdapter()` walks the ladder with explicit override/fallback paths; full resolution-audit trail in the sidecar (`resolved_cli`, `resolution_source`, `preference_index`, etc.)
+- **Doctor extension** — availability detection for each configured CLI with 1h TTL cache and smart invalidation on plugin version bump or binary path change
+- **Panel mode** (`lib/codex-bridge/panel/`) — multi-CLI consensus dispatch with deterministic verdict aggregation; hard floor of 2 advisors; `panel_id` recorded in sidecar per turn
+- **Halt envelope** — ralph-loop now halt-aware; terminal halt types enforced; `high_stakes` opt-in flag triggers panel dispatch automatically
+- **TDD-mandatory in `writing-plans`** — writing-plans now requires a `expert-test` panel round before the plan can advance; no-escape-hatch policy
+- **Sidecar schema migration** — `codex_session` → `role_sessions` (keyed by role ID); `role_prompt_version` + `role_prompt_hash` per turn; silent on-load upgrade for v0.8.x sidecars
+- **7-tier test strategy** — Tier 1–3+6 run in default CI (~3m); Tier 4 (installed-smoke, `CPS_INSTALLED_SMOKE=1`) + Tier 5 (replay) opt-in; Tier 7 release gate via `./scripts/v0.9.0-release-gate.sh`
+
+See `docs/verification/v0.9.0-release-gate.md` for the 6 PASS criteria required before tagging. DO NOT tag `v0.9.0` until the gate script exits 0.
+
 ## Why
 
 Superpowers gives Claude a discipline. This plugin adds a second pair of eyes — Codex — that drafts specs, critiques plans, reviews per-slice code, and must agree before anything ships. One persistent Codex thread per feature.

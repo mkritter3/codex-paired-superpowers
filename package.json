@@ -1,10 +1,14 @@
 {
   "name": "codex-paired-superpowers",
-  "version": "0.8.1.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test 'tests/**/*.test.js'"
+    "test": "node --test $(node scripts/collect-test-files.mjs)",
+    "test:installed-smoke": "CPS_INSTALLED_SMOKE=1 node --test tests/installed-smoke/codex-real.test.js tests/installed-smoke/ollama-real.test.js",
+    "test:replay": "node --test tests/replay/replay-from-sidecar.test.js",
+    "test:all": "node --test $(node scripts/collect-test-files.mjs --all)",
+    "release-gate": "./scripts/v0.9.0-release-gate.sh"
   },
   "engines": { "node": ">=20" },
   "dependencies": {
