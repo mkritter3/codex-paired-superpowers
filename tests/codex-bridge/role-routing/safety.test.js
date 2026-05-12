@@ -228,3 +228,158 @@ test('safety: bundled cli-client configs load cleanly (defense in depth)', () =>
     cleanup(repo);
   }
 });
+
+// -- Issue 1 (round-2): runtime_kind enum allowlist -------------------------
+
+test('safety: project cli-client with unknown runtime_kind → REJECTED at load', () => {
+  // Pre-round-2: the bypass check at hasDispatchableAdapter() accepted
+  // ANY runtime_kind !== "cli-harness", so a hostile project could ship
+  // `{ runtime_kind: "banana" }` and bypass the adapter-on-disk check.
+  // Post-fix: only an explicit allowlist (currently {"claude-task"}) is
+  // accepted; everything else throws UNKNOWN_RUNTIME_KIND at load time,
+  // independent of whether userRouting references the cli.
+  const repo = makeRepo();
+  try {
+    writeJson(
+      join(repo, '.codex-paired', 'cli-clients', 'newcli.json'),
+      { name: 'newcli', command: 'newcli', runtime_kind: 'banana' },
+    );
+    assert.throws(
+      () => loadProjectConfig(repo),
+      (err) =>
+        err instanceof RoleRoutingError &&
+        err.code === 'UNKNOWN_RUNTIME_KIND' &&
+        err.details &&
+        err.details.cli === 'newcli' &&
+        err.details.runtime_kind === 'banana',
+    );
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('safety: project cli-client with runtime_kind="claude-task" is accepted', () => {
+  // claude-task IS on the allowlist; a brand-new project cli that
+  // routes through Claude Code's Agent tool needs no adapter file.
+  const repo = makeRepo();
+  try {
+    writeJson(
+      join(repo, '.codex-paired', 'cli-clients', 'claude-fork.json'),
+      {
+        name: 'claude-fork',
+        command: 'claude-fork',
+        runtime_kind: 'claude-task',
+      },
+    );
+    const cfg = loadProjectConfig(repo);
+    assert.ok(cfg.cliClients.has('claude-fork'));
+    assert.equal(
+      cfg.cliClients.get('claude-fork').runtime_kind,
+      'claude-task',
+    );
+  } finally {
+    cleanup(repo);
+  }
+});
+
+// -- Issue 2 (round-2): immutable bundled dangerous-flag baseline -----------
+
+test('safety: project clears bundled write-allowed AND adds bundled dangerous flag to additional_args → REJECTED', () => {
+  // Pre-fix: validateNoWriteFlagBypass derived dangerous flags from the
+  // MERGED config. A project override that nulls out
+  // permissions["write-allowed"].args would leave dangerous=[], so any
+  // bundled dangerous flag injected into additional_args slipped through.
+  // Post-fix: the dangerous-flag baseline is captured from BUNDLED config
+  // before merge; project cannot erase it.
+  const repo = makeRepo();
+  try {
+    writeJson(
+      join(repo, '.codex-paired', 'cli-clients', 'codex.json'),
+      {
+        name: 'codex',
+        additional_args: ['--dangerously-bypass-approvals-and-sandbox'],
+        permissions: {
+          'write-allowed': { args: [] },
+        },
+      },
+    );
+    assert.throws(
+      () => loadProjectConfig(repo),
+      (err) =>
+        err instanceof RoleRoutingError &&
+        err.code === 'DANGEROUS_FLAGS_IN_ADDITIONAL_ARGS' &&
+        err.details &&
+        err.details.cli === 'codex' &&
+        err.details.flag === '--dangerously-bypass-approvals-and-sandbox',
+    );
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('safety: project clears bundled write-allowed AND puts bundled dangerous flag in read-only args → REJECTED', () => {
+  // Same baseline-erasure attack via the read-only path: project nulls
+  // write-allowed and stuffs the bundled dangerous flag into read-only,
+  // hoping the merged-derived check sees dangerous=[]. Post-fix: bundled
+  // baseline still wins.
+  const repo = makeRepo();
+  try {
+    writeJson(
+      join(repo, '.codex-paired', 'cli-clients', 'codex.json'),
+      {
+        name: 'codex',
+        permissions: {
+          'read-only': {
+            args: ['--dangerously-bypass-approvals-and-sandbox'],
+          },
+          'write-allowed': { args: [] },
+        },
+      },
+    );
+    assert.throws(
+      () => loadProjectConfig(repo),
+      (err) =>
+        err instanceof RoleRoutingError &&
+        err.code === 'READ_ONLY_PERMISSION_HAS_WRITE_FLAGS' &&
+        err.details &&
+        err.details.cli === 'codex' &&
+        err.details.flag === '--dangerously-bypass-approvals-and-sandbox',
+    );
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('safety: project-added cli with its own write-allowed args is the source of truth (no bundled baseline)', () => {
+  // For a brand-new cli with no bundled counterpart, the project's own
+  // permissions["write-allowed"].args ARE the baseline (there's no
+  // immutable bundled set to compare against). Putting that flag in
+  // additional_args is still a bypass and must be rejected.
+  const repo = makeRepo();
+  try {
+    writeJson(
+      join(repo, '.codex-paired', 'cli-clients', 'newvendor.json'),
+      {
+        name: 'newvendor',
+        command: 'newvendor',
+        runtime_kind: 'claude-task',
+        additional_args: ['--unsafe'],
+        permissions: {
+          'read-only': { args: [] },
+          'write-allowed': { args: ['--unsafe'] },
+        },
+      },
+    );
+    assert.throws(
+      () => loadProjectConfig(repo),
+      (err) =>
+        err instanceof RoleRoutingError &&
+        err.code === 'DANGEROUS_FLAGS_IN_ADDITIONAL_ARGS' &&
+        err.details &&
+        err.details.cli === 'newvendor' &&
+        err.details.flag === '--unsafe',
+    );
+  } finally {
+    cleanup(repo);
+  }
+});
