@@ -104,6 +104,9 @@ test('replay-from-sidecar: inputs_hash matches after real runTurnWithDeps dispat
       specSnippet,
       phase: 'spec-review',
       sliceId: null,
+      adapter: 'cli-harness:codex',     // Explicit adapter audit field so the
+                                         // recorded turn carries it and replay
+                                         // can verify the round-trip cleanly.
       sidecarParticipantState: '',
       task: 'Review the architecture section.',
       suppressPeerMessages: false,
@@ -141,18 +144,14 @@ test('replay-from-sidecar: inputs_hash matches after real runTurnWithDeps dispat
     }
   }
 
-  // Fall back to expert_teammates.turns (v0.8.x schema path).
-  if (!recordedTurn && sidecar.expert_teammates) {
-    for (const [, turns] of Object.entries(sidecar.expert_teammates.turns || {})) {
-      if (Array.isArray(turns)) {
-        for (const t of turns) {
-          if ((t.requested_role || t.role_id || t.expert_id) === 'expert-architecture') {
-            recordedTurn = t;
-            break;
-          }
-        }
+  // Fall back to expert_teammates.turns (canonical write path per sidecar.js
+  // `appendExpertTurn`; it's a flat array, not a per-role object).
+  if (!recordedTurn && sidecar.expert_teammates && Array.isArray(sidecar.expert_teammates.turns)) {
+    for (const t of sidecar.expert_teammates.turns) {
+      if ((t.requested_role || t.role_id || t.expert_id) === 'expert-architecture') {
+        recordedTurn = t;
+        break;
       }
-      if (recordedTurn) break;
     }
   }
 
@@ -171,38 +170,17 @@ test('replay-from-sidecar: inputs_hash matches after real runTurnWithDeps dispat
     }
   }
 
-  // Fallback: build a synthetic turn record from known inputs so we can still
-  // test replayTurn's reconstruction logic. This path activates when the sidecar
-  // schema changed and we need to adapt — the replay module's hash logic is still
-  // tested against the canonical computeInputsHash.
-  if (!recordedTurn) {
-    const rolePromptHash = sha256Hex(`---\nversion: v0.9.0-r1\nrole_id: expert-architecture\n---\n${rolePromptBody}`);
-    const stored = storeResponse(dir, responseText, {});
-    recordedTurn = {
-      requested_role: 'expert-architecture',
-      role_prompt_version: 'v0.9.0-r1',
-      role_prompt_hash: `sha256:${rolePromptHash}`,
-      spec_path: specPath,
-      spec_snippet_hash: `sha256:${sha256Hex(specSnippet)}`,
-      mailbox_message_ids: [],
-      phase: 'spec-review',
-      task: 'Review the architecture section.',
-      adapter: 'codex',
-      inputs_hash: computeInputsHash({
-        rolePromptHash,
-        specSnippetHash: sha256Hex(specSnippet),
-        mailboxMessageIds: [],
-        phase: 'spec-review',
-        task: 'Review the architecture section.',
-        roleId: 'expert-architecture',
-      }),
-      ...stored,
-    };
-  }
-
+  // Per Codex round-1 slice-8 finding #3: the test MUST fail loudly when
+  // runTurnWithDeps did not persist the turn we just dispatched. A synthetic
+  // fallback would mask a real sidecar persistence regression — the whole
+  // point of this test is to verify the record-→-reload-→-replay path.
   assert.ok(
-    recordedTurn !== null,
-    'A recorded turn for expert-architecture must exist in the sidecar or synthetic fallback',
+    recordedTurn,
+    'Expected runTurnWithDeps to persist an expert-architecture turn to ' +
+      'the sidecar (rounds[].expert_turns[] or role_sessions[role].turns[]). ' +
+      'No matching turn found — sidecar persistence is broken or the schema ' +
+      'changed. Inspect sidecar at ' + join(dir, '.superpowers-codex-paired') +
+      ' to debug.',
   );
 
   // --- Replay ---
@@ -223,7 +201,7 @@ test('replay-from-sidecar: inputs_hash matches after real runTurnWithDeps dispat
       })),
     readSpecSnippet: () => specSnippet,
     repoRoot: dir,
-    adapter: 'codex',
+    adapter: 'cli-harness:codex',     // Matches the adapter the turn was recorded under.
   };
 
   const replayResult = replayTurn(recordedTurn, replayDeps);
