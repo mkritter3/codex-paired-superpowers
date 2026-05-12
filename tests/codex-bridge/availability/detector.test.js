@@ -326,6 +326,115 @@ test('detectAvailableCLIs defaults plugin-version from package.json when option 
   assert.equal(result.get('codex').version, 'fresh-2.0.0');
 });
 
+test('detectAvailableCLIs re-probes when cached claude-task entry is session-scoped (resolved_path=null) even when prober now returns missing', async (t) => {
+  // Round-2 reproducer: session A wrote cache claiming claude=available
+  // (resolved_path=null because session-derived). Session B has no Claude
+  // Code env marker, so a real probe would return missing. The detector
+  // MUST re-probe rather than trust the session-scoped cached value, or
+  // dispatch will route to a CLI that isn't actually available.
+  const repo = tmpRepo('cps-detect-session-scoped-');
+  t.after(() => cleanup(repo));
+  const cachedAt = '2026-05-11T22:00:00.000Z';
+  const loader = () =>
+    new Map([['claude', { name: 'claude', command: 'claude', runtime_kind: 'claude-task' }]]);
+  writeCache(
+    repo,
+    {
+      claude: {
+        name: 'claude',
+        status: 'available',
+        version: 'session',
+        resolved_path: null,
+        runtime_kind: 'claude-task',
+        checked_at: cachedAt,
+        plugin_version: '0.9.0',
+      },
+    },
+    {
+      pluginVersion: '0.9.0',
+      cachedAt,
+      fingerprint: fingerprintCliClients(loader()),
+    },
+  );
+
+  let probeCalls = 0;
+  // Simulate session B: no Claude Code env marker → claude is missing.
+  const proberFn = async (name) => {
+    probeCalls += 1;
+    return {
+      name,
+      status: 'missing',
+      version: null,
+      resolved_path: null,
+      checked_at: '2026-05-11T22:30:00.000Z',
+      plugin_version: '0.9.0',
+      error: 'no Claude Code session marker present',
+    };
+  };
+
+  const result = await detectAvailableCLIs(repo, {
+    cliClientsLoader: loader,
+    proberFn,
+    currentPluginVersion: '0.9.0',
+    nowMs: Date.parse(cachedAt) + 60_000, // 1 minute later, well inside TTL
+  });
+
+  assert.equal(
+    probeCalls,
+    1,
+    'session-scoped cache entry must trigger re-probe even when TTL/fingerprint/version match',
+  );
+  assert.equal(
+    result.get('claude').status,
+    'missing',
+    'detector must return the re-probed missing status, not the cached available',
+  );
+});
+
+test('detectAvailableCLIs reuses cache for binary-path entries when no session-scoped entries exist', async (t) => {
+  // Regression guard for the round-2 fix: binary-resolved cache entries
+  // (codex with /opt/homebrew/bin/codex resolved_path) continue to skip
+  // re-probe when fingerprint + TTL + version + path all match.
+  const repo = tmpRepo('cps-detect-binary-path-only-');
+  t.after(() => cleanup(repo));
+  const cachedAt = '2026-05-11T22:00:00.000Z';
+  const loader = () => new Map([['codex', { name: 'codex', command: 'codex' }]]);
+  writeCache(
+    repo,
+    {
+      codex: {
+        name: 'codex',
+        status: 'available',
+        version: '0.42.0',
+        // Use a path that actually exists so existsSync default passes.
+        resolved_path: '/usr/bin/env',
+        checked_at: cachedAt,
+        plugin_version: '0.9.0',
+      },
+    },
+    {
+      pluginVersion: '0.9.0',
+      cachedAt,
+      fingerprint: fingerprintCliClients(loader()),
+    },
+  );
+
+  // Prober that throws if called — proves no re-probe happened.
+  const proberFn = async () => {
+    throw new Error('proberFn must NOT be called when binary-path cache is fresh');
+  };
+
+  const result = await detectAvailableCLIs(repo, {
+    cliClientsLoader: loader,
+    proberFn,
+    currentPluginVersion: '0.9.0',
+    nowMs: Date.parse(cachedAt) + 60_000,
+  });
+
+  assert.equal(result.get('codex').status, 'available');
+  assert.equal(result.get('codex').version, '0.42.0');
+});
+
 test('availableCLISet keeps only entries with status=available', () => {
   const detectorResult = new Map([
     ['codex', { status: 'available' }],

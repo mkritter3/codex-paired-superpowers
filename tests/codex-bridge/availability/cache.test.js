@@ -220,6 +220,77 @@ test('isCacheFresh defaults currentPluginVersion from package.json when not pass
   );
 });
 
+test('isCacheFresh returns false when an entry has status=available AND resolved_path=null (session-scoped)', () => {
+  // Round-2 fix: session-derived availability (e.g. claude-task via Claude
+  // Code env marker) must NEVER be trusted from cache. A cache entry with
+  // status=available + resolved_path=null is environment-scoped and not
+  // safely reusable across processes/environments.
+  const cachedAtIso = '2026-05-11T22:00:00.000Z';
+  const cachedAtMs = Date.parse(cachedAtIso);
+  const payload = {
+    plugin_version: '0.9.0',
+    cached_at: cachedAtIso,
+    fingerprint: 'matching-hash',
+    entries: {
+      claude: {
+        name: 'claude',
+        status: 'available',
+        version: 'session',
+        resolved_path: null,
+        runtime_kind: 'claude-task',
+        checked_at: cachedAtIso,
+        plugin_version: '0.9.0',
+      },
+    },
+  };
+  // All other freshness checks pass (TTL ok, fingerprint match, plugin_version match).
+  // Only the per-entry session-scoped rule should fail this.
+  assert.equal(
+    isCacheFresh(payload, cachedAtMs + 60_000, DEFAULT_TTL_MS, {
+      currentPluginVersion: '0.9.0',
+      currentFingerprint: 'matching-hash',
+    }),
+    false,
+    'session-scoped available entry (resolved_path=null) must invalidate cache',
+  );
+});
+
+test('isCacheFresh returns true when ALL available entries have resolved_path set (no session-scoped entries)', () => {
+  // Regression guard for the round-2 fix: pure binary-path entries continue
+  // to use the cache. resolved_path=null is ONLY problematic when paired
+  // with status=available — missing entries with resolved_path=null are
+  // expected and fine.
+  const cachedAtIso = '2026-05-11T22:00:00.000Z';
+  const cachedAtMs = Date.parse(cachedAtIso);
+  const payload = {
+    plugin_version: '0.9.0',
+    cached_at: cachedAtIso,
+    fingerprint: 'matching-hash',
+    entries: {
+      codex: {
+        name: 'codex',
+        status: 'available',
+        version: '0.42.0',
+        resolved_path: '/usr/bin/env',
+        checked_at: cachedAtIso,
+        plugin_version: '0.9.0',
+      },
+      // Missing entry with resolved_path=null is fine — the rule only
+      // applies to status=available entries.
+      qwen: SAMPLE_ENTRY_MISSING,
+    },
+  };
+  assert.equal(
+    isCacheFresh(payload, cachedAtMs + 60_000, DEFAULT_TTL_MS, {
+      currentPluginVersion: '0.9.0',
+      currentFingerprint: 'matching-hash',
+      pathExistsFn: () => true,
+    }),
+    true,
+    'binary-resolved available entries must remain cache-fresh',
+  );
+});
+
 test('clearCache removes the file and no-ops on a second call', (t) => {
   const repo = tmpRepo('cps-cache-clear-');
   t.after(() => cleanup(repo));
