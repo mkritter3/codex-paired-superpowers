@@ -1614,22 +1614,26 @@ Each ralph tick re-invokes `/autopilot <plan-path>`. Autopilot uses the plan pat
 
 ### Halt-aware ralph-loop contract (v0.9.0)
 
-When autopilot halts, it returns a **halt envelope** with shape `{halt, terminal, resume_hint, ...}` (from `lib/codex-bridge/halt-envelope.js`). Ralph-loop MUST inspect this envelope on every tick:
+When autopilot halts, it returns a **halt envelope** with shape `{halt, terminal, resume_hint, ...}` (from `lib/codex-bridge/halt-envelope.js`). Ralph-loop MUST inspect this envelope on every tick using `isTerminalHalt(envelope)` (the load-bearing guard — see `lib/codex-bridge/halt-envelope.js`):
 
 ```
 envelope = <result of /autopilot invocation>
 
-if envelope.halt == "completed":
+if envelope?.halt == "completed":
     exit success  # completion-promise met
 
-if envelope.terminal == true:
+# isTerminalHalt fails closed on malformed envelopes: null, undefined,
+# non-object, missing/non-boolean terminal, missing/empty resume_hint, etc.
+# all return true. Only a well-formed { terminal: false, halt, resume_hint }
+# envelope returns false.
+if isTerminalHalt(envelope):
     # Operator must act — DO NOT re-fire
-    print(envelope.resume_hint)
+    hint = envelope?.resume_hint ?? "Autopilot returned a malformed halt envelope — operator triage required."
+    print(hint)
     exit with non-zero status so the user sees the hint
 
-if envelope.terminal == false:
-    # Transient condition — safe to retry
-    wait briefly, then re-invoke /autopilot
+# Only here on a well-formed transient envelope — safe to retry
+wait briefly, then re-invoke /autopilot
 ```
 
 **Key invariants ralph-loop must enforce:**
@@ -1637,7 +1641,8 @@ if envelope.terminal == false:
 1. **Never re-fire on terminal: true.** The `resume_hint` string tells the operator exactly what to fix. Re-firing would loop indefinitely and mask the real blocker.
 2. **Always surface resume_hint on terminal exit.** This is the human-readable description the operator uses to diagnose and resolve the halt.
 3. **Unknown halt reasons are always terminal** (the envelope module maps them to `terminal: true` with an "operator triage" hint). Ralph must treat absence from the known-set as a hard stop.
-4. **Transient halts get at most one re-fire per ralph tick.** Do not implement exponential retry inside ralph itself — that belongs in the halting code (e.g., `reconciler-failed` is retry-eligible once, then escalates).
+4. **Transient halts get at most one re-fire per ralph tick.** Do not implement exponential retry inside ralph itself — that belongs in the halting code (e.g., `transient-network` is retry-eligible, then escalates).
+5. **Malformed or absent envelopes are terminal (fail-closed).** If `/autopilot` yields nothing (a null/undefined return), throws, yields a non-object, or yields an object missing `terminal`/`resume_hint`/`halt`, ralph-loop MUST treat it as terminal and surface a generic "malformed envelope — operator triage required" hint. Never assume transient on a malformed result. `isTerminalHalt` enforces this directly (per slice-7b Codex round-1 finding #3): the guard yields `true` for nullish values, non-objects, non-boolean `terminal`, and missing/empty `halt` or `resume_hint`.
 
 **Implementation note (prose-only skills):** If ralph-loop is implemented as a Claude Code `/ralph-loop` skill (not a shell script), apply the same contract in the skill's reasoning loop: read the autopilot session result, check `terminal`, and either exit or re-invoke per the rules above.
 
