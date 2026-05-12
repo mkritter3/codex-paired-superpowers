@@ -520,3 +520,139 @@ test('v0.8.1 peer-DM: no peer_messages_requested field → empty summary, no fai
   assert.deepEqual(result.peer_dm_summary, { enqueued: 0, failed: 0 });
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.8.1.1 peer-DM count cap (edge-case #3) ────────────────────────────
+//
+// A runaway/malicious subagent could request 10K peer DMs; each
+// writeToMailbox locks a file. Without a cap, the turn hangs and the
+// drain-loop budget burns. Cap applies BEFORE per-item normalization;
+// overflow is recorded as ONE bounded audit entry (not per-item) to
+// prevent DoS-shift from mailbox locks into sidecar/memory growth.
+
+test('v0.8.1.1 peer-DM cap: 100 items with deps.maxPeerMessagesPerTurn=3 → 3 enqueued + 1 bounded overflow record', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [];
+  for (let i = 0; i < 100; i++) {
+    requests.push({ to: `expert-ux`, body: `req ${i}` });
+  }
+  // After de-dup-of-classification: each request is independently valid (same recipient is allowed),
+  // so all 3 capped items will enqueue successfully.
+  const { deps, calls } = makeDepStubs({
+    maxPeerMessagesPerTurn: 3, // cap injection seam
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.ok, true);
+  assert.equal(result.peer_dm_summary.enqueued, 3, 'exactly 3 enqueued (cap applied)');
+  assert.equal(result.peer_dm_summary.failed, 1, 'one overflow record');
+  assert.equal(calls.writeToMailbox.length, 3, 'no extra writeToMailbox calls past the cap');
+  const turn = calls.appendTurn[0];
+  const overflow = turn.peer_messages_failed[0];
+  assert.equal(overflow.reason, 'count-cap-exceeded');
+  assert.equal(overflow.code, 'count-cap-exceeded');
+  assert.equal(overflow.overflow_count, 97);
+  assert.equal(overflow.max_allowed, 3);
+  assert.ok(Array.isArray(overflow.sample_to));
+  assert.ok(overflow.sample_to.length <= 5, 'sample bounded at 5');
+  assert.ok(overflow.sample_to.every((t) => typeof t === 'string' && t.length > 0));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1.1 peer-DM cap: exact cap (no overflow) → no audit record', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [
+    { to: 'expert-ux', body: 'a' },
+    { to: 'expert-architecture', body: 'b' },
+    { to: 'expert-backend', body: 'c' },
+  ];
+  const { deps } = makeDepStubs({
+    maxPeerMessagesPerTurn: 3,
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.peer_dm_summary.enqueued, 3);
+  assert.equal(result.peer_dm_summary.failed, 0, 'no overflow record when within cap');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1.1 peer-DM cap: cap=0 → all overflow, enqueued=0', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [
+    { to: 'expert-ux', body: 'a' },
+    { to: 'expert-architecture', body: 'b' },
+  ];
+  const { deps, calls } = makeDepStubs({
+    maxPeerMessagesPerTurn: 0,
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.equal(result.peer_dm_summary.enqueued, 0);
+  assert.equal(result.peer_dm_summary.failed, 1);
+  assert.equal(calls.writeToMailbox.length, 0, 'no writes attempted when cap=0');
+  const overflow = calls.appendTurn[0].peer_messages_failed[0];
+  assert.equal(overflow.overflow_count, 2);
+  assert.equal(overflow.max_allowed, 0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('v0.8.1.1 peer-DM cap: sample_to is bounded at 5 even with massive input', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [];
+  for (let i = 0; i < 1000; i++) {
+    requests.push({ to: `expert-ux`, body: `req ${i}` });
+  }
+  const { deps, calls } = makeDepStubs({
+    maxPeerMessagesPerTurn: 2,
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  const overflow = calls.appendTurn[0].peer_messages_failed[0];
+  assert.equal(overflow.overflow_count, 998);
+  assert.equal(overflow.sample_to.length, 5, 'sample capped at OVERFLOW_SAMPLE_SIZE');
+});
+
+test('v0.8.1.1 peer-DM cap: sample_to truncates pathologically long `to` strings', async () => {
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const longTo = 'expert-' + 'x'.repeat(500); // 507 chars
+  // Build a request array that exceeds the cap, with overflow items having
+  // pathological `to` strings. Sample entries should be truncated to <=80 chars.
+  const requests = [
+    { to: 'expert-ux', body: 'cap-fill-1' },
+    { to: 'expert-ux', body: 'cap-fill-2' },
+    { to: longTo, body: 'overflow-1' }, // overflow with pathological recipient
+    { to: longTo, body: 'overflow-2' },
+  ];
+  const { deps, calls } = makeDepStubs({
+    maxPeerMessagesPerTurn: 2,
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  const overflow = calls.appendTurn[0].peer_messages_failed[0];
+  for (const sampleEntry of overflow.sample_to) {
+    assert.ok(sampleEntry.length <= 80, `sample entry must be <=80 chars; got length ${sampleEntry.length}`);
+  }
+});
+
+test('v0.8.1.1 peer-DM cap: scheduler halt still triggered (peer_dm_summary.failed > 0)', async () => {
+  // Defense-in-depth check: when the cap triggers, the resulting failed
+  // count is reflected in peer_dm_summary, so the scheduler will halt
+  // with expert-peer-dm-enqueue-failed (existing behavior).
+  const { dir, spec } = makeSpec();
+  const identity = makeIdentity(dir);
+  const requests = [
+    { to: 'expert-ux', body: 'a' },
+    { to: 'expert-architecture', body: 'b' },
+    { to: 'expert-backend', body: 'overflow' }, // 1 over cap
+  ];
+  const { deps } = makeDepStubs({
+    maxPeerMessagesPerTurn: 2,
+    agentDispatch: async () => validMachineResult('expert-ui', 'spec-review', 'SHIP', requests),
+  });
+  const result = await runTurnWithDeps(baseRequest(dir, identity, spec), deps);
+  assert.ok(result.peer_dm_summary.failed > 0, 'scheduler halt signal is set');
+});

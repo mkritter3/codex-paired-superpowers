@@ -27,8 +27,17 @@ import {
 
 function makeTmpRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'cps-honest-'));
-  // Make it look like a git repo so markerPath doesn't fall back.
-  mkdirSync(join(dir, '.git'), { recursive: true });
+  // v0.8.1.1: real `git init` instead of a bare `.git/` directory.
+  // Codex slice-review caught that some git versions can stall trying
+  // to traverse an uninitialized `.git/`, which timed out the bash
+  // wrapper test. A real init is the cheapest robust fixture.
+  try {
+    spawnSync('git', ['init', '-q'], { cwd: dir, timeout: 5000 });
+  } catch {
+    // Fallback to bare `.git/` if git isn't available; the markerPath
+    // timeout will catch any resulting slow paths.
+    mkdirSync(join(dir, '.git'), { recursive: true });
+  }
   return dir;
 }
 
@@ -226,6 +235,59 @@ test('scanner (codex round-2): backtick-cited "ran" form still passes', () => {
     'VERIFIED: ran `node --test tests/codex-bridge/*.test.js` and it exited 0.',
   );
   assert.equal(ok, true);
+});
+
+// ── v0.8.1.1 unterminated code block (edge-case #1) ──────────────────────
+
+test('scanner v0.8.1.1: unterminated fenced code block — content inside is stripped', () => {
+  // Codex truncates mid-response; the lazy `[\s\S]*?` regex from v0.8.1
+  // would NOT strip an opener-without-closer, leaving claim words inside
+  // the block exposed to the scanner. The two-step strip closes this hole.
+  const text = [
+    'before VERIFIED with `node --test`',
+    '',
+    '```bash',
+    'echo SHIPPED_FROM_INSIDE',
+    'echo TAGGED_FROM_INSIDE',
+    // intentionally no closing ```
+  ].join('\n');
+  const { ok, matches } = scanForUnsourcedClaims(text);
+  // The VERIFIED outside the block IS sourced (adjacent backticks + tool ref).
+  assert.equal(ok, true, `expected ok (only sourced VERIFIED present); got matches=${JSON.stringify(matches)}`);
+  // Confirm claim words inside the unterminated block were stripped (no matches at all).
+  assert.ok(
+    !matches.some((m) => m.word === 'SHIPPED'),
+    'SHIPPED inside unterminated code block must be stripped',
+  );
+  assert.ok(
+    !matches.some((m) => m.word === 'TAGGED'),
+    'TAGGED inside unterminated code block must be stripped',
+  );
+});
+
+test('scanner v0.8.1.1: unterminated block followed by would-fire claim — still strips block', () => {
+  // Even more adversarial: unterminated block contains a claim, then NO
+  // other content. The regex `[\s\S]*$` swallows to EOF. Test asserts
+  // nothing matches.
+  const text = '```\nVERIFIED inside only\n';
+  const { ok } = scanForUnsourcedClaims(text);
+  assert.equal(ok, true, 'no claims outside unterminated block → ok');
+});
+
+test('scanner v0.8.1.1: closed block + unterminated block in same text', () => {
+  const text = [
+    '```',
+    'echo INSIDE_CLOSED', // closed block — already stripped by step 1
+    '```',
+    '',
+    'middle prose with VERIFIED, sourced by `node --test`.',
+    '',
+    '```',
+    'echo INSIDE_UNTERMINATED PASSED', // unterminated — stripped by step 1b
+  ].join('\n');
+  const { ok, matches } = scanForUnsourcedClaims(text);
+  assert.equal(ok, true);
+  assert.ok(!matches.some((m) => m.word === 'PASSED'), 'PASSED in unterminated block must be stripped');
 });
 
 // ── decideStop ────────────────────────────────────────────────────────────
@@ -540,7 +602,7 @@ test('bash wrapper: exits 0 when NODE_MODULE missing (fail-open)', () => {
     input: '{}', // empty hook stdin
     env,
     encoding: 'utf8',
-    timeout: 10000,
+    timeout: 60000,
   });
   assert.equal(result.status, 0, `expected exit 0 (fail-open), got ${result.status}`);
   assert.equal(result.stderr, '', `expected empty stderr (no leak), got: ${result.stderr}`);
@@ -556,9 +618,31 @@ test('bash wrapper: exits 0 with empty stderr when marker absent (no block)', ()
     input: stdin,
     env,
     encoding: 'utf8',
-    timeout: 10000,
+    timeout: 60000,
   });
   assert.equal(result.status, 0, `expected exit 0, got ${result.status}: stderr=${result.stderr}`);
   assert.equal(result.stderr, '');
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── v0.8.1.1 mktemp failure → fail-open (edge-case #2) ──────────────────
+
+test('bash wrapper v0.8.1.1: exits 0 when mktemp fails (TMPDIR unwritable)', () => {
+  // Force mktemp to fail by pointing TMPDIR at a non-existent directory.
+  // The wrapper's `mktemp ... 2>/dev/null || exit 0` must catch this and
+  // fail-open silently rather than crashing on `2>""`.
+  const env = {
+    ...process.env,
+    CLAUDE_PLUGIN_ROOT: join(__dirname__, '..', '..'),
+    TMPDIR: '/nonexistent-dir-for-mktemp-failure-test-cps081-' + Date.now(),
+  };
+  delete env.CPS_HONEST_REPORTING_DEBUG;
+  const result = spawnSync('bash', [WRAPPER_PATH, 'stop'], {
+    input: '{}',
+    env,
+    encoding: 'utf8',
+    timeout: 60000,
+  });
+  assert.equal(result.status, 0, `expected exit 0 (fail-open on mktemp failure), got ${result.status}; stderr=${result.stderr}`);
+  assert.equal(result.stderr, '', 'no stderr leak on mktemp failure');
 });

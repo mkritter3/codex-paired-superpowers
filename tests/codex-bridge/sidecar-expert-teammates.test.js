@@ -671,3 +671,87 @@ test('appendExpertTurn v0.8.1: rejects peer_messages_failed element missing reas
   );
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.8.1.1 overflow-audit optional fields ────────────────────────────
+
+test('appendExpertTurn v0.8.1.1: accepts count-cap-exceeded entry with overflow audit fields', () => {
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn({
+    peer_messages_failed: [
+      {
+        to: null,
+        reason: 'count-cap-exceeded',
+        code: 'count-cap-exceeded',
+        overflow_count: 97,
+        max_allowed: 3,
+        sample_to: ['expert-ux', 'expert-architecture', 'expert-backend'],
+      },
+    ],
+  }));
+  const sc = loadSidecar(spec);
+  const failed = sc.expert_teammates.turns[0].peer_messages_failed[0];
+  assert.equal(failed.overflow_count, 97);
+  assert.equal(failed.max_allowed, 3);
+  assert.deepEqual(failed.sample_to, ['expert-ux', 'expert-architecture', 'expert-backend']);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1.1: rejects negative overflow_count', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      peer_messages_failed: [{ to: null, reason: 'count-cap-exceeded', overflow_count: -1 }],
+    })),
+    /overflow_count/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1.1: rejects non-finite max_allowed', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      peer_messages_failed: [{ to: null, reason: 'count-cap-exceeded', max_allowed: Infinity }],
+    })),
+    /max_allowed/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1.1: rejects non-array sample_to', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      peer_messages_failed: [{ to: null, reason: 'count-cap-exceeded', sample_to: 'not-an-array' }],
+    })),
+    /sample_to/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1.1: rejects sample_to with empty-string element', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendExpertTurn(spec, validTurn({
+      peer_messages_failed: [{ to: null, reason: 'count-cap-exceeded', sample_to: ['expert-ux', ''] }],
+    })),
+    /sample_to/i,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendExpertTurn v0.8.1.1: regular per-item failure (no overflow fields) still accepted', () => {
+  // Back-compat: an entry without overflow fields (regular invalid-recipient,
+  // self-dm, etc.) must still parse cleanly.
+  const { dir, spec } = makeSpec();
+  appendExpertTurn(spec, validTurn({
+    peer_messages_failed: [
+      { to: 'expert-FOO!!', reason: 'invalid-recipient', code: 'mailbox-recipient-malformed' },
+    ],
+  }));
+  const sc = loadSidecar(spec);
+  const failed = sc.expert_teammates.turns[0].peer_messages_failed[0];
+  assert.equal(failed.reason, 'invalid-recipient');
+  assert.equal('overflow_count' in failed, false);
+  rmSync(dir, { recursive: true, force: true });
+});

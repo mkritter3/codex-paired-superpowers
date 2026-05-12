@@ -49,7 +49,10 @@ fi
 
 # Capture stderr; only propagate it (and exit 2) if the node module
 # emitted both signals together. Anything else → exit 0, drop stderr.
-TMP_STDERR=$(mktemp -t cps-honest-reporting-stderr.XXXXXX)
+# mktemp can fail under disk-full / permission errors. Fail-open in
+# that case rather than letting `2>""` crash the wrapper. (v0.8.1.1
+# edge-case fix.)
+TMP_STDERR=$(mktemp -t cps-honest-reporting-stderr.XXXXXX 2>/dev/null) || exit 0
 trap 'rm -f "$TMP_STDERR"' EXIT
 node "$NODE_MODULE" "$MODE" 2>"$TMP_STDERR"
 NODE_EXIT=$?
