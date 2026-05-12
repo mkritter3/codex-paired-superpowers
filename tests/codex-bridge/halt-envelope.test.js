@@ -332,9 +332,55 @@ test('isTerminalHalt: transient-shaped envelope with empty resume_hint is termin
 test('isTerminalHalt: only a well-formed transient envelope returns false', () => {
   const env = wrapAsHaltEnvelope('transient-network');
   assert.equal(isTerminalHalt(env), false);
-  // Manually-constructed equivalent works the same
+  // Manually-constructed equivalent works only when the halt name is a
+  // known transient (HALT_MAP registry-enforced; round-2 fix).
   assert.equal(
-    isTerminalHalt({ terminal: false, halt: 'something', resume_hint: 'a hint' }),
+    isTerminalHalt({ terminal: false, halt: 'transient-network', resume_hint: 'a hint' }),
     false
   );
+});
+
+// ── Round-2 critique: isTerminalHalt enforces the known-set invariant ───────
+//
+// Codex round-2 slice-7b finding #1: ralph-loop's load-bearing guard must
+// not rely on callers using wrapAsHaltEnvelope correctly. A hand-crafted
+// well-shaped envelope claiming `terminal: false` for an UNKNOWN or
+// TERMINAL-classified halt name MUST still return terminal.
+
+test('isTerminalHalt: unknown halt name claiming terminal:false is terminal', () => {
+  const env = {
+    terminal: false,
+    halt: 'some-typo-or-new-reason',
+    resume_hint: 'retry plz',
+  };
+  // Even though the shape is valid, the halt name is not registered. Ralph
+  // must not retry on an unrecognized reason.
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('isTerminalHalt: known terminal halt name claiming terminal:false is terminal', () => {
+  // If a caller hand-crafts {halt: 'user-input-required', terminal: false},
+  // the registry says user-input-required is terminal. The guard must refuse
+  // to retry — registry beats the hand-crafted boolean.
+  const env = {
+    terminal: false,
+    halt: 'user-input-required',
+    resume_hint: 'pretend retry',
+  };
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('isTerminalHalt: known transient halt name with valid envelope returns false (retry-eligible)', () => {
+  for (const transientHalt of ['transient-network', 'panel-quorum-lost', 'dispatch-retry-eligible']) {
+    const env = {
+      terminal: false,
+      halt: transientHalt,
+      resume_hint: 'retry hint',
+    };
+    assert.equal(
+      isTerminalHalt(env),
+      false,
+      `${transientHalt} should be the only path that returns false`
+    );
+  }
 });
