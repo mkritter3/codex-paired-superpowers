@@ -14,7 +14,13 @@ set -uo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 WANT_JSON=0
-if [ "${1:-}" = "--json" ]; then WANT_JSON=1; fi
+FORCE_AVAILABILITY=0
+for arg in "$@"; do
+  case "$arg" in
+    --json)  WANT_JSON=1 ;;
+    --force) FORCE_AVAILABILITY=1 ;;
+  esac
+done
 
 # ── Result accumulator ────────────────────────────────────────────────────
 declare -a RESULTS=()
@@ -181,6 +187,21 @@ else
     echo "Plugin should work; review WARN items if you hit issues."
   else
     echo "All checks green. Plugin is ready to use."
+  fi
+
+  # ── CLI availability + per-role fallback hints (v0.9.0 slice 4) ─────────
+  # The availability section is informational. It uses doctor's 1h-TTL
+  # cache at .codex-paired/cli-availability.json. --force re-probes and
+  # rewrites the cache. Failures here do NOT change the overall doctor
+  # exit code — vendored-deps / hook checks above remain authoritative.
+  if [ -f "$PLUGIN_ROOT/lib/codex-bridge/availability/doctor-report.js" ] && command -v node >/dev/null 2>&1; then
+    echo ""
+    if [ "$FORCE_AVAILABILITY" -eq 1 ]; then
+      AVAIL_ARGS="--force"
+    else
+      AVAIL_ARGS=""
+    fi
+    node "$PLUGIN_ROOT/lib/codex-bridge/availability/doctor-report.js" $AVAIL_ARGS || true
   fi
 fi
 
