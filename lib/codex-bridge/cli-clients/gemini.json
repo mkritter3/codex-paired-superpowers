@@ -1,0 +1,5 @@
+{
+  "name": "gemini",
+  "command": "gemini",
+  "_status": "PLACEHOLDER — adapter implementation deferred to v0.9.1 admission gate (fake-CLI fixtures + installed smoke + verified contract)"
+}

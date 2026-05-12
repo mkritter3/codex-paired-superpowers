@@ -1,0 +1,6 @@
+{
+  "name": "claude",
+  "command": "claude",
+  "runtime_kind": "claude-task",
+  "_note": "Claude routes through Claude Code's Agent tool, not subprocess spawn. This config exists for routing references; the cli-harness does NOT dispatch to it directly."
+}

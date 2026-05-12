@@ -1,0 +1,9 @@
+{
+  "name": "codex",
+  "command": "codex",
+  "additional_args": ["--json"],
+  "permissions": {
+    "read-only":     { "args": ["--sandbox", "read-only"] },
+    "write-allowed": { "args": ["--dangerously-bypass-approvals-and-sandbox"] }
+  }
+}
