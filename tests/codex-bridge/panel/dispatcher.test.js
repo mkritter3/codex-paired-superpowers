@@ -560,6 +560,261 @@ test('dispatchPanel: mixed N=2 → panel-disagreement (no consensus round)', asy
 
 // ── 11. Adapter propagation ───────────────────────────────────────────────
 
+// ── 12-16. Hard-floor enforcement (slice-6 round-2 fix) ───────────────────
+//
+// The hard floor is 2: a "panel" with <2 actual dispatched members violates
+// spec § 4. Any combination of panel_min_size / panel_max_size overrides
+// that would produce a panel <2 must be rejected at config-time BEFORE any
+// dispatch_fn is called.
+
+test('panel: panel_min_size=1 is rejected (hard floor 2)', async () => {
+  // 3 dispatchFns, panel_min_size override of 1 — the override is silently
+  // clamped to the hard floor (2), so 3 dispatchFns succeed; what we're
+  // really asserting here is that panel_min_size=1 with only ONE dispatchFn
+  // does NOT bypass the floor: it throws quorum-unavailable against
+  // effectiveMin=2 (not 1).
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const aWrap = makeWrappedDispatchFn({
+    memberId: `${ROLE}@codex`,
+    role: ROLE,
+    promptPath,
+    adapter: 'cli-harness:codex',
+    verdict: 'SHIP',
+    capturedTurns,
+  });
+  const dispatchFns = new Map([[`${ROLE}@codex`, aWrap.fn]]);
+  await assert.rejects(
+    () => dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns, { panel_min_size: 1 }),
+    (err) => {
+      assert.ok(err instanceof PanelDispatchError);
+      assert.equal(err.code, 'panel-quorum-unavailable',
+        'panel_min_size=1 must NOT bypass the hard floor of 2');
+      // The error message must reflect the EFFECTIVE floor (2), not the
+      // user's override (1).
+      assert.match(err.message, /at least 2/);
+      assert.equal(aWrap.calls.length, 0,
+        'dispatch_fn must NOT be called when quorum is unavailable');
+      return true;
+    },
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel: panel_max_size=1 is rejected when hard floor is 2', async () => {
+  // 3 dispatchFns, panel_max_size: 1 (panel_min_size defaults to 2).
+  // effectiveMax=1 < effectiveMin=2 → throws panel-config-invalid BEFORE
+  // any dispatch_fn is called. Pre-fix this would have run the quorum
+  // check (3 >= 2 ✓), then capped to 1 member, then dispatched a
+  // single-member "panel" and only later reported panel-quorum-lost.
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const wraps = ['a', 'b', 'c'].map((s) =>
+    makeWrappedDispatchFn({
+      memberId: `${ROLE}@${s}`,
+      role: ROLE,
+      promptPath,
+      adapter: `cli-harness:${s}`,
+      verdict: 'SHIP',
+      capturedTurns,
+    }),
+  );
+  const dispatchFns = new Map(wraps.map((w, i) => [`${ROLE}@${'abc'[i]}`, w.fn]));
+  await assert.rejects(
+    () => dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns, { panel_max_size: 1 }),
+    (err) => {
+      assert.ok(err instanceof PanelDispatchError);
+      assert.equal(err.code, 'panel-config-invalid',
+        'panel_max_size=1 with hard floor 2 must throw panel-config-invalid');
+      return true;
+    },
+  );
+  // CRITICAL: no dispatch_fn must have been called. Pre-fix one member was
+  // dispatched before quorum-lost was reported.
+  for (const w of wraps) {
+    assert.equal(w.calls.length, 0,
+      'no dispatch_fn must be called when config is invalid');
+  }
+  assert.equal(capturedTurns.length, 0,
+    'no turns must be persisted when config is invalid');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel: panel_min_size=3 + panel_max_size=2 → throws panel-config-invalid', async () => {
+  // Contradictory config — min > max. Must reject at config-time, even
+  // with enough dispatchFns to satisfy min in isolation.
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const wraps = ['a', 'b', 'c'].map((s) =>
+    makeWrappedDispatchFn({
+      memberId: `${ROLE}@${s}`,
+      role: ROLE,
+      promptPath,
+      adapter: `cli-harness:${s}`,
+      verdict: 'SHIP',
+      capturedTurns,
+    }),
+  );
+  const dispatchFns = new Map(wraps.map((w, i) => [`${ROLE}@${'abc'[i]}`, w.fn]));
+  await assert.rejects(
+    () =>
+      dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns, {
+        panel_min_size: 3,
+        panel_max_size: 2,
+      }),
+    (err) => {
+      assert.ok(err instanceof PanelDispatchError);
+      assert.equal(err.code, 'panel-config-invalid');
+      assert.equal(err.details.effectiveMin, 3);
+      assert.equal(err.details.effectiveMax, 2);
+      return true;
+    },
+  );
+  for (const w of wraps) {
+    assert.equal(w.calls.length, 0, 'no dispatch_fn must be called');
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('panel: defaults (min=2, max=3) accept 2-3 dispatchFns; reject 1; reject 1 even with explicit panel_min_size=2 override', async () => {
+  // 2 dispatchFns + defaults → succeeds.
+  {
+    const { dir, spec, promptPath } = makeSpec();
+    const capturedTurns = [];
+    const dispatchFns = new Map(
+      ['a', 'b'].map((s) => {
+        const w = makeWrappedDispatchFn({
+          memberId: `${ROLE}@${s}`,
+          role: ROLE,
+          promptPath,
+          adapter: `cli-harness:${s}`,
+          verdict: 'SHIP',
+          capturedTurns,
+        });
+        return [`${ROLE}@${s}`, w.fn];
+      }),
+    );
+    const result = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+    assert.equal(result.outcome, 'panel-SHIP');
+    assert.equal(result.member_results.length, 2);
+    assert.deepEqual(result.skipped_candidates, []);
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // 3 dispatchFns + defaults → succeeds (uses all 3).
+  {
+    const { dir, spec, promptPath } = makeSpec();
+    const capturedTurns = [];
+    const dispatchFns = new Map(
+      ['a', 'b', 'c'].map((s) => {
+        const w = makeWrappedDispatchFn({
+          memberId: `${ROLE}@${s}`,
+          role: ROLE,
+          promptPath,
+          adapter: `cli-harness:${s}`,
+          verdict: 'SHIP',
+          capturedTurns,
+        });
+        return [`${ROLE}@${s}`, w.fn];
+      }),
+    );
+    const result = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+    assert.equal(result.outcome, 'panel-SHIP');
+    assert.equal(result.member_results.length, 3);
+    assert.deepEqual(result.skipped_candidates, []);
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // 5 dispatchFns + defaults → uses first 3; skipped lists other 2.
+  {
+    const { dir, spec, promptPath } = makeSpec();
+    const capturedTurns = [];
+    const ids = ['a', 'b', 'c', 'd', 'e'].map((s) => `${ROLE}@${s}`);
+    const dispatchFns = new Map(
+      ids.map((memberId, i) => {
+        const w = makeWrappedDispatchFn({
+          memberId,
+          role: ROLE,
+          promptPath,
+          adapter: `cli-harness:m${i}`,
+          verdict: 'SHIP',
+          capturedTurns,
+        });
+        return [memberId, w.fn];
+      }),
+    );
+    const result = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
+    assert.equal(result.outcome, 'panel-SHIP');
+    assert.equal(result.member_results.length, 3);
+    assert.deepEqual(result.skipped_candidates, [ids[3], ids[4]]);
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // 1 dispatchFn + explicit panel_min_size=2 → throws panel-quorum-unavailable.
+  // Regression guard: hard floor still applies even when override exactly
+  // matches the floor.
+  {
+    const { dir, spec, promptPath } = makeSpec();
+    const capturedTurns = [];
+    const aWrap = makeWrappedDispatchFn({
+      memberId: `${ROLE}@codex`,
+      role: ROLE,
+      promptPath,
+      adapter: 'cli-harness:codex',
+      verdict: 'SHIP',
+      capturedTurns,
+    });
+    const dispatchFns = new Map([[`${ROLE}@codex`, aWrap.fn]]);
+    await assert.rejects(
+      () => dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns, { panel_min_size: 2 }),
+      (err) => {
+        assert.ok(err instanceof PanelDispatchError);
+        assert.equal(err.code, 'panel-quorum-unavailable');
+        return true;
+      },
+    );
+    assert.equal(aWrap.calls.length, 0);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('panel: effective floor is max(2, panel_min_size) regardless of override', async () => {
+  // panel_min_size: 1 with 1 dispatchFn → effective floor 2 → rejected.
+  for (const overrideMin of [1, 0, undefined]) {
+    const { dir, spec, promptPath } = makeSpec();
+    const capturedTurns = [];
+    const aWrap = makeWrappedDispatchFn({
+      memberId: `${ROLE}@codex`,
+      role: ROLE,
+      promptPath,
+      adapter: 'cli-harness:codex',
+      verdict: 'SHIP',
+      capturedTurns,
+    });
+    const dispatchFns = new Map([[`${ROLE}@codex`, aWrap.fn]]);
+    const deps = overrideMin === undefined ? undefined : { panel_min_size: overrideMin };
+    await assert.rejects(
+      () => dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns, deps),
+      (err) => {
+        assert.ok(err instanceof PanelDispatchError);
+        // Either panel-config-invalid OR panel-quorum-unavailable is
+        // acceptable here per the spec; what matters is the dispatch
+        // never ran. For our validation order (config-invalid check
+        // requires effectiveMax < effectiveMin which is NOT the case
+        // when only min is lowered with default max=3), this should be
+        // panel-quorum-unavailable.
+        assert.ok(
+          err.code === 'panel-quorum-unavailable' || err.code === 'panel-config-invalid',
+          `unexpected error code ${err.code} for override ${overrideMin}`,
+        );
+        return true;
+      },
+    );
+    assert.equal(aWrap.calls.length, 0,
+      `dispatch_fn must not run for override panel_min_size=${overrideMin}`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── (existing) 17. Adapter propagation ───────────────────────────────────
+
 test('dispatchPanel: adapter set by dispatch_fn (binding adapter into the request) propagates to sidecar turn.adapter', async () => {
   const { dir, spec, promptPath } = makeSpec();
   const capturedTurns = [];
