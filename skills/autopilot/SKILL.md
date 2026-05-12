@@ -302,6 +302,37 @@ The role-composer enforces the fan-out contract via `role-composer-fan-out-unjus
 
 **Composition with existing Phase B.0:** B.0 still chooses implementer transport (codex vs sonnet) via `dispatchers.json`. B.0.5 augments by selecting domain-expert REVIEWERS for the same slice. Experts do not replace implementers in MVP — they are advisory reviewers that emit verdicts and findings, never accepted manuscript writes.
 
+##### v0.9.0 dispatcher seams (refactor, no behavior change)
+
+The v0.9.0 dispatcher introduces three named seams that B.0.5 / B.1.5 / B.5.5 now go through. The phases' logic is unchanged; only the API names + adapter-resolution layer are new:
+
+1. **`composeExperts`** (v0.8.0, unchanged) — picks experts from signals.
+2. **`detectAvailableCLIs` + `resolveAdapter`** (v0.9.0 new) — for each selected expert, walks the preference ladder, returns the adapter (`claude-task` | `codex` | `ollama{<variant>}` | `gemini`). User overrides in `.codex-paired/role-routing.json` take precedence. Unavailable CLIs **never silently degrade** — explicit override of an unavailable CLI is a hard halt (`cli-dispatch-failed`).
+3. **`runTurnWithDeps`** (v0.9.0 — extended for replay-field persistence + `suppressPeerMessages`) — single-expert dispatch wrapping the adapter-specific `agentDispatch`.
+4. **`dispatchPanel`** (v0.9.0 slice 6) — panel-mode dispatch for `paired-reviewer` at the release gate AND for any `high_stakes: true` slice's `expert-security` + `expert-architecture` reviews. Builds a `dispatchFns: Map<member_id, fn>` map where each entry wraps `runTurnWithDeps` with an adapter-specific identity.
+
+The orchestrator (Claude) builds `dispatchFns` per-member; `dispatchPanel` snapshots the member list, fans out in parallel, aggregates verdicts deterministically (per spec § 4 panel-mode table).
+
+```js
+const { detectAvailableCLIs, availableCLISet } =
+  await import('<plugin>/lib/codex-bridge/availability/detector.js');
+const { resolveAdapter } =
+  await import('<plugin>/lib/codex-bridge/role-routing/resolver.js');
+const { runTurnWithDeps } =
+  await import('<plugin>/lib/codex-bridge/expert-turn.js');
+const { dispatchPanel } =
+  await import('<plugin>/lib/codex-bridge/panel/dispatcher.js');
+
+const detectorResult = await detectAvailableCLIs(repoRoot);
+const availableCLIs  = availableCLISet(detectorResult);
+
+for (const identity of result.selected) {
+  const resolved = resolveAdapter(identity.role, availableCLIs, projectRouting);
+  // resolved.adapter ∈ {'claude-task', 'codex', 'ollama', 'gemini', ...}
+  // resolved === null → halt 'cli-dispatch-failed' for this role
+}
+```
+
 #### Phase B.1 — Pre-dispatch checklist (Claude reads the slice section)
 
 Before any worktree work, read the current slice section directly from the plan markdown. Apply these checks **literally** — paraphrase or guesswork is non-conforming.
@@ -794,6 +825,20 @@ no silent skip").
 - Record the inbox state (don't immediately spawn — expert review should see reconciled implementation truth at B.5.5, not partial worker output).
 - Schedule the expert for B.5.5 post-review drain.
 - Exception: if the unread message indicates a dispatch safety issue (stale basis, wrong slice, command failure), halt before B.5 and route through B.6 fallback.
+
+##### v0.9.0 halt reasons (panel + CLI dispatch)
+
+Slice 7b adds a **halt-envelope module** (`lib/codex-bridge/halt-envelope.js`, not yet shipped — referenced here by name only) that normalizes halt records across autopilot phases. Autopilot's existing halt-reason set extends with these v0.9.0 codes:
+
+| Halt reason                   | Phase     | Class     | Rationale                                                                          |
+|-------------------------------|-----------|-----------|------------------------------------------------------------------------------------|
+| `panel-quorum-unavailable`    | B.0.5 / release-gate | PRESERVE | `dispatchPanel` had fewer dispatchFns than `panel_min_size` at config-time.        |
+| `panel-disagreement`          | B.5.5 / release-gate | PRESERVE | Panel returned mixed verdicts after one consensus round (size=2 or size≥3 stuck). |
+| `panel-quorum-lost`           | B.5.5 / release-gate | PRESERVE | Mid-panel member dropped below quorum after parse-failure.                         |
+| `panel-config-invalid`        | B.0.5 / release-gate | PRESERVE | `panel_max_size < panel_min_size` (or below hard floor of 2).                      |
+| `cli-dispatch-failed`         | B.0.5 / B.1.5 / B.5.5 | PRESERVE | `resolveAdapter` returned no available CLI for a required reviewer role.           |
+
+All v0.9.0 halt reasons are **PRESERVE-class** (per spec § 5 fail-closed defaults). The mailbox archival table above MUST be extended in `expert-archive.js` when slice 7b ships the halt-envelope module — until then, an unknown halt-reason throws `ExpertArchiveError` code `unknown-halt-reason`. The skill prose surfaces the new halt codes to the user verbatim; the halt-envelope module formalizes the per-code surface (sidecar field shapes, ralph-loop signaling).
 
 #### Phase B.5 — Reconcile (reconciler is truth)
 

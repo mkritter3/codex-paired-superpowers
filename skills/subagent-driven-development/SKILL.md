@@ -60,6 +60,96 @@ If the slice review produced any `## Deferred` items, show them to the user befo
 ### Step F: proceed to next slice
 Only after slice N is shipped and any user-arbitrated deferreds are decided.
 
+## Per-slice expert review (v0.9.0)
+
+After the implementing subagent reports completion (Step A) and the slice's diff + tests are captured (Step B), but BEFORE Step C's Codex slice review, the orchestrator MUST run **composer-selected experts** on the slice. This mirrors autopilot's Phase B.5.5 pattern but applies to inline (non-autopilot) execution: every slice gets domain-expert review before it's allowed to ship.
+
+This is the inline analog of autopilot's `post-implementation-review` phase — same composer, same dispatch primitives, same blocking-finding contract.
+
+### Step 1 — Compose experts from slice signals
+
+```js
+const { composeExperts } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-composer.js');
+
+const signals = {
+  specHas:    [/* keywords from slice plan section */],
+  filePaths:  [/* slice **Files:** block */],
+  domains:    [sliceDomain],
+  explicitDirective: sliceFrontmatter.experts,  // optional **Experts:** directive
+  fanOutRationale: anticipatesFanOut ? '<concrete justification>' : undefined,
+};
+const result = composeExperts({
+  phase: 'post-implementation-review',
+  signals,
+  repoRoot,
+});
+// result.selected: ExpertIdentity[]
+```
+
+The composer throws `role-composer-fan-out-unjustified` for >5 selections without rationale.
+
+### Step 2 — Resolve each expert to an adapter
+
+```js
+const { detectAvailableCLIs, availableCLISet } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/availability/detector.js');
+const { resolveAdapter } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
+
+const detectorResult = await detectAvailableCLIs(repoRoot);
+const availableCLIs  = availableCLISet(detectorResult);
+
+for (const identity of result.selected) {
+  const resolved = resolveAdapter(identity.role, availableCLIs, /* userRouting */ null);
+  // resolved.adapter ∈ {'claude-task', 'codex', 'ollama', 'gemini', ...}
+}
+```
+
+If `resolveAdapter` returns `null` for a selected expert (no available CLI in the ladder + no override), halt with `cli-dispatch-failed` for that slice — fail-closed (per spec § 5).
+
+### Step 3 — Dispatch each expert via `runTurnWithDeps`
+
+Each expert runs **independently in single mode** (panel mode is opt-in via plan frontmatter `high_stakes: true`, handled by `writing-plans`, not here). Use `runTurnWithDeps` with the two-step orchestration pattern (Claude dispatches Task/harness; runtime drives parse + sidecar persistence):
+
+```js
+const { runTurnWithDeps, assembleSpawnPrompt } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+const { readUnreadMessages } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
+
+for (const identity of result.selected) {
+  const request = {
+    identity,
+    repoRoot,
+    specPath,
+    specSnippet:            sliceDiffSnippet,
+    phase:                  'post-implementation-review',
+    sliceId,
+    sidecarParticipantState: <prior turn summaries>,
+    task:                    'Review the slice diff. Surface blocking findings + DMs.',
+  };
+  const unreadMessages = await readUnreadMessages(repoRoot, identity.id);
+  const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
+  // ... orchestrator dispatches Task/harness, captures responseText ...
+  const turnResult = await runTurnWithDeps(request, {
+    agentDispatch: async () => responseText,
+  });
+  // turnResult: { ok: true, result } | { ok: false, reason }
+}
+```
+
+Dispatch experts in parallel (single assistant turn, multiple tool calls).
+
+### Step 4 — Aggregate blocking findings
+
+For each expert turn:
+- `result.blocking_findings[]` non-empty → slice is BLOCKED; halt before Step C (Codex review). Surface findings to user OR apply technical-override via `updateDispatchExpertBlocker` (rules match autopilot's B.5.5 Blocking-Finding Override Authority).
+- `result.nonblocking_findings[]` → record in sidecar; surface to user during Step E deferred-items review.
+
+### Step 5 — Proceed to Step C (Codex slice review) only on clean expert pass
+
+Codex slice review (Step C) runs AFTER experts have shipped (or after their blockers have been resolved). Codex sees the same diff plus a `## Expert findings from post-implementation-review` block in its prompt — cross-model L11 critique stacked on Codex's structural review.
+
 ## Anti-scope-creep enforcement
 If Codex emits a critique that targets code outside the slice's scope, Claude pushes back: "this is out of slice; either move to Deferred or justify why it must be fixed inside this slice." This is a structural disagreement Codex must justify with concrete reasoning (e.g., "the slice introduces a public API I'm critiquing", which is in-scope).
 

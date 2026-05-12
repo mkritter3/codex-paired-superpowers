@@ -56,6 +56,84 @@ Codex's critiques are typically: "you're assuming X but Y could also cause this"
 
 Round loop runs as before. Sidecar phase is `debug:<short-bug-id>`.
 
+## Composer-picked hypothesis review (v0.9.0)
+
+After Phase 2's first Codex round produces a critique, the orchestrator MAY (and for high-stakes bugs SHOULD) fan out **composer-selected experts** to critique the hypothesis from domain-specific angles. Usually 1–2 experts based on bug signals (per spec § 3 table).
+
+### Step 1 — Compose experts from bug-domain signals
+
+```js
+const { composeExperts } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-composer.js');
+
+const signals = {
+  specHas:    [/* hypothesis text keywords */],
+  filePaths:  [/* files implicated in the hypothesis */],
+  domains:    [bugDomain],     // 'ui' → expert-ui; 'security' → expert-security; etc.
+  fanOutRationale: undefined,  // hypothesis review usually narrow; rarely >2 experts
+};
+const result = composeExperts({
+  phase: 'hypothesis-review',
+  signals,
+  repoRoot,
+});
+// result.selected: ExpertIdentity[]    (typically 1–2 for bug review)
+```
+
+Typical mappings:
+- UI bug (visual glitch, layout regression) → `expert-ui`
+- Backend/data bug (concurrency, ordering, persistence) → `expert-backend`
+- Security-relevant bug (auth bypass, secret leak, escalation) → `expert-security`
+- Cross-domain "shouldn't be possible" bug → `expert-architecture`
+
+### Step 2 — Single-mode dispatch (default)
+
+```js
+const { runTurnWithDeps, assembleSpawnPrompt } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+const { readUnreadMessages } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
+
+for (const identity of result.selected) {
+  const request = {
+    identity,
+    repoRoot,
+    specPath,                       // bug-thread spec path
+    specSnippet:            hypothesisText,
+    phase:                  'hypothesis-review',
+    sliceId:                bugId,  // debug:<bug-id> sidecar phase
+    sidecarParticipantState: <prior turn summaries>,
+    task:                    'Critique the root-cause hypothesis. Is this the ' +
+                             'simplest explanation? What did Claude miss?',
+  };
+  // ... orchestrator dispatches Task/harness, captures responseText ...
+  const turnResult = await runTurnWithDeps(request, {
+    agentDispatch: async () => responseText,
+  });
+}
+```
+
+### Step 3 — Panel mode for high-stakes / security-relevant bugs
+
+If the bug is **security-relevant** (auth/credential/escalation) OR the user explicitly requests cross-model consensus, upgrade to **panel mode** via `dispatchPanel` (slice 6). Build the `dispatchFns` map per the same pattern as `writing-plans` TDD review:
+
+```js
+const { dispatchPanel } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
+
+const panelOutcome = await dispatchPanel(identity.role, request, dispatchFns, {
+  panel_min_size: 2,
+  panel_max_size: 3,
+});
+```
+
+Apply the same panel-outcome rules: `panel-SHIP` proceeds; `panel-REVISE` revises the hypothesis; `panel-disagreement` halts; `panel-quorum-lost` / `panel-quorum-unavailable` halt with the corresponding code.
+
+### Step 4 — Aggregate critique into hypothesis revision
+
+Concatenate each expert's `blocking_findings[]` + `nonblocking_findings[]` into the Round-(N+1) Codex prompt under `## Expert findings from hypothesis-review`. Codex incorporates the experts' angles into its own critique. The 7-round Codex loop continues with the augmented context.
+
+If any expert returns a blocking finding that contradicts the hypothesis (e.g., "this hypothesis is testing the symptom not the cause"), the orchestrator MUST surface the contradiction and revise — Claude does NOT silently override hypothesis-review blockers.
+
 ## Phase 3 — Run the falsification experiment
 Only after the hypothesis is double-SHIP'd. The experiment confirms or kills the hypothesis. If killed, restart at Phase 1 with new hypothesis (new round count).
 

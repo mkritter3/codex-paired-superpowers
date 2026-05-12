@@ -141,6 +141,118 @@ Loop exits when **both** Claude and Codex emit SHIP in the same round, OR after 
 ### Open contentions
 If a critique survives 2 rounds (both sides keep restating opposing views without converging), record it under `## Open Contentions` in the spec AND in the sidecar via `sidecar-add-contention`. Bring it to the user.
 
+## Composer-selected expert spec-review (v0.9.0)
+
+After each Codex round in Phase 3 produces a revised draft, the orchestrator MAY (and at high-stakes phases SHOULD) fan out **composer-selected experts in parallel** to critique that draft before Claude forms its own round verdict. This adds cross-model L11 critique without changing the double-SHIP exit gate.
+
+This phase is **optional per round** but **strongly recommended after rounds 1 and N (the round just before SHIP)**. Skipping it on every round defeats the purpose; running it on every round is N× expensive.
+
+### Step 1 — Compose the expert set
+
+Call the v0.8.0 composer with the spec's signals:
+
+```js
+const { composeExperts } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-composer.js');
+const result = composeExperts({
+  phase: 'spec-review',
+  signals: {
+    specHas:    [/* spec keywords */],
+    filePaths:  [/* files this spec touches */],
+    domains:    [/* inferred domain tags */],
+    fanOutRationale: anticipatesBroadSelection ? '<concrete justification>' : undefined,
+  },
+  repoRoot,
+});
+// result.selected: ExpertIdentity[]   (2–4 typical; >5 requires fanOutRationale)
+```
+
+The composer throws `role-composer-fan-out-unjustified` if it selects >5 experts without a `fanOutRationale`. Pre-compute the rationale up front when broad selection is anticipated.
+
+### Step 2 — Route each expert to an adapter
+
+For each selected expert, walk the preference ladder via `resolveAdapter`. The ladder is recommendation-only — the project's `.codex-paired/role-routing.json` may override.
+
+```js
+const { detectAvailableCLIs, availableCLISet } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/availability/detector.js');
+const { resolveAdapter } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
+
+const detectorResult = await detectAvailableCLIs(repoRoot);
+const availableCLIs  = availableCLISet(detectorResult);
+
+for (const identity of result.selected) {
+  const resolved = resolveAdapter(identity.role, availableCLIs, /* userRouting */ null);
+  // resolved.adapter ∈ {'claude-task', 'codex', 'ollama', 'gemini', ...}
+}
+```
+
+If `resolveAdapter` returns `null` (no available CLI in the ladder), the orchestrator MAY halt with `cli-dispatch-failed` for that role OR proceed without that expert (configurable per skill — for spec-review, prefer "proceed without" since spec-review is advisory).
+
+### Step 3 — Dispatch per expert (single mode default)
+
+For each expert, build the request and dispatch via `runTurnWithDeps` (v0.9.0 — adds replay-field persistence + `suppressPeerMessages`). The orchestrator (Claude) is responsible for the underlying transport:
+
+- `claude-task` → dispatch the Task tool yourself; pass response text through `agentDispatch`.
+- `cli-harness` (`codex`, `ollama{<variant>}`, `gemini`) → wrap `harness.dispatch` in `agentDispatch`.
+
+```js
+const { runTurnWithDeps, assembleSpawnPrompt } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+const { readUnreadMessages } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
+
+const request = {
+  identity,
+  repoRoot,
+  specPath,
+  specSnippet:            currentCodexDraft,
+  phase:                  'spec-review',
+  sliceId:                null,            // spec-phase is not slice-scoped
+  sidecarParticipantState: <prior turn summaries for this expert, if any>,
+  task:                   'Critique the spec draft. Surface blocking concerns; emit verdict.',
+};
+const unreadMessages = await readUnreadMessages(repoRoot, identity.id);
+const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
+// ... orchestrator dispatches Task or harness, captures responseText ...
+const turnResult = await runTurnWithDeps(request, {
+  agentDispatch: async () => responseText,
+});
+```
+
+Dispatch all selected experts in parallel — Claude's single-turn parallel-tool-call mechanism (multiple tool calls in one assistant response) is the load-bearing primitive here.
+
+### Step 4 — Panel mode for high-stakes spec phases (optional)
+
+If the composer flags the phase as high-stakes (e.g., security-sensitive spec, foundational architectural decision), upgrade `expert-security` or `expert-architecture` to **panel mode** via `dispatchPanel` (slice 6 contract). Build a `dispatchFns: Map<member_id, fn>` where each entry wraps `runTurnWithDeps` with an adapter-specific identity:
+
+```js
+const { dispatchPanel } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
+
+const dispatchFns = new Map();
+for (const adapter of ['codex', 'claude-task']) {
+  dispatchFns.set(`${identity.role}@${adapter}`, async (req) => {
+    // adapter-specific: claude-task → Task tool; cli-harness → harness.dispatch
+    const responseText = await /* adapter dispatch */;
+    return runTurnWithDeps(req, { agentDispatch: async () => responseText });
+  });
+}
+
+const panelOutcome = await dispatchPanel(identity.role, request, dispatchFns, {
+  panel_min_size: 2,
+  panel_max_size: 3,
+});
+// panelOutcome.outcome ∈ {'panel-SHIP', 'panel-REVISE',
+//                         'panel-disagreement', 'panel-quorum-lost'}
+```
+
+Panel-mode peer DMs are **suppressed** (slice 6). The dispatcher applies `suppressPeerMessages: true` per panelist; panelists' `peer_messages_requested[]` are recorded under `panel_peer_messages_suppressed[]` for audit but not delivered.
+
+### Step 5 — Aggregate into the next Codex round
+
+Concatenate each expert's `blocking_findings[]` + `nonblocking_findings[]` (verbatim, no semantic dedup) into the Round-(N+1) Codex prompt under a new `## Expert findings from spec-review` block. Codex sees the same panel of critiques Claude saw and incorporates them into its revision. This is how cross-model L11 critique pressures the spec without removing Codex from the loop.
+
 ## Phase 4 — User sign-off (uncounted)
 Show the user the final spec path. Quote the goal + open contentions if any. Wait for explicit "yes" or revisions. If the user requests changes, re-enter the loop at round 1 with the user's input as additional critique.
 

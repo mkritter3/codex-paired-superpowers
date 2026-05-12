@@ -51,6 +51,70 @@ Round: N
 
 Sidecar phase is `tdd:<slice-id>`.
 
+## tdd-review (panel mode) (v0.9.0)
+
+By default, the `tdd-review` phase routes `expert-test` through **panel mode** for cross-model consensus on test design. Test design is foundational; single-model bias here can hide structurally wrong test boundaries. Per spec § 4 table, `expert-test` in `tdd-review` is always panel mode.
+
+### Default: panel mode
+
+Preference ladder is `[codex, claude]`. Defaults: `panel_min_size: 2`, `panel_max_size: 3`. Build `dispatchFns` and dispatch via `dispatchPanel`:
+
+```js
+const { detectAvailableCLIs, availableCLISet } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/availability/detector.js');
+const { resolveAdapter } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
+const { runTurnWithDeps } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+const { dispatchPanel } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
+
+const detectorResult = await detectAvailableCLIs(repoRoot);
+const availableCLIs  = availableCLISet(detectorResult);
+
+const dispatchFns = new Map();
+for (const adapter of ['codex', 'claude']) {     // expert-test ladder
+  if (!availableCLIs.has(adapter)) continue;
+  dispatchFns.set(`expert-test@${adapter}`, {
+    fn: async (req) => {
+      const responseText = await /* adapter dispatch */;
+      return runTurnWithDeps(req, { agentDispatch: async () => responseText });
+    },
+    runtime_kind: adapter === 'claude' ? 'claude-task' : 'cli-harness',
+  });
+}
+
+const outcome = await dispatchPanel('expert-test', request, dispatchFns, {
+  panel_min_size: 2,
+  panel_max_size: 3,
+});
+```
+
+Apply the panel outcome the same way `writing-plans` does (`panel-SHIP` → proceed; `panel-REVISE` → revise test list and re-dispatch; `panel-disagreement` → user arbitrates; `panel-quorum-lost` / `panel-quorum-unavailable` → halt).
+
+### Override: `--single` for non-panel dispatch
+
+Skill arg `--single` skips panel mode and runs **single dispatch** via `runTurnWithDeps`. Use only when:
+
+- The slice is trivially small and panel cost is unwarranted.
+- Only one CLI is available and `panel-quorum-unavailable` would block progress.
+
+```js
+// Single dispatch (override path)
+const request = { identity: expertTest, repoRoot, specPath, specSnippet,
+                  phase: 'tdd-review', sliceId, task: '...' };
+const result = await runTurnWithDeps(request, {
+  agentDispatch: async () => responseText,
+});
+// result: { ok: true, result: parsed } | { ok: false, reason }
+```
+
+Single mode loses the cross-model consensus guarantee. Document the override decision in the sidecar so a future replay can see why panel was bypassed.
+
+### Composer augmentation
+
+For security-critical surfaces, the composer (`composeExperts`) MAY add `expert-security` to the `tdd-review` phase. The added expert runs in single mode by default (panel-mode escalation is opt-in via the plan's `high_stakes` frontmatter, not auto-applied here).
+
 ## Phase 2 — Implement red-green-refactor
 After double-SHIP, write the failing tests in the agreed order. Standard TDD discipline applies — see upstream `superpowers:test-driven-development` for the red/green/refactor cadence; this fork adds only the up-front review.
 
