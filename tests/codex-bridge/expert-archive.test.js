@@ -78,6 +78,11 @@ const PRESERVE_REASONS = [
   'reconcile-failed',
   'validation-failed',
   'user-input-required',
+  // v0.9.0 slice 6 — panel mode halt reasons (spec § 4 + § 5).
+  'panel-quorum-unavailable',
+  'panel-disagreement',
+  'panel-quorum-lost',
+  'cli-dispatch-failed',
 ];
 
 for (const reason of PRESERVE_REASONS) {
@@ -153,7 +158,7 @@ test('HALT_REASONS_ARCHIVE contains exactly {completed, abandoned-by-user}', () 
   assert.deepEqual([...HALT_REASONS_ARCHIVE].sort(), ['abandoned-by-user', 'completed']);
 });
 
-test('HALT_REASONS_PRESERVE contains exactly the 8 specd preserve reasons', () => {
+test('HALT_REASONS_PRESERVE contains exactly the specd preserve reasons (v0.8.0 + v0.8.1 + v0.9.0 slice 6)', () => {
   assert.deepEqual([...HALT_REASONS_PRESERVE].sort(), [...PRESERVE_REASONS].sort());
 });
 
