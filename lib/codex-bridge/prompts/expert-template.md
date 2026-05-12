@@ -1,3 +1,7 @@
+---
+version: v0.9.0-r1
+role_id: expert-template
+---
 # Expert Role Template
 
 This file is the canonical template for an expert role prompt. Each `expert-<role>.md` file in this directory fills in the 7 sections below for its specific domain.

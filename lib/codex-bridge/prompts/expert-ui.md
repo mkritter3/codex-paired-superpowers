@@ -1,3 +1,7 @@
+---
+version: v0.9.0-r1
+role_id: expert-ui
+---
 # Expert: UI
 
 ## Role Scope

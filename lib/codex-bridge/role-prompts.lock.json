@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-05-12T15:29:28.941Z",
+  "prompts": {
+    "expert-ai-harness": {
+      "path": "lib/codex-bridge/prompts/expert-ai-harness.md",
+      "sha256": "28cac8df2e667fe53ba2bc5cf90a7f5a9522522ca718bf5ab0a6e4e9e3832d0f"
+    },
+    "expert-architecture": {
+      "path": "lib/codex-bridge/prompts/expert-architecture.md",
+      "sha256": "9cbcf7e49fabc9fd1a75b38b37a918455883bbe3f35395a6371c5173a09aba6e"
+    },
+    "expert-backend": {
+      "path": "lib/codex-bridge/prompts/expert-backend.md",
+      "sha256": "7acbd5e513d2960f4cebdeb15960c2051a42b7a9cab7a9ea30ec6e25cddb9861"
+    },
+    "expert-security": {
+      "path": "lib/codex-bridge/prompts/expert-security.md",
+      "sha256": "003ef9b066fcaea5cf36512237b04f92c958ab25ad24a8e5e5baea75ebcfbba2"
+    },
+    "expert-template": {
+      "path": "lib/codex-bridge/prompts/expert-template.md",
+      "sha256": "20499d9cdcaf422ecf610f37477e39cfe6bcba5a158ca5cef29b0d841029e638"
+    },
+    "expert-test": {
+      "path": "lib/codex-bridge/prompts/expert-test.md",
+      "sha256": "991d1e037539f73c9b888cdd223d3f2103ba5c041ae5c64a0d6fa3359c224bb8"
+    },
+    "expert-ui": {
+      "path": "lib/codex-bridge/prompts/expert-ui.md",
+      "sha256": "8d118f0e993ea27a545b52dbcbce77094022dc293add96608725e0836da88a3c"
+    },
+    "expert-ux": {
+      "path": "lib/codex-bridge/prompts/expert-ux.md",
+      "sha256": "9b4db3e478916d1959786284195646dd3412e39cc624ef5029671831ce6408f9"
+    },
+    "paired-reviewer": {
+      "path": "lib/codex-bridge/prompts/system-rubric.md",
+      "sha256": "8b461672f47a6ca6c09ea21ce18f6edf3276db28c546f993386be44a4d04cadd"
+    }
+  }
+}
