@@ -83,6 +83,21 @@ const PRESERVE_REASONS = [
   'panel-disagreement',
   'panel-quorum-lost',
   'cli-dispatch-failed',
+  // v0.9.0 slice 7b — halt-envelope module halt reasons (all PRESERVE-class).
+  'override-cli-unavailable',
+  'override-variant-unknown',
+  'panel-config-invalid',
+  'codex-blocked',
+  'subagent-blocked',
+  'codex-needs-context',
+  'subagent-needs-context',
+  'implementer-directive-malformed',
+  'parallel-files-malformed',
+  'expert-blocker',
+  'role-composer-fan-out-unjustified',
+  'transient-network',
+  'reconciler-failed',
+  'dispatch-retry-eligible',
 ];
 
 for (const reason of PRESERVE_REASONS) {
@@ -158,7 +173,7 @@ test('HALT_REASONS_ARCHIVE contains exactly {completed, abandoned-by-user}', () 
   assert.deepEqual([...HALT_REASONS_ARCHIVE].sort(), ['abandoned-by-user', 'completed']);
 });
 
-test('HALT_REASONS_PRESERVE contains exactly the specd preserve reasons (v0.8.0 + v0.8.1 + v0.9.0 slice 6)', () => {
+test('HALT_REASONS_PRESERVE contains exactly the specd preserve reasons (v0.8.0 + v0.8.1 + v0.9.0 slice 6 + slice 7b)', () => {
   assert.deepEqual([...HALT_REASONS_PRESERVE].sort(), [...PRESERVE_REASONS].sort());
 });
 

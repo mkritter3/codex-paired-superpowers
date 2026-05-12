@@ -11,6 +11,7 @@ import {
   parseFilesBlock,
   parseDependsOnBlock,
   parseSliceMetadata,
+  parseSliceHighStakes,
   PlanParseError,
 } from '../../lib/codex-bridge/plan-parsers.js';
 
@@ -196,4 +197,45 @@ test('parseSliceMetadata throws dep-unknown-slice for missing slice', () => {
     err => err.code === 'dep-unknown-slice'
   );
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── parseSliceHighStakes ──────────────────────────────────────────────────────
+
+test('parseSliceHighStakes returns true for exact **high_stakes: true** literal', () => {
+  const s = '## Slice 3: Auth token refresh\n**high_stakes: true**\n**Validation:** critical\n\n[task list...]';
+  assert.equal(parseSliceHighStakes(s), true);
+});
+
+test('parseSliceHighStakes returns false for **high_stakes: false** explicit opt-out', () => {
+  const s = '## Slice 4: Non-sensitive slice\n**high_stakes: false**\n**Validation:** standard\n\ntext';
+  assert.equal(parseSliceHighStakes(s), false);
+});
+
+test('parseSliceHighStakes returns false when no high_stakes line is present (default false)', () => {
+  const s = '## Slice 1: First\n\nSome text with no frontmatter at all.\n';
+  assert.equal(parseSliceHighStakes(s), false);
+});
+
+test('parseSliceHighStakes rejects malformed variants (strict parser)', () => {
+  const malformedCases = [
+    // No bold markers
+    '## Slice 5\nhigh_stakes: true\n',
+    // Missing space after colon
+    '## Slice 5\n**high_stakes:true**\n',
+    // Wrong value token
+    '## Slice 5\n**high_stakes: yes**\n',
+    // Uppercase value
+    '## Slice 5\n**high_stakes: TRUE**\n',
+    // Extra trailing text
+    '## Slice 5\n**high_stakes: true** (see below)\n',
+    // Quoted value
+    '## Slice 5\n**high_stakes: "true"**\n',
+  ];
+  for (const section of malformedCases) {
+    assert.equal(
+      parseSliceHighStakes(section),
+      false,
+      `Expected false for malformed input: ${JSON.stringify(section.slice(0, 60))}`
+    );
+  }
 });

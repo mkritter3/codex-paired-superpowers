@@ -69,7 +69,22 @@ After each phase ships (double-SHIP), advance `current_phase` to the next phase 
 1. Set `autopilot.halt_reason` in the sidecar (atomic).
 2. Print a summary to the user: which slice, which phase, what blocked.
 3. **Clear the active anchor** (`anchor-clear --repoRoot <repo>`). This is critical: while halted, the user must be able to make manual recovery commits without the provenance hook blocking them. The sidecar's `autopilot` block (with `halt_reason` set) remains and is the source of truth for resumption.
-4. On the next `/autopilot` invocation (manually or via ralph), the autopilot reads the sidecar, sees `halt_reason` set, and either re-writes the anchor and resumes (if the halt cause has been addressed) or exits with the same halt reason.
+4. **Emit the halt envelope** (v0.9.0). Before returning, wrap the halt reason through the halt-envelope module so ralph-loop receives the structured shape:
+
+   ```js
+   import { wrapAsHaltEnvelope } from '<plugin>/lib/codex-bridge/halt-envelope.js';
+
+   const envelope = wrapAsHaltEnvelope(haltReason, {
+     sliceId,   // current slice at halt time
+     phase,     // current phase at halt time (e.g. "B.5")
+   });
+   // envelope: { halt, terminal: bool, resume_hint, sliceId, phase }
+   return envelope;
+   ```
+
+   `terminal: true` means the operator must act before ralph re-fires. Ralph-loop MUST NOT re-fire on a terminal halt — it should exit and surface the `resume_hint` to the user. `terminal: false` means a transient condition; ralph may retry after a brief delay. Unknown halt reasons always produce `terminal: true` (fail-closed).
+
+5. On the next `/autopilot` invocation (manually or via ralph), the autopilot reads the sidecar, sees `halt_reason` set, and either re-writes the anchor and resumes (if the halt cause has been addressed) or exits with the same halt reason.
 
 ### On ralph tick (cross-session resume or post-halt continuation)
 Ralph re-invokes `/autopilot <plan-path>` on each tick. The plan path is the authoritative entrypoint — autopilot uses it to rediscover the spec and sidecar regardless of whether the active anchor is present.
@@ -1596,6 +1611,35 @@ Run autopilot under ralph for cross-session continuity:
 ```
 
 Each ralph tick re-invokes `/autopilot <plan-path>`. Autopilot uses the plan path to resolve the spec via the plan's frontmatter and reads the sidecar's `autopilot` block to determine state — the active anchor is the HOOK's discovery mechanism, not the autopilot's. Ralph's completion-promise is met only when `sidecar.autopilot.halt_reason == "completed"`.
+
+### Halt-aware ralph-loop contract (v0.9.0)
+
+When autopilot halts, it returns a **halt envelope** with shape `{halt, terminal, resume_hint, ...}` (from `lib/codex-bridge/halt-envelope.js`). Ralph-loop MUST inspect this envelope on every tick:
+
+```
+envelope = <result of /autopilot invocation>
+
+if envelope.halt == "completed":
+    exit success  # completion-promise met
+
+if envelope.terminal == true:
+    # Operator must act — DO NOT re-fire
+    print(envelope.resume_hint)
+    exit with non-zero status so the user sees the hint
+
+if envelope.terminal == false:
+    # Transient condition — safe to retry
+    wait briefly, then re-invoke /autopilot
+```
+
+**Key invariants ralph-loop must enforce:**
+
+1. **Never re-fire on terminal: true.** The `resume_hint` string tells the operator exactly what to fix. Re-firing would loop indefinitely and mask the real blocker.
+2. **Always surface resume_hint on terminal exit.** This is the human-readable description the operator uses to diagnose and resolve the halt.
+3. **Unknown halt reasons are always terminal** (the envelope module maps them to `terminal: true` with an "operator triage" hint). Ralph must treat absence from the known-set as a hard stop.
+4. **Transient halts get at most one re-fire per ralph tick.** Do not implement exponential retry inside ralph itself — that belongs in the halting code (e.g., `reconciler-failed` is retry-eligible once, then escalates).
+
+**Implementation note (prose-only skills):** If ralph-loop is implemented as a Claude Code `/ralph-loop` skill (not a shell script), apply the same contract in the skill's reasoning loop: read the autopilot session result, check `terminal`, and either exit or re-invoke per the rules above.
 
 ## Troubleshooting setup errors
 
