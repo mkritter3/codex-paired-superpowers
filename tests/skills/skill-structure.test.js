@@ -428,6 +428,32 @@ for (const skill of SKILLS_WITH_PANEL_DISPATCH_WRAPPERS) {
 // in autopilot must show the request carrying an `adapter` field — pinned structurally
 // by counting the literal `adapter,` field appearances in autopilot's dispatch snippets
 // (round-2 critique fix).
+test('autopilot: resolvedByExpertId is plumbed through drainContext (consistency)', () => {
+  const content = readSkill('autopilot');
+  // Round-3 critique: the runTurn wrapper reads
+  // `drainContext.resolvedByExpertId[expert.id]` to compute adapter, so the
+  // SAME prose must show the map being built AND passed into the drainContext
+  // option. Otherwise the wrapper dereferences undefined at runtime.
+  const wrapperReads = content.includes('drainContext.resolvedByExpertId');
+  const builderShown = content.includes('const resolvedByExpertId = {}');
+  const passedThrough = /drainContext:\s*\{[^}]*resolvedByExpertId/.test(content);
+
+  if (wrapperReads) {
+    assert.ok(
+      builderShown,
+      'autopilot/SKILL.md runTurn wrapper reads drainContext.resolvedByExpertId ' +
+        'but the surrounding prose does not show the map being built ' +
+        '(`const resolvedByExpertId = {}` not found)',
+    );
+    assert.ok(
+      passedThrough,
+      'autopilot/SKILL.md runTurn wrapper reads drainContext.resolvedByExpertId ' +
+        'but the drainContext options object does not include the field — ' +
+        'the wrapper would dereference undefined at runtime',
+    );
+  }
+});
+
 test('autopilot: every runTurnWithDeps dispatch snippet binds adapter into the request', () => {
   const content = readSkill('autopilot');
 

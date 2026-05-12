@@ -913,6 +913,15 @@ After reconcile and before routing/fallback, invoke the peer-DM drain scheduler.
 
 ```js
 const { drainPeerDMs } = await import('<plugin>/lib/codex-bridge/expert-dm-scheduler.js');
+
+// v0.9.0: build the per-expert resolution map BEFORE invoking the scheduler.
+// The runTurn wrapper below reads it via drainContext.resolvedByExpertId to
+// compute each expert's adapter for sidecar audit fields.
+const resolvedByExpertId = {};
+for (const expert of activeExperts) {
+  resolvedByExpertId[expert.id] = resolveAdapter(expert.id, availableCLIs, projectRouting);
+}
+
 const drainResult = await drainPeerDMs(
   activeExperts,
   {
@@ -956,7 +965,11 @@ const drainResult = await drainPeerDMs(
     maxRespawnsPerExpert: 2,
     maxTotalTurns: 8,
     specPath,
-    drainContext: { phase: "post-implementation-review", sliceId: <currentSliceId> },
+    drainContext: {
+      phase: "post-implementation-review",
+      sliceId: <currentSliceId>,
+      resolvedByExpertId,                 // v0.9.0: per-expert resolver result for adapter derivation
+    },
     resumeFromSidecar: <true if recovering>,
   }
 );
