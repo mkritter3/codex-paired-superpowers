@@ -310,39 +310,85 @@ async function main() {
       }
     }
 
-    // c3: every turn must have requested_role, adapter, inputs_hash, response_hash.
-    const REQ_FIELDS = ['requested_role', 'adapter', 'inputs_hash', 'response_hash'];
+    // c3: every turn must carry the FULL resolution-audit block per spec § 7.
+    // Codex round-2 finding #1 — c3 cannot PASS on weak heuristics; it must
+    // verify the same fields the release criterion lists. Operator-set
+    // (manual override) is the only way to ship without these.
+    const REQ_FIELDS = [
+      'requested_role', 'adapter', 'inputs_hash', 'response_hash',
+      'resolved_cli', 'resolution_source', 'preference_index',
+      'preference_ladder', 'unavailable_candidates', 'fallback_reason',
+    ];
     const missingFields = [];
     for (const t of turns) {
       for (const f of REQ_FIELDS) {
-        if (!t || !t[f]) missingFields.push({ turn: t && (t.requested_role || t.role_id || '?'), missing: f });
+        // null is a legitimate value for fallback_reason (no fallback occurred).
+        // Treat as present if the field exists in the turn object at all.
+        const present = t && (f in t);
+        if (!present) {
+          missingFields.push({ turn: t && (t.requested_role || t.role_id || '?'), missing: f });
+        }
       }
     }
     if (turns.length === 0) {
       results.c3 = { result: 'PENDING', evidence: 'Sidecar ' + sidecarPath + ' has no expert turns. Run a skill first.' };
     } else if (missingFields.length === 0) {
-      results.c3 = { result: 'PASS', evidence: 'All ' + turns.length + ' turns in ' + sidecarPath + ' have required audit fields: ' + REQ_FIELDS.join(', ') };
+      results.c3 = { result: 'PASS', evidence: 'All ' + turns.length + ' turns in ' + sidecarPath + ' have full resolution-audit block: ' + REQ_FIELDS.join(', ') };
     } else {
-      results.c3 = { result: 'FAIL', evidence: 'Turns missing required audit fields: ' + JSON.stringify(missingFields.slice(0, 5)) };
+      results.c3 = { result: 'FAIL', evidence: 'Turns missing required audit fields: ' + JSON.stringify(missingFields.slice(0, 8)) };
     }
 
-    // c4: at least one turn has mailbox_message_ids[] non-empty AND at least
-    // one different turn appears as the source (proves round-trip across
-    // adapters, not just a single expert talking to itself).
+    // c4: prove a peer DM crossed adapters. For each receiver turn (one with
+    // mailbox_message_ids[]), resolve each message_id to the SENDER turn
+    // (the turn that enqueued it via peer_messages_enqueued[]) and compare
+    // sender.adapter vs receiver.adapter. PASS only when at least one
+    // (sender, receiver) pair has different adapters (Codex round-2 finding #2).
     const turnsWithDMs = turns.filter(t => Array.isArray(t.mailbox_message_ids) && t.mailbox_message_ids.length > 0);
     if (turnsWithDMs.length === 0) {
-      results.c4 = { result: 'PENDING', evidence: 'No turns in sidecar show injected mailbox_message_ids. Peer DM round-trip not exercised. Run a skill where two experts DM each other.' };
+      results.c4 = { result: 'PENDING', evidence: 'No receiver turns with mailbox_message_ids[] non-empty. Peer DM round-trip not exercised. Run a skill where two experts DM each other.' };
     } else {
-      const adapters = new Set(turnsWithDMs.map(t => t.adapter).filter(Boolean));
-      if (adapters.size >= 2) {
-        results.c4 = { result: 'PASS', evidence: turnsWithDMs.length + ' turns show mailbox_message_ids[] across ' + adapters.size + ' adapters: ' + [...adapters].join(', ') };
+      // Build a message_id → sender-turn lookup.
+      const senderByMessageId = new Map();
+      for (const t of turns) {
+        const enq = Array.isArray(t.peer_messages_enqueued) ? t.peer_messages_enqueued : [];
+        for (const e of enq) {
+          if (e && typeof e.message_id === 'string') senderByMessageId.set(e.message_id, t);
+        }
+      }
+      const crossPairs = [];
+      const samePairs = [];
+      const orphanIds = [];
+      for (const receiver of turnsWithDMs) {
+        for (const mid of receiver.mailbox_message_ids) {
+          const sender = senderByMessageId.get(mid);
+          if (!sender) { orphanIds.push(mid); continue; }
+          const sAdapter = sender.adapter || '?';
+          const rAdapter = receiver.adapter || '?';
+          if (sAdapter !== rAdapter) {
+            crossPairs.push({ mid, sender: sAdapter, receiver: rAdapter });
+          } else {
+            samePairs.push({ mid, adapter: sAdapter });
+          }
+        }
+      }
+      if (crossPairs.length > 0) {
+        results.c4 = { result: 'PASS', evidence: 'Cross-adapter DM round-trip verified: ' + crossPairs.length + ' (sender, receiver) pair(s) with different adapters. Example: ' + JSON.stringify(crossPairs.slice(0, 2)) };
+      } else if (samePairs.length > 0 || orphanIds.length > 0) {
+        results.c4 = { result: 'PENDING', evidence: 'Receiver turns have mailbox_message_ids, but no sender→receiver pair crosses adapters. ' + (samePairs.length > 0 ? samePairs.length + ' same-adapter pair(s); ' : '') + (orphanIds.length > 0 ? orphanIds.length + ' orphan id(s) (no matching peer_messages_enqueued); ' : '') + 'run a skill where two experts on different adapters DM each other.' };
       } else {
-        results.c4 = { result: 'PENDING', evidence: 'Peer DMs present but only across ' + adapters.size + ' adapter(s) [' + [...adapters].join(', ') + ']. Need at least 2 distinct adapters for cross-adapter round-trip.' };
+        results.c4 = { result: 'PENDING', evidence: 'Could not resolve any DM to a sender turn. Sidecar shape may be unexpected.' };
       }
     }
 
     // c5: at least one phase converged to double-SHIP within 7 rounds.
-    // Look at sidecar.rounds[] for {claude: 'SHIP', codex: 'SHIP'}.
+    // The canonical convergence record in the v0.9.0 schema is still
+    // sidecar.rounds[].{claude, codex} — the Codex thread + Claude
+    // produce per-round verdicts that converge to "SHIP" / "SHIP".
+    // Panel-mode outcomes are scoped to single phases inside autopilot
+    // (they don't replace the rounds[] verdict structure) — they are
+    // visible via expert_teammates.turns[].verdict if operators want to
+    // audit per-expert SHIP separately. For the release-gate, the
+    // rounds[] check is correct and matches the spec § 7 wording.
     let shipRound = -1;
     if (Array.isArray(sidecar.rounds)) {
       for (let i = 0; i < sidecar.rounds.length && i < 7; i++) {
@@ -453,10 +499,15 @@ for (const { n, result, evidence } of criteria) {
     new RegExp('(## Criterion ' + n + '[\\\\s\\\\S]*?\\\\*\\\\*Result:\\\\*\\\\* )\\\\w+'),
     '\$1' + result
   );
-  // Update evidence section.
+  // Replace the ENTIRE Evidence section body (everything between
+  // '**Evidence:**' and the next '---' separator). Matches both the
+  // pristine placeholder and any prior-run content (Codex round-2
+  // finding #3: gate doc must not show contradictory PASS/PENDING).
   updated = updated.replace(
-    new RegExp('(## Criterion ' + n + '[\\\\s\\\\S]*?\\\\*\\\\*Evidence:\\\\*\\\\*\\\\s*\\\\n)_\\\\(gate-runner writes results here\\\\)_'),
-    '\$1' + result + ' — ' + evidence.replace(/\`/g, \"'\").slice(0, 300)
+    new RegExp(
+      '(## Criterion ' + n + '[\\\\s\\\\S]*?\\\\*\\\\*Evidence:\\\\*\\\\*\\\\s*\\\\n)[\\\\s\\\\S]*?(\\\\n---)'
+    ),
+    '\$1' + result + ' \\u2014 ' + evidence.replace(/\`/g, \"'\").slice(0, 400) + '\\n\$2'
   );
 }
 
