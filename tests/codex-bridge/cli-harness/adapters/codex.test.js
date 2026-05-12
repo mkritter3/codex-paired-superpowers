@@ -105,3 +105,51 @@ test('codex adapter timeout: killed by AbortController, exit 137, timeout warnin
   );
   assert.ok(elapsed < 2000, `kill should be prompt; took ${elapsed}ms`);
 });
+
+test('codex adapter missing binary: spawn-failed warning + error preserved', async () => {
+  const result = await dispatch('system', 'user', {
+    command: '/definitely/not/a/real/codex-binary',
+    args: [],
+  });
+  assert.equal(result.exit, 1);
+  assert.equal(result.responseText, '');
+  assert.ok(
+    result.warnings.includes('spawn-failed'),
+    `expected spawn-failed warning, got ${JSON.stringify(result.warnings)}`,
+  );
+  assert.ok(
+    result.adapterMeta && result.adapterMeta.error,
+    'adapterMeta.error must be populated',
+  );
+  // ENOENT is the typical code for missing binary on POSIX.
+  assert.equal(result.adapterMeta.errorCode, 'ENOENT');
+});
+
+test('codex adapter stdout truncation: large output triggers stdout-truncated warning', async () => {
+  // Override the buffer cap to keep the test fast; emit ~1KB of JSON events
+  // so the cap (100 bytes) catches it.
+  const events = buildEvents(['a'.repeat(1000)]);
+  const result = await dispatch('system', 'user', {
+    command: FAKE_CODEX,
+    args: [],
+    env: { FAKE_CLI_OUTPUT_JSON_EVENTS: events },
+    maxBufferBytes: 100,
+  });
+  assert.ok(
+    result.warnings.includes('stdout-truncated'),
+    `expected stdout-truncated warning, got ${JSON.stringify(result.warnings)}`,
+  );
+});
+
+test('codex adapter stderr truncation: large stderr triggers stderr-truncated warning', async () => {
+  const result = await dispatch('system', 'user', {
+    command: FAKE_CODEX,
+    args: [],
+    env: { FAKE_CLI_STDERR: 'x'.repeat(1000) },
+    maxBufferBytes: 100,
+  });
+  assert.ok(
+    result.warnings.includes('stderr-truncated'),
+    `expected stderr-truncated warning, got ${JSON.stringify(result.warnings)}`,
+  );
+});
