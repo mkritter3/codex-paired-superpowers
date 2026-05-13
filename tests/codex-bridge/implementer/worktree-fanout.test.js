@@ -633,11 +633,11 @@ test('orchestrator happy: 3 fake all-succeed → 3 in success; sidecar has 3 sta
     haltEnvelope: null,
   });
 
+  // CREATE mode: omit implementerRunId so the orchestrator creates a fresh run.
   const result = await dispatchImplementers({
     specPath: spec,
     repoRoot: '/fake',
     sliceId: 'slice-3',
-    implementerRunId: randomUUID(),
     baseSha: 'abc123',
     implementers: [impl1, impl2, impl3],
     dispatchFn: fakeFn,
@@ -646,6 +646,10 @@ test('orchestrator happy: 3 fake all-succeed → 3 in success; sidecar has 3 sta
   assert.equal(result.success.length, 3, 'all 3 should succeed');
   assert.equal(result.failed.length, 0);
   assert.equal(result.cancelled.length, 0);
+
+  // Verify the orchestrator returned the run id it used.
+  assert.ok(typeof result.implementerRunId === 'string' && result.implementerRunId.length > 0,
+    'result.implementerRunId must be a non-empty string');
 
   // Verify distinct member_ids.
   const memberIds = result.success.map((s) => s.memberId);
@@ -656,6 +660,12 @@ test('orchestrator happy: 3 fake all-succeed → 3 in success; sidecar has 3 sta
   assert.ok(run, 'run should exist');
   const startedEvents = run.events.filter((e) => e.event_type === 'started');
   assert.equal(startedEvents.length, 3, 'sidecar should have 3 started events');
+
+  // Critique 2: every started event must carry the run id the orchestrator used.
+  for (const ev of startedEvents) {
+    assert.equal(ev.implementer_run_id, result.implementerRunId,
+      `event.implementer_run_id must equal result.implementerRunId (got ${ev.implementer_run_id})`);
+  }
 
   // Verify monotonic event_seq.
   const seqs = startedEvents.map((e) => e.event_seq);
@@ -692,11 +702,11 @@ test('orchestrator edge.concurrent abort-observation: required A throws, B polls
     return { memberId: input.memberId, outcome: 'cancelled', exitCode: null, headSha: null, diffHash: null, changedFiles: [], haltEnvelope: null };
   };
 
+  // CREATE mode: omit implementerRunId.
   const result = await dispatchImplementers({
     specPath: spec,
     repoRoot: '/fake',
     sliceId: 'slice-3',
-    implementerRunId: randomUUID(),
     baseSha: 'abc123',
     implementers: [implA, implB],
     dispatchFn: fakeFn,
@@ -729,11 +739,11 @@ test('orchestrator edge.concurrent optional-failure no-abort: optional B fails, 
     return { memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: null, diffHash: null, changedFiles: [], haltEnvelope: null };
   };
 
+  // CREATE mode: omit implementerRunId.
   const result = await dispatchImplementers({
     specPath: spec,
     repoRoot: '/fake',
     sliceId: 'slice-3',
-    implementerRunId: randomUUID(),
     baseSha: 'abc123',
     implementers: [implA, implB, implC],
     dispatchFn: fakeFn,
@@ -748,35 +758,79 @@ test('orchestrator edge.concurrent optional-failure no-abort: optional B fails, 
   const run = readImplementerRun(spec, 'slice-3');
   const startedEvents = run.events.filter((e) => e.event_type === 'started');
   assert.equal(startedEvents.length, 3, 'sidecar should have 3 started events');
+
+  // Critique 2: every started event must carry the run id the orchestrator used.
+  for (const ev of startedEvents) {
+    assert.equal(ev.implementer_run_id, result.implementerRunId,
+      `event.implementer_run_id must equal result.implementerRunId`);
+  }
 });
 
-test('orchestrator fail.dependency sidecar-append-failure: failing appendImplementerEventLocked → dispatchImplementers throws', async () => {
+test('orchestrator fail.dependency sidecar-append-failure K-of-N: N=3, second append fails → throws; only first started event persisted (K=1)', async () => {
+  // Critique 4 fix: use N=3 implementers. The injected appendImplementerEventLocked
+  // succeeds for the first call (K=1 write) and fails on the second. This verifies
+  // the K-of-N partial-write bound: persisted writes are bounded (K=1) and
+  // dispatchImplementers throws/halts. No later events leak from the remaining
+  // N-K=2 implementers.
   const { spec } = makeSpec();
-  const impl = makeOrchImpl();
+
+  const impl1 = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'kb1' });
+  const impl2 = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'kb2' });
+  const impl3 = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#2', branchName: 'kb3' });
 
   const fakeFn = async (input) => ({
     memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: null, diffHash: null, changedFiles: [], haltEnvelope: null,
   });
 
+  // Counter-aware injected append: delegates to real appendImplementerEventLocked for
+  // the first call, throws on the second. A Promise+resolver lets us wait for the
+  // first async write to complete before reading the sidecar, avoiding a race.
   let appendCallCount = 0;
-  const failingAppend = async (...args) => {
+  let firstWriteResolve;
+  const firstWriteDone = new Promise((r) => { firstWriteResolve = r; });
+
+  const partiallyFailingAppend = async (...args) => {
     appendCallCount++;
-    throw new Error('sidecar append failed (injected failure)');
+    if (appendCallCount === 1) {
+      // First call: delegate to real sidecar function, then signal completion.
+      try {
+        const res = await appendImplementerEventLocked(...args);
+        firstWriteResolve();
+        return res;
+      } catch (e) {
+        firstWriteResolve();
+        throw e;
+      }
+    }
+    // Second (and all subsequent) calls: fail immediately.
+    throw new Error('sidecar append failed (injected failure, call ' + appendCallCount + ')');
   };
 
+  // CREATE mode: omit implementerRunId. startImplementerRun runs normally.
   await assert.rejects(
     () => dispatchImplementers({
       specPath: spec,
       repoRoot: '/fake',
       sliceId: 'slice-3',
-      implementerRunId: randomUUID(),
       baseSha: 'abc123',
-      implementers: [impl],
+      implementers: [impl1, impl2, impl3],
       dispatchFn: fakeFn,
-      _deps: { appendImplementerEventLocked: failingAppend },
+      _deps: { appendImplementerEventLocked: partiallyFailingAppend },
     }),
     /sidecar append failed/
   );
+
+  // Wait for the first async write to complete (it runs in background when
+  // Promise.all rejects on the second call's synchronous throw).
+  await firstWriteDone;
+
+  // K-of-N bound: exactly 1 started event was persisted (the first call succeeded;
+  // the second failed; the third was rejected before it ran).
+  const run = readImplementerRun(spec, 'slice-3');
+  assert.ok(run, 'run should exist (startImplementerRun ran normally)');
+  const startedEvents = run.events.filter((e) => e.event_type === 'started');
+  assert.equal(startedEvents.length, 1,
+    `K-of-N bound: exactly 1 started event should be persisted (K=1, N=3), got ${startedEvents.length}`);
 });
 
 test('compat.breaking runtime-kind translation: persisted started events have runtime_kind="claude-cli" or "codex-cli", never "claude" or "codex"', async () => {
@@ -788,11 +842,11 @@ test('compat.breaking runtime-kind translation: persisted started events have ru
     memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: null, diffHash: null, changedFiles: [], haltEnvelope: null,
   });
 
+  // CREATE mode: omit implementerRunId.
   await dispatchImplementers({
     specPath: spec,
     repoRoot: '/fake',
     sliceId: 'slice-3',
-    implementerRunId: randomUUID(),
     baseSha: 'abc123',
     implementers: [implClaude, implCodex],
     dispatchFn: fakeFn,
@@ -820,11 +874,11 @@ test('orchestrator stress.scale parallel cap: 5 fake implementers; 5 started eve
     memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: null, diffHash: null, changedFiles: [], haltEnvelope: null,
   });
 
+  // CREATE mode: omit implementerRunId.
   const result = await dispatchImplementers({
     specPath: spec,
     repoRoot: '/fake',
     sliceId: 'slice-3',
-    implementerRunId: randomUUID(),
     baseSha: 'abc123',
     implementers: impls,
     dispatchFn: fakeFn,
@@ -848,11 +902,166 @@ test('integration.cross-module specPath required: omitting specPath rejects loud
     () => dispatchImplementers({
       repoRoot: '/fake',
       sliceId: 'slice-3',
-      implementerRunId: randomUUID(),
       baseSha: 'abc123',
       implementers: [makeOrchImpl()],
       dispatchFn: async () => ({}),
     }),
     /specPath/
   );
+});
+
+// ── Critique 1: honors caller-supplied implementerRunId (REUSE mode) ──────────
+
+test('orchestrator: honors caller-supplied implementerRunId — startImplementerRun first, then dispatchImplementers reuses the same id', async () => {
+  // Verify that when a run is pre-created and its id is passed to dispatchImplementers,
+  // every persisted started event references THAT id (not a freshly-generated one).
+  const { spec } = makeSpec();
+  const impl1 = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'rc1' });
+  const impl2 = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'rc2' });
+
+  const runtimeKind = 'claude-cli';
+
+  // Step 1: pre-create the run via startImplementerRun (simulating what slice 2 does).
+  const { implementer_run_id: preCreatedRunId } = await startImplementerRun(spec, 'slice-3', {
+    base_sha: 'abc123',
+    members: {
+      [impl1.memberId]: {
+        adapter: runtimeKind,
+        model: impl1.model,
+        required: true,
+        worktree_id: impl1.branchName,
+        branch: impl1.branchName,
+        claimed_files: [],
+      },
+      [impl2.memberId]: {
+        adapter: runtimeKind,
+        model: impl2.model,
+        required: true,
+        worktree_id: impl2.branchName,
+        branch: impl2.branchName,
+        claimed_files: [],
+      },
+    },
+  });
+
+  assert.ok(typeof preCreatedRunId === 'string' && preCreatedRunId.length > 0,
+    'pre-created run id must be a non-empty string');
+
+  const fakeFn = async (input) => ({
+    memberId: input.memberId,
+    outcome: 'completed',
+    exitCode: 0,
+    headSha: 'abc',
+    diffHash: null,
+    changedFiles: [],
+    haltEnvelope: null,
+  });
+
+  // Step 2: pass the pre-created run id to dispatchImplementers (REUSE mode).
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    implementerRunId: preCreatedRunId,
+    baseSha: 'abc123',
+    implementers: [impl1, impl2],
+    dispatchFn: fakeFn,
+  });
+
+  assert.equal(result.success.length, 2, 'both implementers should succeed');
+  assert.equal(result.failed.length, 0);
+  assert.equal(result.cancelled.length, 0);
+
+  // The run id returned in result must be the pre-created id.
+  assert.equal(result.implementerRunId, preCreatedRunId,
+    'result.implementerRunId must equal the pre-created run id');
+
+  // All persisted started events must reference the pre-created run id.
+  const run = readImplementerRun(spec, 'slice-3');
+  assert.ok(run, 'run should exist');
+  const startedEvents = run.events.filter((e) => e.event_type === 'started');
+  assert.equal(startedEvents.length, 2, 'sidecar should have 2 started events');
+
+  for (const ev of startedEvents) {
+    assert.equal(ev.implementer_run_id, preCreatedRunId,
+      `event.implementer_run_id must equal preCreatedRunId (got ${ev.implementer_run_id})`);
+  }
+});
+
+// ── Critique 3: outcome "failed" and "halted" land in failed bucket ───────────
+
+test('orchestrator: returned outcome "failed" lands in failed bucket (not success)', async () => {
+  const { spec } = makeSpec();
+  const impl = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'fo1' });
+
+  // Fake dispatchFn returns outcome: "failed" (not an exception).
+  const fakeFn = async (input) => ({
+    memberId: input.memberId,
+    outcome: 'failed',
+    exitCode: 1,
+    headSha: null,
+    diffHash: null,
+    changedFiles: [],
+    haltEnvelope: null,
+  });
+
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'abc123',
+    implementers: [impl],
+    dispatchFn: fakeFn,
+  });
+
+  assert.equal(result.failed.length, 1, 'outcome "failed" must land in result.failed');
+  assert.equal(result.success.length, 0, 'outcome "failed" must NOT land in result.success');
+  assert.equal(result.cancelled.length, 0);
+
+  const entry = result.failed[0];
+  assert.equal(entry.memberId, impl.memberId, 'failed entry memberId should match');
+  assert.equal(entry.result.outcome, 'failed', 'failed entry result.outcome should be "failed"');
+});
+
+test('orchestrator: returned outcome "halted" lands in failed bucket with haltEnvelope preserved', async () => {
+  const { spec } = makeSpec();
+  const impl = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'ho1' });
+
+  const fakeHaltEnvelope = {
+    halt: 'implementer-required-child-failed',
+    version: '0.10.0',
+    details: { memberId: impl.memberId, cause: 'test halt' },
+  };
+
+  // Fake dispatchFn returns outcome: "halted" with a haltEnvelope.
+  const fakeFn = async (input) => ({
+    memberId: input.memberId,
+    outcome: 'halted',
+    exitCode: null,
+    headSha: null,
+    diffHash: null,
+    changedFiles: [],
+    haltEnvelope: fakeHaltEnvelope,
+  });
+
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'abc123',
+    implementers: [impl],
+    dispatchFn: fakeFn,
+  });
+
+  assert.equal(result.failed.length, 1, 'outcome "halted" must land in result.failed');
+  assert.equal(result.success.length, 0, 'outcome "halted" must NOT land in result.success');
+  assert.equal(result.cancelled.length, 0);
+
+  const entry = result.failed[0];
+  assert.equal(entry.memberId, impl.memberId, 'failed entry memberId should match');
+  assert.equal(entry.result.outcome, 'halted', 'failed entry result.outcome should be "halted"');
+
+  // The haltEnvelope must be preserved through to the failed entry.
+  assert.deepEqual(entry.result.haltEnvelope, fakeHaltEnvelope,
+    'haltEnvelope must be preserved in the failed entry');
 });
