@@ -1014,3 +1014,139 @@ test('panel failure matrix: 2/3 succeed + 1 throws → outcome respects 2-of-3 q
   );
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.9.2 hardening: degraded-quorum partial-failure matrix ─────────────
+
+function parsedRunTurnShape(status) {
+  return {
+    ok: true,
+    result: {
+      expert_id: ROLE,
+      phase: 'spec-review',
+      status,
+      scope: ROLE,
+      blocking_findings: status === 'REVISE' ? [{ message: 'needs revision' }] : [],
+      nonblocking_findings: [],
+      peer_messages_requested: [],
+      questions_for_orchestrator: [],
+    },
+  };
+}
+
+function makeSimplePanel(statuses) {
+  return new Map(
+    statuses.map((status, i) => {
+      const memberId = `${ROLE}@m${i + 1}`;
+      if (status === 'throw') {
+        return [memberId, async () => { throw new Error(`${memberId} failed`); }];
+      }
+      return [memberId, async () => parsedRunTurnShape(status)];
+    }),
+  );
+}
+
+const simplePanelRequest = baseRequest('/tmp/cps-panel-matrix/spec.md', '/tmp/cps-panel-matrix');
+
+test('degraded-quorum matrix A: 5-member 3 SHIP + 2 REVISE triggers consensus', async () => {
+  let consensusCalls = 0;
+  let firstRoundSeen = null;
+  const fakeConsensus = async (_role, _req, members, firstRoundResults) => {
+    consensusCalls += 1;
+    firstRoundSeen = firstRoundResults;
+    return {
+      aggregate: {
+        outcome: 'panel-SHIP',
+        ship_count: members.length,
+        revise_count: 0,
+        parse_failure_count: 0,
+        quorum_size: 2,
+        has_quorum: true,
+        findings_by_member: [],
+      },
+      panelResults: members.map((m) => ({
+        member_id: m.member_id,
+        parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+      })),
+      final_outcome: 'panel-SHIP',
+    };
+  };
+
+  const result = await dispatchPanel(
+    ROLE,
+    simplePanelRequest,
+    makeSimplePanel(['SHIP', 'SHIP', 'SHIP', 'REVISE', 'REVISE']),
+    { panel_max_size: 5, runConsensusRound: fakeConsensus },
+  );
+
+  assert.equal(consensusCalls, 1);
+  assert.equal(result.consensus_round_ran, true);
+  assert.equal(firstRoundSeen.filter((r) => r.parsed_result?.status === 'SHIP').length, 3);
+  assert.equal(firstRoundSeen.filter((r) => r.parsed_result?.status === 'REVISE').length, 2);
+});
+
+test('degraded-quorum matrix B: 5-member 4 SHIP + 1 throw yields panel-SHIP', async () => {
+  const result = await dispatchPanel(
+    ROLE,
+    simplePanelRequest,
+    makeSimplePanel(['SHIP', 'SHIP', 'SHIP', 'SHIP', 'throw']),
+    { panel_max_size: 5 },
+  );
+
+  assert.equal(result.outcome, 'panel-SHIP');
+  assert.equal(result.consensus_round_ran, false);
+  assert.equal(result.aggregate.outcome, 'degraded-N-proceeds');
+  assert.equal(result.aggregate.degraded_core_outcome, 'panel-SHIP');
+});
+
+test('degraded-quorum matrix C: 5-member 2 SHIP + 1 REVISE + 2 throw triggers consensus', async () => {
+  let consensusCalls = 0;
+  const fakeConsensus = async (_role, _req, members) => {
+    consensusCalls += 1;
+    return {
+      aggregate: {
+        outcome: 'panel-SHIP',
+        ship_count: members.length,
+        revise_count: 0,
+        parse_failure_count: 0,
+        quorum_size: 2,
+        has_quorum: true,
+        findings_by_member: [],
+      },
+      panelResults: members.map((m) => ({
+        member_id: m.member_id,
+        parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+      })),
+      final_outcome: 'panel-SHIP',
+    };
+  };
+
+  const result = await dispatchPanel(
+    ROLE,
+    simplePanelRequest,
+    makeSimplePanel(['SHIP', 'SHIP', 'REVISE', 'throw', 'throw']),
+    { panel_max_size: 5, runConsensusRound: fakeConsensus },
+  );
+
+  assert.equal(consensusCalls, 1);
+  assert.equal(result.consensus_round_ran, true);
+});
+
+test('degraded-quorum matrix D: 5-member 2 SHIP + 3 throw respects panel_min_size', async () => {
+  const quorumTwo = await dispatchPanel(
+    ROLE,
+    simplePanelRequest,
+    makeSimplePanel(['SHIP', 'SHIP', 'throw', 'throw', 'throw']),
+    { panel_min_size: 2, panel_max_size: 5 },
+  );
+  assert.equal(quorumTwo.outcome, 'panel-SHIP');
+  assert.equal(quorumTwo.aggregate.outcome, 'degraded-N-proceeds');
+  assert.equal(quorumTwo.aggregate.degraded_core_outcome, 'panel-SHIP');
+
+  const quorumThree = await dispatchPanel(
+    ROLE,
+    simplePanelRequest,
+    makeSimplePanel(['SHIP', 'SHIP', 'throw', 'throw', 'throw']),
+    { panel_min_size: 3, panel_max_size: 5 },
+  );
+  assert.equal(quorumThree.outcome, 'panel-quorum-lost');
+});
