@@ -5,10 +5,10 @@
 // reads it and emits all-PASS exit 0. Catches regressions in either side
 // (Codex flagged this gap during v0.9.1 hardening review).
 
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,23 @@ const REPO_ROOT = join(__dirname, '..', '..');
 
 const HARNESS = join(REPO_ROOT, 'scripts', 'populate-gate-sidecar.mjs');
 const GATE = join(REPO_ROOT, 'scripts', 'v0.9.0-release-gate.sh');
+const GATE_DOC = join(REPO_ROOT, 'docs', 'verification', 'v0.9.0-release-gate.md');
+
+// v0.9.1 Codex critique: the gate runner rewrites `docs/verification/
+// v0.9.0-release-gate.md` (a tracked file) on every run. Tests must NOT
+// leave dirty working-tree changes. Snapshot the file before any test
+// runs and restore it after — regardless of pass/fail.
+let originalGateDocContent = null;
+before(() => {
+  if (existsSync(GATE_DOC)) {
+    originalGateDocContent = readFileSync(GATE_DOC, 'utf8');
+  }
+});
+after(() => {
+  if (originalGateDocContent !== null) {
+    writeFileSync(GATE_DOC, originalGateDocContent, 'utf8');
+  }
+});
 
 // Generous bounds: harness + gate each spawn node subprocesses. Under
 // parallel test-runner load (other v0.9.1 hardening tests doing real

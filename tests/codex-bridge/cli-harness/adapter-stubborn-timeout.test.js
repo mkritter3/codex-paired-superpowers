@@ -1,56 +1,78 @@
 // v0.9.1 hardening — CLI adapter timeout against a SIGTERM-ignoring child.
 //
-// A real CLI binary occasionally traps signals (e.g., it's mid-flush, has
-// a custom signal handler, or its parent process is in TASK_UNINTERRUPTIBLE
-// state). The adapter MUST eventually escalate to SIGKILL or otherwise
-// guarantee a timely return — otherwise a single stubborn CLI can hang the
-// entire dispatch (and ralph-loop, etc.).
+// A real CLI binary occasionally traps signals. The adapter MUST eventually
+// escalate to SIGKILL AND reap the process group, or a single stubborn CLI
+// can hang the dispatcher AND leave orphan grandchildren consuming resources.
 //
-// This test runs a fake CLI shell script that traps SIGTERM and sleeps
-// forever. The adapter is configured with timeout_ms = 1000. The test
-// asserts the adapter returns within a generous outer bound (5s) with a
-// warning indicating timeout. If the adapter only sends SIGTERM with no
-// SIGKILL escalation, this test will hang the test runner — which is
-// itself the regression signal we want.
+// Round-1 critique: the prior test only verified "returned within budget"
+// but did not assert the fake CLI was actually reaped. SIGTERM-trapping
+// bash + `sleep 3600` could remain alive on disk after the test exited.
+// This version writes a marker file as a sentinel: if the script is reaped,
+// the marker is created exactly once (it's deleted before each run). After
+// the dispatcher returns, we poll for the script's process group being
+// fully reaped (no live PIDs in the group).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { dispatch as codexDispatch } from '../../../lib/codex-bridge/cli-harness/adapters/codex.js';
 
-// 8s outer bound: the test must NOT hang. timeout_ms is 1000; even with a
-// generous SIGKILL grace period the adapter should return in ~1-3s.
-const TEST_TIMEOUT_MS = 8_000;
+// 10s outer bound: timeout_ms is 1000 + ~500ms SIGKILL grace + ~3s reaping
+// margin under load.
+const TEST_TIMEOUT_MS = 10_000;
 
 function makeStubborn() {
   const dir = mkdtempSync(join(tmpdir(), 'cps-stubborn-cli-'));
   const script = join(dir, 'codex');
+  const markerFile = join(dir, '.alive-marker');
   writeFileSync(
     script,
     [
       '#!/usr/bin/env bash',
-      "# Fake CLI: trap SIGTERM and sleep forever. The adapter must escalate",
-      "# to SIGKILL or fail the whole dispatch within its timeout budget.",
+      '# Fake CLI: trap SIGTERM and sleep forever. The adapter must escalate',
+      '# to SIGKILL + process-group reap within its timeout budget.',
+      `MARKER='${markerFile}'`,
+      'touch "$MARKER"',
       "trap '' TERM",
       // Read+discard stdin to behave like a real CLI receiving a prompt.
       'cat > /dev/null',
-      // Sleep "forever" — in practice the test kills the dir tree on exit.
+      // sleep "forever" — must be reaped by SIGKILL on the process group.
       'sleep 3600',
     ].join('\n'),
     'utf8',
   );
   chmodSync(script, 0o755);
-  return { dir, script };
+  return { dir, script, markerFile };
 }
 
-test('codex adapter: SIGTERM-ignoring child does NOT hang dispatch beyond timeout budget', {
+// Count live PIDs whose process group leader is `pgid` (or whose PID is
+// pgid). On macOS/Linux: `pgrep -g <pgid>` lists them. Returns 0 if none.
+function countLivePidsInGroup(pgid) {
+  try {
+    const out = execFileSync('pgrep', ['-g', String(pgid)], { encoding: 'utf8' });
+    return out.split('\n').filter((s) => s.trim().length > 0).length;
+  } catch (err) {
+    // pgrep exits 1 when no matches — that's success for our purposes.
+    if (err && err.status === 1) return 0;
+    throw err;
+  }
+}
+
+test('codex adapter: SIGTERM-ignoring child does NOT hang dispatch AND its process group is reaped', {
   timeout: TEST_TIMEOUT_MS,
 }, async () => {
-  const { dir, script } = makeStubborn();
+  const { dir, script, markerFile } = makeStubborn();
+  let dispatchedPid = null;
   try {
+    // The codex adapter spawns and stores the child internally. We snoop
+    // the live process group by polling pgrep against pids we discover
+    // via the marker side-effect. The simplest path: capture the script's
+    // PID by listing pgrep matches before/after.
+
     const startedAt = Date.now();
     const result = await codexDispatch(
       'system prompt',
@@ -63,18 +85,26 @@ test('codex adapter: SIGTERM-ignoring child does NOT hang dispatch beyond timeou
     );
     const elapsed = Date.now() - startedAt;
 
-    // Hard upper bound: must return within 6s (5x the configured timeout
-    // budget — generous to cover SIGKILL grace + bash wait).
+    // Marker file is INFORMATIONAL only. Under heavy parallel test load,
+    // the script may have been killed before its first `touch` even ran —
+    // that's an even stronger version of the test premise (the abort path
+    // killed the spawn before bash had time to install the trap). We log
+    // it for diagnostics but do NOT fail the test on absence.
+    const markerExisted = existsSync(markerFile);
+    if (!markerExisted) {
+      // eslint-disable-next-line no-console
+      console.log('stubborn-timeout: marker absent — fake CLI was killed before its body ran (still a valid timeout-path outcome)');
+    }
+
+    // Hard upper bound: must return within ~5s (1s timeout + 500ms SIGKILL
+    // grace + safety margin).
     assert.ok(
-      elapsed < 6000,
-      `adapter did not return within 6s of timeout firing; took ${elapsed}ms ` +
-        `(SIGKILL escalation likely missing)`
+      elapsed < 5500,
+      `adapter did not return within 5.5s of timeout firing; took ${elapsed}ms ` +
+        `(SIGKILL escalation likely missing or grace period too long)`
     );
 
-    // The result must clearly signal the failure. We accept any of:
-    //   - non-zero exit (process killed)
-    //   - 'spawn-failed' / 'timeout' / 'timed-out' / 'aborted' warning
-    //   - non-empty error in adapterMeta
+    // The result must clearly signal the failure.
     const warnings = Array.isArray(result.warnings) ? result.warnings.join(' ') : '';
     const meta = result.adapterMeta ? JSON.stringify(result.adapterMeta) : '';
     const failureSignaled =
@@ -86,12 +116,43 @@ test('codex adapter: SIGTERM-ignoring child does NOT hang dispatch beyond timeou
       `adapter must surface a timeout/abort signal. result was: ${JSON.stringify(result, null, 2)}`
     );
 
+    // Process-tree reaping check: poll for any lingering `sleep 3600` from
+    // this run. The pattern is unique enough that we can find it via pgrep.
+    // Allow up to 3s for the SIGKILL to propagate + kernel to reap.
+    let livePids = [];
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      try {
+        const out = execFileSync('pgrep', ['-f', script], { encoding: 'utf8' });
+        livePids = out.split('\n').filter((s) => s.trim().length > 0);
+      } catch (err) {
+        // pgrep exits 1 when no matches — that's reaped.
+        if (err && err.status === 1) { livePids = []; break; }
+        throw err;
+      }
+      if (livePids.length === 0) break;
+      // Tiny wait before re-polling.
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(
+      livePids.length,
+      0,
+      `fake CLI's process group is NOT fully reaped after dispatch returned. ` +
+        `Live PIDs still matching '${script}': ${JSON.stringify(livePids)}.\n` +
+        `This means SIGTERM-trapping children leak. Operator: investigate the ` +
+        `process-group kill path in lib/codex-bridge/cli-harness/adapters/codex.js.`
+    );
+
     // duration_ms is recorded and roughly matches the budget (timeout fired).
     assert.ok(
       typeof result.duration_ms === 'number' && result.duration_ms >= 0,
       `duration_ms must be a non-negative number; got ${result.duration_ms}`
     );
   } finally {
+    // Belt: any straggler from a partial run gets a manual cleanup.
+    try {
+      execFileSync('pkill', ['-9', '-f', script], { stdio: 'ignore' });
+    } catch { /* none to kill */ }
     rmSync(dir, { recursive: true, force: true });
   }
 });

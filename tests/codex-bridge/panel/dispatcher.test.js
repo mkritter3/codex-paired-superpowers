@@ -853,7 +853,11 @@ test('dispatchPanel: adapter set by dispatch_fn (binding adapter into the reques
 // do next without guessing. These tests pin each failure mode separately AND
 // in combination with a healthy member (degraded-quorum behavior).
 
-test('panel failure matrix: dispatch_fn throws synchronously → counted as parse failure, panel still aggregates', async () => {
+// Round-1 critique: these tests asserted "some allowed outcome" instead
+// of pinning the SPECIFIC parse_failure_reason recorded per failed member.
+// Now they assert the exact failure reason on member_results[].
+
+test('panel failure matrix: dispatch_fn throws synchronously → member_results records the thrown message', async () => {
   const { dir, spec, promptPath } = makeSpec();
   const capturedTurns = [];
   const okWrap = makeWrappedDispatchFn({
@@ -871,24 +875,27 @@ test('panel failure matrix: dispatch_fn throws synchronously → counted as pars
     [`${ROLE}@codex`, okWrap.fn],
     [`${ROLE}@throws`, throwingFn],
   ]);
-  // The dispatcher catches per-member exceptions and records them as
-  // parse_failure_reason on the member result. The outcome depends on
-  // whether the remaining quorum still has unanimous agreement.
   const outcome = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
-  assert.ok(
-    typeof outcome.outcome === 'string',
-    `outcome must be defined; got ${JSON.stringify(outcome)}`
-  );
-  // Healthy member SHIP'd → outcome with one parse failure should at minimum
-  // be a known outcome string; the dispatcher must not throw on per-member errors.
   assert.ok(
     ['panel-SHIP', 'panel-REVISE', 'panel-disagreement', 'panel-quorum-lost'].includes(outcome.outcome),
     `outcome must be one of the documented values; got ${outcome.outcome}`
   );
+  // The throwing member's result must carry the thrown error message.
+  const throwingMember = outcome.member_results.find((r) => r.member_id === `${ROLE}@throws`);
+  assert.ok(throwingMember, 'throwing member must appear in member_results');
+  assert.equal(
+    throwingMember.parse_failure_reason,
+    'dispatch_fn exploded synchronously',
+    `parse_failure_reason must be the thrown message verbatim; got: ${JSON.stringify(throwingMember.parse_failure_reason)}`
+  );
+  assert.equal(throwingMember.parsed_result, null, 'throwing member must have null parsed_result');
+  // Healthy member must still have a parsed result.
+  const okMember = outcome.member_results.find((r) => r.member_id === `${ROLE}@codex`);
+  assert.ok(okMember && okMember.parsed_result, 'healthy member must carry parsed_result');
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('panel failure matrix: dispatch_fn returns rejected Promise → counted as parse failure', async () => {
+test('panel failure matrix: dispatch_fn returns rejected Promise → member_results records the rejection reason', async () => {
   const { dir, spec, promptPath } = makeSpec();
   const capturedTurns = [];
   const okWrap = makeWrappedDispatchFn({
@@ -911,10 +918,18 @@ test('panel failure matrix: dispatch_fn returns rejected Promise → counted as 
     ['panel-SHIP', 'panel-REVISE', 'panel-disagreement', 'panel-quorum-lost'].includes(outcome.outcome),
     `async rejection must not crash the panel; got ${outcome.outcome}`
   );
+  const rejMember = outcome.member_results.find((r) => r.member_id === `${ROLE}@rejects`);
+  assert.ok(rejMember, 'rejecting member must appear in member_results');
+  assert.equal(
+    rejMember.parse_failure_reason,
+    'async rejection: network unreachable',
+    `parse_failure_reason must be the rejection message; got: ${JSON.stringify(rejMember.parse_failure_reason)}`
+  );
+  assert.equal(rejMember.parsed_result, null);
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('panel failure matrix: dispatch_fn returns bad shape (not {ok:..., result:...}) → flagged dispatch-fn-bad-shape', async () => {
+test('panel failure matrix: dispatch_fn returns bad shape → member_results.parse_failure_reason === "dispatch-fn-bad-shape"', async () => {
   const { dir, spec, promptPath } = makeSpec();
   const capturedTurns = [];
   const okWrap = makeWrappedDispatchFn({
@@ -936,6 +951,16 @@ test('panel failure matrix: dispatch_fn returns bad shape (not {ok:..., result:.
     ['panel-SHIP', 'panel-REVISE', 'panel-disagreement', 'panel-quorum-lost'].includes(outcome.outcome),
     `bad-shape dispatch_fn must not crash the panel; got ${outcome.outcome}`
   );
+  const badMember = outcome.member_results.find((r) => r.member_id === `${ROLE}@bad`);
+  assert.ok(badMember, 'bad-shape member must appear in member_results');
+  // The dispatcher's exact sentinel for "dispatch_fn returned wrong shape".
+  assert.equal(
+    badMember.parse_failure_reason,
+    'dispatch-fn-bad-shape',
+    `parse_failure_reason must be the documented sentinel 'dispatch-fn-bad-shape'; ` +
+      `got: ${JSON.stringify(badMember.parse_failure_reason)}`
+  );
+  assert.equal(badMember.parsed_result, null);
   rmSync(dir, { recursive: true, force: true });
 });
 

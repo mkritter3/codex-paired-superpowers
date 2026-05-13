@@ -306,3 +306,61 @@ test('parseSliceHighStakes: ``` does not close a ~~~ fence (marker style isolati
   ].join('\n');
   assert.equal(parseSliceHighStakes(section), false);
 });
+
+// CommonMark §4.5: closing fence must have >= opening fence's marker count.
+// Round-1 critique: a 4-backtick outer fence containing a 3-backtick inner
+// fence would close early under naive `t.startsWith('```')` logic.
+
+test('parseSliceHighStakes: 4-backtick fence containing a 3-backtick inner block (length tracking)', () => {
+  const section = [
+    '## Slice 7',
+    '````markdown',                    // 4-backtick open
+    'inner example below:',
+    '```',                              // 3-backtick — does NOT close 4-tick
+    '**high_stakes: true**',
+    '```',                              // 3-backtick — does NOT close 4-tick
+    'still inside the outer fence',
+    '````',                             // 4-backtick — closes
+  ].join('\n');
+  assert.equal(
+    parseSliceHighStakes(section),
+    false,
+    'inner 3-tick fence must not break out of the outer 4-tick fence',
+  );
+});
+
+test('parseSliceHighStakes: 5-tilde fence containing 3-tilde inner (length tracking, ~)', () => {
+  const section = [
+    '## Slice 7',
+    '~~~~~',                            // 5-tilde open
+    '~~~',                              // 3-tilde — does NOT close 5-tilde
+    '**high_stakes: true**',
+    '~~~',                              // 3-tilde — does NOT close 5-tilde
+    '~~~~~',                            // 5-tilde — closes
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), false);
+});
+
+test('parseSliceHighStakes: 4-backtick close after 4-backtick open allows post-fence detection', () => {
+  const section = [
+    '## Slice 7',
+    '````',                             // 4-backtick open
+    'example: **high_stakes: false**',
+    '````',                             // 4-backtick close (>= 4)
+    '',
+    '**high_stakes: true**',            // outside any fence
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), true);
+});
+
+test('parseSliceHighStakes: closing fence with trailing content is NOT a close', () => {
+  // CommonMark: the closing line may only be followed by spaces.
+  const section = [
+    '## Slice 7',
+    '```',
+    '```javascript {.code-tag}',        // trailing tag → not a close
+    '**high_stakes: true**',
+    '```',                              // this IS the close
+  ].join('\n');
+  assert.equal(parseSliceHighStakes(section), false);
+});

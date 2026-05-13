@@ -1,11 +1,20 @@
-// v0.9.1 hardening — concurrent appendExpertTurn correctness.
+// v0.9.1 hardening — sidecar append serialization (in-process).
 //
-// The sidecar is the release-gate audit truth. If concurrent appends race
-// (e.g., two slices' subagents finishing close together; panel members'
-// dispatch_fns landing simultaneously), turns MUST serialize correctly: no
-// lost writes, no corrupt JSON. sidecar.js uses proper-lockfile; this test
-// pins that contract by hammering it with N parallel calls and asserting
-// every turn lands exactly once and the file remains valid JSON.
+// IMPORTANT SCOPE (round-1 critique): sidecar.js does NOT currently use
+// proper-lockfile or any cross-process lock. Its appendExpertTurn is
+// synchronous; concurrent callers serialize naturally through Node's
+// single-threaded event loop. This test pins THAT contract — that the
+// in-process serialization invariant holds (no lost writes when many
+// sync calls are scheduled together in one event loop).
+//
+// What this test does NOT prove (deferred to v0.9.2):
+//   - cross-process safety (e.g., ralph re-firing /autopilot while a
+//     previous run still has the sidecar open). The temp-rename in
+//     saveSidecar() is atomic for the WRITE, but two processes can race
+//     between LOAD and SAVE → lost update. The companion
+//     `sidecar-concurrent-crossproc.test.js` documents that race.
+//   - genuine async concurrency. If appendExpertTurn ever becomes async
+//     (e.g., to add proper-lockfile), this test must be revisited.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
