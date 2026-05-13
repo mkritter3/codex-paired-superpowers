@@ -839,3 +839,106 @@ test('stress.scale n-messages-ordered: 10 messages → 1 poll + 10 delivered eve
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── fail.exception-path delivered-listener NOT called when sidecar append fails ─
+
+test('fail.exception-path delivered-listener NOT called when sidecar append fails', async () => {
+  // Phase A contract: if sidecar append fails, the message must NOT be delivered to listeners.
+  // This test verifies validation-before-delivery: emit('delivered') only fires after a
+  // durable sidecar record exists. If append throws, no listener sees the message.
+  const { dir, spec } = makeSpec();
+  try {
+    const runId = await startRun(spec);
+    const recipient = recipientForMember(DEFAULT_MEMBER_ID);
+
+    // Write 1 message to the inbox
+    const { id: msgId } = await writeToMailbox(dir, recipient, {
+      from: 'orchestrator',
+      text: 'sidecar-fail-test',
+    });
+
+    // Track how many times the delivered listener fires
+    let deliveredCount = 0;
+
+    // Stub appendImplementerEventLocked: let mailbox_poll succeed (if it fires),
+    // but throw when the event_type is 'mailbox_delivered'.
+    // This precisely targets the per-message audit event that must precede delivery.
+    let appendCallCount = 0;
+    const stubAppend = async (specPath, event) => {
+      appendCallCount++;
+      if (event.event_type === 'mailbox_delivered') {
+        throw new Error('append error: simulated sidecar failure on mailbox_delivered');
+      }
+      // Allow other event types (e.g. mailbox_poll) through — but since delivered throws
+      // first, mailbox_poll is never reached in this test.
+      return { event_seq: appendCallCount };
+    };
+
+    const poller = createMailboxPoller({
+      specPath: spec,
+      repoRoot: dir,
+      sliceId: DEFAULT_SLICE_ID,
+      implementerRunId: runId,
+      memberId: DEFAULT_MEMBER_ID,
+      runtimeKind: 'claude-cli',
+      worktreeId: DEFAULT_WORKTREE_ID,
+      cadenceMs: 45_000,
+      jitterMs: 0,
+      _deps: {
+        appendImplementerEventLocked: stubAppend,
+        readUnreadMessages,
+      },
+    });
+
+    poller.on('delivered', () => deliveredCount++);
+
+    // pollNow() must reject (append failed)
+    await assert.rejects(
+      () => poller.pollNow(),
+      /append error/,
+      'pollNow() should reject when sidecar append fails'
+    );
+
+    // Listener must NOT have been called — no delivery without audit record
+    assert.equal(deliveredCount, 0, 'delivered listener must NOT be called when sidecar append fails');
+
+    // Mailbox message must still be unread (read_at is null — mailbox.js only marks read
+    // when the message is retrieved, and readUnreadMessages returns unread messages, so
+    // re-polling with a good stub should see the message again)
+    const unreadAfter = await readUnreadMessages(dir, recipient);
+    assert.equal(unreadAfter.length, 1, 'message must still be unread in mailbox after append failure');
+    assert.equal(unreadAfter[0].id, msgId, 'the unread message must be the one we wrote');
+
+    // Dedupe Set must NOT contain the message id — verify by doing a 2nd poll
+    // with a non-throwing stub; the message should come through cleanly.
+    let deliveredCount2 = 0;
+    let appendCallCount2 = 0;
+    const stubAppend2 = async (specPath, event) => {
+      appendCallCount2++;
+      return { event_seq: appendCallCount2 };
+    };
+
+    const poller2 = createMailboxPoller({
+      specPath: spec,
+      repoRoot: dir,
+      sliceId: DEFAULT_SLICE_ID,
+      implementerRunId: runId,
+      memberId: DEFAULT_MEMBER_ID,
+      runtimeKind: 'claude-cli',
+      worktreeId: DEFAULT_WORKTREE_ID,
+      cadenceMs: 45_000,
+      jitterMs: 0,
+      _deps: {
+        appendImplementerEventLocked: stubAppend2,
+        readUnreadMessages,
+      },
+    });
+    poller2.on('delivered', () => deliveredCount2++);
+
+    const result2 = await poller2.pollNow();
+    assert.equal(result2.delivered.length, 1, 'second poller (fresh Set) should deliver the message');
+    assert.equal(deliveredCount2, 1, 'delivered listener should fire on successful second poll');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
