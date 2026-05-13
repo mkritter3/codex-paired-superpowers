@@ -17,7 +17,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
 
 import { dispatch as codexDispatch } from '../../../lib/codex-bridge/cli-harness/adapters/codex.js';
 
@@ -78,18 +77,6 @@ function isAlive(pid) {
   }
 }
 
-// Count live PIDs whose process group leader is `pgid` (or whose PID is
-// pgid). On macOS/Linux: `pgrep -g <pgid>` lists them. Returns 0 if none.
-function countLivePidsInGroup(pgid) {
-  try {
-    const out = execFileSync('pgrep', ['-g', String(pgid)], { encoding: 'utf8' });
-    return out.split('\n').filter((s) => s.trim().length > 0).length;
-  } catch (err) {
-    // pgrep exits 1 when no matches — that's success for our purposes.
-    if (err && err.status === 1) return 0;
-    throw err;
-  }
-}
 
 test('codex adapter: SIGTERM-ignoring child does NOT hang AND its process group (incl. grandchild) is reaped', {
   timeout: TEST_TIMEOUT_MS,
