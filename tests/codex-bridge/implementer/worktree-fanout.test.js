@@ -1023,6 +1023,176 @@ test('orchestrator: returned outcome "failed" lands in failed bucket (not succes
   assert.equal(entry.result.outcome, 'failed', 'failed entry result.outcome should be "failed"');
 });
 
+// ── NEW: returned-failure abort path (round-2 critique) ──────────────────────
+
+test('orchestrator: required-member returned-failure (not throw) aborts sibling B', async () => {
+  // A returns {outcome: "failed"} — does NOT throw.
+  // B polls abortSignal.aborted. Once true, B returns {outcome: "cancelled"}.
+  // Assert: A in failed, B observed abortSignal.aborted=true, B in cancelled.
+  const { spec } = makeSpec();
+  const implA = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'rfa-a', required: true });
+  const implB = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'rfa-b', required: true });
+
+  let bSawAborted = false;
+
+  const fakeFn = async (input) => {
+    if (input.memberId === implA.memberId) {
+      // Return failure — does NOT throw.
+      return {
+        memberId: input.memberId,
+        outcome: 'failed',
+        exitCode: 1,
+        headSha: null,
+        diffHash: null,
+        changedFiles: [],
+        haltEnvelope: null,
+      };
+    }
+    // B polls until abortSignal is aborted.
+    await new Promise((res) => {
+      const check = setInterval(() => {
+        if (input.abortSignal.aborted) {
+          bSawAborted = true;
+          clearInterval(check);
+          res();
+        }
+      }, 10);
+    });
+    return {
+      memberId: input.memberId,
+      outcome: 'cancelled',
+      exitCode: null,
+      headSha: null,
+      diffHash: null,
+      changedFiles: [],
+      haltEnvelope: null,
+    };
+  };
+
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'abc123',
+    implementers: [implA, implB],
+    dispatchFn: fakeFn,
+  });
+
+  assert.ok(result.failed.some((f) => f.memberId === implA.memberId), 'A should be in failed');
+  assert.ok(bSawAborted, 'B should have observed abortSignal.aborted === true');
+  assert.ok(result.cancelled.some((c) => c.memberId === implB.memberId), 'B should be classified cancelled');
+});
+
+test('orchestrator: required-member returned-halted (not throw) aborts sibling B', async () => {
+  // Same shape but A returns {outcome: "halted"} instead of "failed".
+  const { spec } = makeSpec();
+  const implA = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'rha-a', required: true });
+  const implB = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'rha-b', required: true });
+
+  const fakeHaltEnvelope = {
+    halt: 'implementer-required-child-failed',
+    version: '0.10.0',
+    details: { memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', cause: 'halted test' },
+  };
+
+  let bSawAborted = false;
+
+  const fakeFn = async (input) => {
+    if (input.memberId === implA.memberId) {
+      return {
+        memberId: input.memberId,
+        outcome: 'halted',
+        exitCode: null,
+        headSha: null,
+        diffHash: null,
+        changedFiles: [],
+        haltEnvelope: fakeHaltEnvelope,
+      };
+    }
+    await new Promise((res) => {
+      const check = setInterval(() => {
+        if (input.abortSignal.aborted) {
+          bSawAborted = true;
+          clearInterval(check);
+          res();
+        }
+      }, 10);
+    });
+    return {
+      memberId: input.memberId,
+      outcome: 'cancelled',
+      exitCode: null,
+      headSha: null,
+      diffHash: null,
+      changedFiles: [],
+      haltEnvelope: null,
+    };
+  };
+
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'abc123',
+    implementers: [implA, implB],
+    dispatchFn: fakeFn,
+  });
+
+  assert.ok(result.failed.some((f) => f.memberId === implA.memberId), 'A (halted) should be in failed');
+  assert.ok(bSawAborted, 'B should have observed abortSignal.aborted === true after A returned halted');
+  assert.ok(result.cancelled.some((c) => c.memberId === implB.memberId), 'B should be classified cancelled');
+});
+
+test('orchestrator: optional-member returned-failure does NOT abort; required sibling B completes normally', async () => {
+  // A is optional, returns {outcome: "failed"} — should not abort.
+  // B is required, waits 50ms then resolves {outcome: "completed"}.
+  // Assert: A in failed, B in success, abortSignal was NOT aborted.
+  const { spec } = makeSpec();
+  const implA = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'opt-a', required: false });
+  const implB = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'opt-b', required: true });
+
+  let signalWasAbortedDuringB = false;
+
+  const fakeFn = async (input) => {
+    if (input.memberId === implA.memberId) {
+      return {
+        memberId: input.memberId,
+        outcome: 'failed',
+        exitCode: 1,
+        headSha: null,
+        diffHash: null,
+        changedFiles: [],
+        haltEnvelope: null,
+      };
+    }
+    // B waits 50ms then checks signal before returning.
+    await new Promise((r) => setTimeout(r, 50));
+    if (input.abortSignal.aborted) signalWasAbortedDuringB = true;
+    return {
+      memberId: input.memberId,
+      outcome: 'completed',
+      exitCode: 0,
+      headSha: null,
+      diffHash: null,
+      changedFiles: [],
+      haltEnvelope: null,
+    };
+  };
+
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'abc123',
+    implementers: [implA, implB],
+    dispatchFn: fakeFn,
+  });
+
+  assert.ok(result.failed.some((f) => f.memberId === implA.memberId), 'A (optional) should be in failed');
+  assert.ok(result.success.some((s) => s.memberId === implB.memberId), 'B (required) should complete and be in success');
+  assert.ok(!signalWasAbortedDuringB, 'abortSignal must NOT have been aborted (optional failure should not abort)');
+});
+
 test('orchestrator: returned outcome "halted" lands in failed bucket with haltEnvelope preserved', async () => {
   const { spec } = makeSpec();
   const impl = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'ho1' });
