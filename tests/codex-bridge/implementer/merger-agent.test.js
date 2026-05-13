@@ -366,12 +366,11 @@ test('happy.allowlist-file-touched: merger edits allowlisted file + conflicted f
 });
 
 // ── edge.zero-null-empty: sync validation ────────────────────────────────────
-// Note: runMergerAgent is async, so validation errors are rejected Promises.
-// We use assert.rejects even though the errors are thrown synchronously before
-// any await (the async wrapper converts them to rejected promises).
+// Note: runMergerAgent is a sync outer wrapper that throws BEFORE returning a
+// Promise. Validation errors are thrown synchronously, so we use assert.throws.
 
-test('edge.zero-null-empty: throws on missing integrationWorktree', async () => {
-  await assert.rejects(
+test('edge.zero-null-empty: throws on missing integrationWorktree', () => {
+  assert.throws(
     () => runMergerAgent({
       integrationWorktree: '',
       conflictedFiles: ['f.js'],
@@ -390,8 +389,8 @@ test('edge.zero-null-empty: throws on missing integrationWorktree', async () => 
   );
 });
 
-test('edge.zero-null-empty: throws on empty conflictedFiles', async () => {
-  await assert.rejects(
+test('edge.zero-null-empty: throws on empty conflictedFiles', () => {
+  assert.throws(
     () => runMergerAgent({
       integrationWorktree: '/tmp/wt',
       conflictedFiles: [],
@@ -410,8 +409,8 @@ test('edge.zero-null-empty: throws on empty conflictedFiles', async () => {
   );
 });
 
-test('edge.zero-null-empty: throws on null mergeContext', async () => {
-  await assert.rejects(
+test('edge.zero-null-empty: throws on null mergeContext', () => {
+  assert.throws(
     () => runMergerAgent({
       integrationWorktree: '/tmp/wt',
       conflictedFiles: ['f.js'],
@@ -432,10 +431,10 @@ test('edge.zero-null-empty: throws on null mergeContext', async () => {
 
 const REQUIRED_MERGE_CONTEXT_FIELDS = ['planRef', 'baseSha', 'mergeOrder', 'diffstats', 'conflictDiffs', 'mailboxNotes'];
 for (const field of REQUIRED_MERGE_CONTEXT_FIELDS) {
-  test(`edge.zero-null-empty: throws on missing mergeContext.${field}`, async () => {
+  test(`edge.zero-null-empty: throws on missing mergeContext.${field}`, () => {
     const ctx = { ...defaultMergeContext() };
     delete ctx[field];
-    await assert.rejects(
+    assert.throws(
       () => runMergerAgent({
         integrationWorktree: '/tmp/wt',
         conflictedFiles: ['f.js'],
@@ -456,8 +455,8 @@ for (const field of REQUIRED_MERGE_CONTEXT_FIELDS) {
 }
 
 for (const field of ['dispatchFn', 'claudeReviewFn', 'codexReviewFn']) {
-  test(`edge.zero-null-empty: throws when ${field} is not a function`, async () => {
-    await assert.rejects(
+  test(`edge.zero-null-empty: throws when ${field} is not a function`, () => {
+    assert.throws(
       () => runMergerAgent({
         integrationWorktree: '/tmp/wt',
         conflictedFiles: ['f.js'],
@@ -485,8 +484,8 @@ for (const [field, value] of [
   ['mergerRuntimeKind', ''],
   ['mergerWorktreeId', ''],
 ]) {
-  test(`edge.zero-null-empty: throws on empty ${field}`, async () => {
-    await assert.rejects(
+  test(`edge.zero-null-empty: throws on empty ${field}`, () => {
+    assert.throws(
       () => runMergerAgent({
         integrationWorktree: '/tmp/wt',
         conflictedFiles: ['f.js'],
@@ -512,8 +511,8 @@ for (const [desc, badPath] of [
   ['leading slash', '/etc/passwd'],
   ['backslash', 'lib\\file.js'],
 ]) {
-  test(`edge.zero-null-empty: throws on unsafe conflictedFiles entry (${desc})`, async () => {
-    await assert.rejects(
+  test(`edge.zero-null-empty: throws on unsafe conflictedFiles entry (${desc})`, () => {
+    assert.throws(
       () => runMergerAgent({
         integrationWorktree: '/tmp/wt',
         conflictedFiles: [badPath],
@@ -539,8 +538,8 @@ for (const [desc, badPath] of [
   ['leading slash', '/etc/passwd'],
   ['backslash', 'lib\\file.js'],
 ]) {
-  test(`edge.zero-null-empty: throws on unsafe allowlist entry (${desc})`, async () => {
-    await assert.rejects(
+  test(`edge.zero-null-empty: throws on unsafe allowlist entry (${desc})`, () => {
+    assert.throws(
       () => runMergerAgent({
         integrationWorktree: '/tmp/wt',
         conflictedFiles: ['f.js'],
@@ -672,6 +671,44 @@ test('edge.adversarial allowlist-symlink-escape: symlink pointing outside worktr
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── edge.adversarial conflictedFiles-symlink-escape ───────────────────────────
+
+test('edge.adversarial conflictedFiles-symlink-escape: symlink in conflictedFiles pointing outside worktree → throws synchronously', () => {
+  // We need a real directory with a symlink for realpathSync to follow.
+  const tmpDir = mkdtempSync(join(tmpdir(), 'cps-ma-cfsymlink-'));
+  try {
+    // Create a symlink inside tmpDir that points outside (to /tmp or /etc).
+    const symlinkName = 'escape-conflict.js';
+    const symlinkPath = join(tmpDir, symlinkName);
+    try {
+      symlinkSync('/etc/passwd', symlinkPath);
+    } catch {
+      symlinkSync('/tmp', symlinkPath);
+    }
+
+    // This should throw SYNCHRONOUSLY (not return a rejected Promise).
+    assert.throws(
+      () => runMergerAgent({
+        integrationWorktree: tmpDir,
+        conflictedFiles: [symlinkName],
+        mergeContext: defaultMergeContext(),
+        dispatchFn: async () => {},
+        claudeReviewFn: async () => {},
+        codexReviewFn: async () => {},
+        specPath: '/tmp/spec.md',
+        sliceId: 'slice-8',
+        implementerRunId: 'run-1',
+        mergerMemberId: MERGER_MEMBER_ID,
+        mergerRuntimeKind: MERGER_RUNTIME_KIND,
+        mergerWorktreeId: MERGER_WORKTREE_ID,
+      }),
+      /conflictedFiles/
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
@@ -984,6 +1021,96 @@ test('fail.dependency dispatch-returns-failed-outcome: dispatchFn returns {outco
 
     assert.equal(result.halted, true);
     assert.equal(result.halt, 'merger-dispatch-failed');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── fail.dependency dispatch-throws emits merger_completed with failed ────────
+
+test('fail.dependency dispatch-throws emits merger_completed with outcome=failed', async () => {
+  const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatch exploded audit'); },
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.equal(result.halted, true);
+    assert.equal(result.halt, 'merger-dispatch-failed');
+
+    // Sidecar must have merger_started AND merger_completed with outcome=failed
+    const run = readImplementerRun(spec, 'slice-8');
+    const types = run.events.map(e => e.event_type);
+    assert.ok(types.includes('merger_started'), 'must have merger_started');
+    assert.ok(types.includes('merger_completed'), 'must have merger_completed');
+
+    const completedEvts = run.events.filter(e => e.event_type === 'merger_completed');
+    assert.ok(completedEvts.length >= 1, 'must have at least one merger_completed event');
+    const failedEvt = completedEvts.find(e => e.payload && e.payload.outcome === 'failed');
+    assert.ok(
+      failedEvt,
+      `merger_completed with outcome=failed must be present; got outcomes: ${completedEvts.map(e => e.payload && e.payload.outcome).join(', ')}`
+    );
+    assert.equal(failedEvt.payload.merger_member_id, MERGER_MEMBER_ID);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── fail.dependency dispatch-returns-halted emits merger_completed with halted ─
+
+test('fail.dependency dispatch-returns-halted emits merger_completed with outcome=halted', async () => {
+  const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => ({ outcome: 'halted', haltEnvelope: { halt: 'some-halt' } }),
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.equal(result.halted, true);
+    assert.equal(result.halt, 'merger-dispatch-failed');
+
+    // Sidecar must have merger_started AND merger_completed with outcome=halted
+    const run = readImplementerRun(spec, 'slice-8');
+    const types = run.events.map(e => e.event_type);
+    assert.ok(types.includes('merger_started'), 'must have merger_started');
+    assert.ok(types.includes('merger_completed'), 'must have merger_completed');
+
+    const completedEvts = run.events.filter(e => e.event_type === 'merger_completed');
+    assert.ok(completedEvts.length >= 1, 'must have at least one merger_completed event');
+    const haltedEvt = completedEvts.find(e => e.payload && e.payload.outcome === 'halted');
+    assert.ok(
+      haltedEvt,
+      `merger_completed with outcome=halted must be present; got outcomes: ${completedEvts.map(e => e.payload && e.payload.outcome).join(', ')}`
+    );
+    assert.equal(haltedEvt.payload.merger_member_id, MERGER_MEMBER_ID);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
