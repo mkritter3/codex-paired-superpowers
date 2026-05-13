@@ -1,0 +1,5 @@
+{
+  "name": "claude-cli",
+  "command": "claude",
+  "runtime_kind": "claude-cli"
+}

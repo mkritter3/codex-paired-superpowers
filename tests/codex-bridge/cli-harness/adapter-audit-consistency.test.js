@@ -15,6 +15,28 @@ const EXPECTED_ADAPTER_META = {
   'gemini.js': 'cli-harness:gemini',
   'qwen.js': 'cli-harness:qwen',
   'claude.js': 'cli-harness:claude',
+  // v0.10.0 slice 5: claude-cli adapter (implementer mode, routes to Ollama Cloud / Anthropic API)
+  'claude-cli.js': 'cli-harness:claude-cli',
+};
+
+// Per-adapter dispatch options overrides. Some adapters require specific options
+// that the generic test harness doesn't supply. These are merged into the default
+// dispatch options only for the named adapter, so the dispatch call doesn't throw
+// during the adapterMeta.adapter audit.
+const ADAPTER_EXTRA_OPTIONS = {
+  // claude-cli requires cwd, model, and route (implementer-only adapter).
+  // We also stub OLLAMA_CLOUD_API_KEY so resolveToken doesn't throw before
+  // the spawn attempt (spawn will fail with ENOENT, giving us adapterMeta.adapter).
+  'claude-cli.js': {
+    cwd: process.cwd(),
+    model: 'audit-model',
+    route: 'ollama-cloud',
+    // Use a fake token so resolveToken succeeds; the command is the empty-success
+    // CLI which will be invoked and exit 0 with no JSON output.
+    _deps: {
+      keychain: { getToken: () => 'audit-test-token' },
+    },
+  },
 };
 
 function makeEmptySuccessCli() {
@@ -39,11 +61,13 @@ test('cli-harness adapters: dispatch result includes adapterMeta.adapter', async
     try {
       const mod = await import(pathToFileURL(join(ADAPTER_DIR, file)).href);
       assert.equal(typeof mod.dispatch, 'function', `${file} must export dispatch()`);
+      const extraOpts = ADAPTER_EXTRA_OPTIONS[file] || {};
       const result = await mod.dispatch('system', 'user', {
         command: script,
         args: [],
         variant: 'kimi-k2.6',
         timeout_ms: 1000,
+        ...extraOpts,
       });
       assert.equal(
         result.adapterMeta?.adapter,
