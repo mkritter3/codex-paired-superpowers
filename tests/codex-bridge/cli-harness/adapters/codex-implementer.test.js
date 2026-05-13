@@ -348,6 +348,13 @@ test('edge.large-input truncation: >maxBufferBytes stdout triggers truncation in
       result.warnings.includes('stdout-truncated'),
       `expected stdout-truncated warning; got: ${JSON.stringify(result.warnings)}`,
     );
+    // Phase A structured field: adapterMeta.truncated must be true when any
+    // truncation fires (additive — warnings entries stay for back-compat).
+    assert.equal(
+      result.adapterMeta.truncated,
+      true,
+      `expected adapterMeta.truncated === true; got: ${JSON.stringify(result.adapterMeta.truncated)}`,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -373,6 +380,13 @@ test('edge.large-input truncation: >maxBufferBytes stdout triggers truncation in
     assert.ok(
       result.warnings.includes('stdout-truncated'),
       `expected stdout-truncated warning; got: ${JSON.stringify(result.warnings)}`,
+    );
+    // Phase A structured field: adapterMeta.truncated must be true when any
+    // truncation fires (additive — warnings entries stay for back-compat).
+    assert.equal(
+      result.adapterMeta.truncated,
+      true,
+      `expected adapterMeta.truncated === true; got: ${JSON.stringify(result.adapterMeta.truncated)}`,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -474,6 +488,17 @@ test('fail.spawn-ENOENT: implementer mode with nonexistent binary returns spawn-
     );
     assert.equal(result.adapterMeta.exec_mode, 'implementer',
       'exec_mode should be preserved in spawn-failed result');
+    // Phase A structured field: adapterMeta.spawnError.code must be 'ENOENT'
+    // (additive — existing errorCode flat field stays for back-compat).
+    assert.ok(
+      result.adapterMeta.spawnError !== null && result.adapterMeta.spawnError !== undefined,
+      `expected adapterMeta.spawnError to be set; got: ${JSON.stringify(result.adapterMeta)}`,
+    );
+    assert.equal(
+      result.adapterMeta.spawnError.code,
+      'ENOENT',
+      `expected adapterMeta.spawnError.code === 'ENOENT'; got: ${JSON.stringify(result.adapterMeta.spawnError)}`,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
