@@ -151,22 +151,41 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
   transientInMap.sort();
 
   assert.deepEqual(terminalInMap, [
+    // Note: 'claude-...' sorts before 'cli-...' because 'a' < 'i'.
+    'claude-cli-auth-missing',
+    'claude-cli-auth-rejected',
+    'claude-cli-protocol-unsupported',
     'cli-dispatch-failed',
     'codex-blocked',
+    'codex-cli-blocked',
     'codex-needs-context',
     'expert-blocker',
+    'implementer-cap-exceeded',
+    'implementer-claimed-file-violation',
+    'implementer-claimed-files-missing',
     'implementer-directive-malformed',
+    'implementer-high-cost-rationale-missing',
+    'implementer-member-id-invalid',
+    'implementer-required-child-failed',
+    'mailbox-delivery-failed',
+    'merge-conflict-double-ship-failed',
+    'merger-out-of-scope',
+    'ollama-cloud-route-invalid',
     'override-cli-unavailable',
     'override-variant-unknown',
     'panel-config-invalid',
     'panel-disagreement',
     'panel-quorum-unavailable',
     'parallel-files-malformed',
+    'post-merge-review-revise',
     'reconciler-failed',
     'role-composer-fan-out-unjustified',
+    'sidecar-replay-concurrent-order-invalid',
     'subagent-blocked',
     'subagent-needs-context',
     'user-input-required',
+    'worktree-create-failed',
+    'worktree-dirty-before-dispatch',
   ]);
 
   assert.deepEqual(transientInMap, [
@@ -383,4 +402,88 @@ test('isTerminalHalt: known transient halt name with valid envelope returns fals
       `${transientHalt} should be the only path that returns false`
     );
   }
+});
+
+// ── v0.10.0: 18 new terminal halt codes ──────────────────────────────────────
+
+const V010_NEW_HALT_CODES = [
+  'implementer-cap-exceeded',
+  'implementer-high-cost-rationale-missing',
+  'implementer-member-id-invalid',
+  'implementer-claimed-files-missing',
+  'implementer-claimed-file-violation',
+  'implementer-required-child-failed',
+  'codex-cli-blocked',
+  'claude-cli-protocol-unsupported',
+  'claude-cli-auth-missing',
+  'claude-cli-auth-rejected',
+  'ollama-cloud-route-invalid',
+  'mailbox-delivery-failed',
+  'worktree-create-failed',
+  'worktree-dirty-before-dispatch',
+  'merge-conflict-double-ship-failed',
+  'post-merge-review-revise',
+  'sidecar-replay-concurrent-order-invalid',
+  // Pinned in slice 1 from slice 8 scope so known-set invariant covers it from day 1.
+  'merger-out-of-scope',
+];
+
+test('v0.10.0: all 18 new halt codes are present in HALT_MAP', () => {
+  for (const code of V010_NEW_HALT_CODES) {
+    assert.ok(
+      HALT_MAP.has(code),
+      `HALT_MAP must contain "${code}"`
+    );
+  }
+});
+
+test('v0.10.0: all 18 new halt codes are mapped to terminal: true', () => {
+  for (const code of V010_NEW_HALT_CODES) {
+    const entry = HALT_MAP.get(code);
+    assert.ok(entry, `HALT_MAP must contain "${code}"`);
+    assert.equal(
+      entry.terminal,
+      true,
+      `"${code}" must be terminal: true`
+    );
+  }
+});
+
+test('v0.10.0: all 18 new halt codes have non-empty resume_hint', () => {
+  for (const code of V010_NEW_HALT_CODES) {
+    const entry = HALT_MAP.get(code);
+    assert.ok(entry, `HALT_MAP must contain "${code}"`);
+    assert.ok(
+      typeof entry.resume_hint === 'string' && entry.resume_hint.length > 0,
+      `"${code}" must have a non-empty resume_hint`
+    );
+  }
+});
+
+test('v0.10.0: wrapAsHaltEnvelope returns correct shape for all 18 new codes', () => {
+  for (const code of V010_NEW_HALT_CODES) {
+    const env = wrapAsHaltEnvelope(code);
+    assert.equal(env.halt, code, `envelope.halt should equal "${code}"`);
+    assert.equal(env.terminal, true, `"${code}" should be terminal: true`);
+    assert.ok(
+      typeof env.resume_hint === 'string' && env.resume_hint.length > 0,
+      `"${code}" should have a non-empty resume_hint`
+    );
+  }
+});
+
+test('v0.10.0: isTerminalHalt returns true for all 18 new codes', () => {
+  for (const code of V010_NEW_HALT_CODES) {
+    const env = wrapAsHaltEnvelope(code);
+    assert.equal(
+      isTerminalHalt(env),
+      true,
+      `isTerminalHalt must return true for "${code}"`
+    );
+  }
+});
+
+test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transient + 18 new = 37)', () => {
+  // Snapshot the total count so additions are always explicit.
+  assert.equal(HALT_MAP.size, 37, 'HALT_MAP must have exactly 37 entries');
 });
