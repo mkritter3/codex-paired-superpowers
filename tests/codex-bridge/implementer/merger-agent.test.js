@@ -1651,6 +1651,48 @@ test('dispatch.abortSignal: merger dispatch receives a real AbortSignal that is 
   }
 });
 
+// ── prompt guard ──────────────────────────────────────────────────────────────
+
+test('prompt.worktree-guard: rendered prompt contains "Do not run commands outside the worktree."', async () => {
+  const { repoRoot, integrationWt, mcSpec, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    let capturedPrompt = null;
+    const capturingDispatchFn = async (request) => {
+      capturedPrompt = request.prompt;
+      for (const f of conflictedFiles) {
+        writeFileSync(join(integrationWt, f), 'console.log("resolved");\n');
+      }
+      return { outcome: 'completed' };
+    };
+
+    await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: capturingDispatchFn,
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.ok(capturedPrompt !== null, 'dispatchFn should have been called');
+    assert.ok(
+      capturedPrompt.includes('Do not run commands outside the worktree.'),
+      `prompt must contain "Do not run commands outside the worktree." but got:\n${capturedPrompt.slice(0, 500)}`
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
 test('forensic preservation: worktree is NOT git-reset on any halt path', async () => {
   const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
   try {
