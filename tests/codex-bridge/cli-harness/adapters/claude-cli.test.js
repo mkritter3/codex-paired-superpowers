@@ -1188,19 +1188,69 @@ test('fail.exception-path protocol-unsupported: haltEnvelope.halt is correct, li
     assert.equal(process.listenerCount('SIGINT'), baseline,
       'SIGINT listener count must return to baseline');
 
-    // Either protocol-unsupported or malformed-output — both are acceptable
-    // when the stream isn't JSON. The key contract is no canary leaks.
-    const hasProtoHalt = result.haltEnvelope && result.haltEnvelope.halt === 'claude-cli-protocol-unsupported';
-    const hasMalformed = result.warnings && result.warnings.includes('malformed-output');
-    assert.ok(hasProtoHalt || hasMalformed,
-      `expected protocol-unsupported halt or malformed-output warning; got: ${JSON.stringify({ halt: result.haltEnvelope, warnings: result.warnings })}`);
-
-    if (hasProtoHalt) {
-      assert.equal(result.haltEnvelope.terminal, true);
-      assert.ok(result.haltEnvelope.resume_hint.length > 0);
-    }
+    // Non-JSON output MUST produce protocol-unsupported halt (not silent success).
+    assert.ok(
+      result.haltEnvelope && result.haltEnvelope.halt === 'claude-cli-protocol-unsupported',
+      `expected haltEnvelope.halt === 'claude-cli-protocol-unsupported'; got: ${JSON.stringify({ halt: result.haltEnvelope, warnings: result.warnings })}`,
+    );
+    assert.equal(result.haltEnvelope.terminal, true,
+      'protocol-unsupported halt must be terminal');
+    assert.ok(result.haltEnvelope.resume_hint.length > 0,
+      'protocol-unsupported halt must have a resume_hint');
 
     // No canary.
+    assert.ok(!resultContainsCanary(result));
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── fail.all-unknown-events protocol-unsupported ─────────────────────────────
+
+test('fail.all-unknown-events JSON stream: claude-cli-protocol-unsupported (not silent success)', {
+  timeout: TEST_TIMEOUT_MS,
+}, async () => {
+  // Fake CLI emits 3 valid JSON lines, each with an unknown future schema type.
+  // All lines parse as JSON, none are recognized text/result/assistant_message
+  // events. The adapter MUST detect schema drift and return protocol-unsupported,
+  // NOT an empty-success result.
+  const dir = makeTmpDir('cps-claude-allunknown-');
+  const cleanup = setupOllamaToken();
+  try {
+    const script = makeFakeClaude(dir, [
+      'cat > /dev/null',
+      `printf '%s\\n' '{"type":"future_schema_event_1","data":"some-data"}'`,
+      `printf '%s\\n' '{"type":"future_schema_event_2","data":"other-data"}'`,
+      `printf '%s\\n' '{"type":"future_schema_event_3","data":"more-data"}'`,
+      'exit 0',
+    ]);
+
+    const result = await dispatch('sys', 'user', {
+      command: script,
+      cwd: dir,
+      model: 'test-model',
+      route: 'ollama-cloud',
+      timeout_ms: 5000,
+    });
+
+    // MUST be protocol-unsupported, not silent success.
+    assert.ok(
+      result.haltEnvelope && result.haltEnvelope.halt === 'claude-cli-protocol-unsupported',
+      `all-unknown-events must produce protocol-unsupported halt; got: ${JSON.stringify({ halt: result.haltEnvelope, responseText: result.responseText, warnings: result.warnings })}`,
+    );
+    assert.equal(result.haltEnvelope.terminal, true,
+      'protocol-unsupported halt must be terminal');
+    assert.ok(result.haltEnvelope.resume_hint.length > 0,
+      'protocol-unsupported halt must have a resume_hint');
+    // responseText must be empty (no recognized content).
+    assert.equal(result.responseText, '',
+      'responseText must be empty when all events were unknown schema types');
+    // Must NOT be an ok-success (no haltEnvelope).
+    assert.ok(result.haltEnvelope !== undefined && result.haltEnvelope !== null,
+      'must not return ok-success with missing haltEnvelope');
+
+    // No canary leaks.
     assert.ok(!resultContainsCanary(result));
   } finally {
     cleanup();
