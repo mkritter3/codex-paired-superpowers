@@ -281,8 +281,40 @@ test('redactSecretFields: cycle-safe — does not throw on circular references',
   // Should not throw.
   const result = redactSecretFields(obj);
   assert.equal(result.a, 1);
-  // The cycle is broken by returning the already-visited object.
+  // Cycle is handled — result must exist.
   assert.ok(result !== undefined);
+});
+
+test('redactSecretFields: shared reference with canary — both paths are redacted', () => {
+  // inner is referenced by BOTH outer.a and outer.b.
+  // The second visit (outer.b) must return the REDACTED clone, not the original.
+  const inner = { token: 'ollama-tok-test-canary-abc123' };
+  const outer = { a: inner, b: inner };
+  const result = redactSecretFields(outer);
+  assert.equal(result.a.token, '<REDACTED>',
+    'outer.a.token must be redacted');
+  assert.equal(result.b.token, '<REDACTED>',
+    'outer.b.token must be redacted — shared reference must not leak canary');
+  assert.ok(!JSON.stringify(result).includes('ollama-tok-test-canary-abc123'),
+    'canary must not appear anywhere in the redacted result');
+});
+
+test('redactSecretFields: cyclic reference with canary — fully redacted, no throw', () => {
+  // Self-referential object with a canary.
+  const obj = { token: 'sk-ant-canary-xyz789', safe: 'safe-value' };
+  obj.self = obj;
+  // Should not throw.
+  let result;
+  assert.doesNotThrow(() => {
+    result = redactSecretFields(obj);
+  }, 'redactSecretFields must not throw on cyclic input');
+  assert.equal(result.token, '<REDACTED>',
+    'canary on cyclic object must be redacted');
+  assert.equal(result.safe, 'safe-value',
+    'safe fields must be preserved through cycle handling');
+  // result.self is the clone of the cyclic node — it should not contain the canary either.
+  assert.equal(result.self.token, '<REDACTED>',
+    'canary accessed via the self-reference path must also be redacted');
 });
 
 test('redactSecretFields: preserves numbers, booleans, null, undefined', () => {
