@@ -65,6 +65,46 @@ test('parseImplementersBlock: returns null for empty slice section', () => {
   assert.equal(result, null);
 });
 
+test('parseImplementersBlock: malformed Implementers block with no member_id throws', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '- adapter: claude-cli',
+    '  model: kimi-k2.6:cloud',
+    '  files:',
+    '    - lib/a.js',
+  ].join('\n');
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: present empty Implementers block throws malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '',
+    '**Commit:** ...',
+  ].join('\n');
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
 // ── 3 implementers allowed without high_cost ──────────────────────────────────
 
 test('parseImplementersBlock: 3 implementers allowed without high_cost', () => {
@@ -148,6 +188,40 @@ test('parseImplementersBlock: 4 implementers with high_cost: true but empty rati
 test('parseImplementersBlock: empty-string high_cost_rationale treated as missing', () => {
   // Confirm that a whitespace-only rationale is also treated as missing.
   const plan = buildPlan({ high_cost: true, high_cost_rationale: '   ' });
+  const sliceSection = buildSliceSection([
+    { member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0', files: ['lib/a.js'] },
+    { member_id: 'expert-implementer@codex:gpt-5.5#0', files: ['lib/b.js'] },
+    { member_id: 'expert-implementer@claude:glm-4.7:cloud#0', files: ['lib/c.js'] },
+    { member_id: 'expert-implementer@claude:kimi-k2.6:cloud#1', files: ['lib/d.js'] },
+  ]);
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.equal(err.code, 'implementer-high-cost-rationale-missing');
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: quoted empty high_cost_rationale treated as missing', () => {
+  const plan = buildPlan({ high_cost: true, high_cost_rationale: '""' });
+  const sliceSection = buildSliceSection([
+    { member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0', files: ['lib/a.js'] },
+    { member_id: 'expert-implementer@codex:gpt-5.5#0', files: ['lib/b.js'] },
+    { member_id: 'expert-implementer@claude:glm-4.7:cloud#0', files: ['lib/c.js'] },
+    { member_id: 'expert-implementer@claude:kimi-k2.6:cloud#1', files: ['lib/d.js'] },
+  ]);
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.equal(err.code, 'implementer-high-cost-rationale-missing');
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: quoted whitespace high_cost_rationale treated as missing', () => {
+  const plan = buildPlan({ high_cost: true, high_cost_rationale: '"   "' });
   const sliceSection = buildSliceSection([
     { member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0', files: ['lib/a.js'] },
     { member_id: 'expert-implementer@codex:gpt-5.5#0', files: ['lib/b.js'] },
@@ -250,6 +324,73 @@ test('parseImplementersBlock: missing files throws implementer-claimed-files-mis
   );
 });
 
+test('parseImplementersBlock: missing adapter throws implementer-directive-malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '- member_id: expert-implementer@claude:kimi-k2.6:cloud#0',
+    '  model: kimi-k2.6:cloud',
+    '  required: true',
+    '  files:',
+    '    - lib/a.js',
+  ].join('\n');
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: missing model throws implementer-directive-malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '- member_id: expert-implementer@claude:kimi-k2.6:cloud#0',
+    '  adapter: claude-cli',
+    '  required: true',
+    '  files:',
+    '    - lib/a.js',
+  ].join('\n');
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: unknown adapter throws implementer-directive-malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '- member_id: expert-implementer@claude:kimi-k2.6:cloud#0',
+    "  adapter: 'gemini-cli'",
+    '  model: kimi-k2.6:cloud',
+    '  required: true',
+    '  files:',
+    '    - lib/a.js',
+  ].join('\n');
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
 // ── Overlapping files without overlap_rationale throws ────────────────────────
 
 test('parseImplementersBlock: overlapping files without overlap_rationale throws', () => {
@@ -337,6 +478,25 @@ test('parseImplementersBlock: returned implementer entries have expected shape',
   assert.equal(impl.model, 'kimi-k2.6:cloud');
   assert.equal(impl.required, true);
   assert.deepEqual(impl.files, ['lib/a.js', 'lib/b.js']);
+});
+
+test('parseImplementersBlock: quoted adapter and model scalars are accepted', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '- member_id: expert-implementer@claude:kimi-k2.6:cloud#0',
+    "  adapter: 'claude-cli'",
+    "  model: 'kimi-k2.6:cloud'",
+    '  required: true',
+    '  files:',
+    '    - lib/a.js',
+  ].join('\n');
+  const result = parseImplementersBlock(plan, sliceSection);
+  assert.ok(result !== null);
+  assert.equal(result.implementers[0].adapter, 'claude-cli');
+  assert.equal(result.implementers[0].model, 'kimi-k2.6:cloud');
 });
 
 test('parseImplementersBlock: required: false is preserved', () => {
