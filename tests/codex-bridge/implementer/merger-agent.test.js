@@ -1607,6 +1607,50 @@ test('critical.residual-risk: not-a-git-repo → halt merger-integration-not-a-g
 
 // ── forensic preservation: no git-reset across failure paths ─────────────────
 
+// ── abortSignal ───────────────────────────────────────────────────────────────
+
+test('dispatch.abortSignal: merger dispatch receives a real AbortSignal that is not aborted', async () => {
+  const { repoRoot, integrationWt, mcSpec, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    let capturedRequest = null;
+    const spyDispatchFn = async (request) => {
+      capturedRequest = request;
+      for (const f of conflictedFiles) {
+        writeFileSync(join(integrationWt, f), 'console.log("resolved");\n');
+      }
+      return { outcome: 'completed' };
+    };
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: spyDispatchFn,
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.equal(result.halted, false, 'expected successful merge');
+    assert.ok(capturedRequest !== null, 'dispatchFn should have been called');
+    assert.ok(
+      capturedRequest.abortSignal instanceof AbortSignal,
+      `abortSignal must be an AbortSignal instance, got: ${capturedRequest.abortSignal}`
+    );
+    assert.equal(capturedRequest.abortSignal.aborted, false, 'abortSignal must not be aborted');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
 test('forensic preservation: worktree is NOT git-reset on any halt path', async () => {
   const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
   try {
