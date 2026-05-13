@@ -168,7 +168,15 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'implementer-member-id-invalid',
     'implementer-required-child-failed',
     'mailbox-delivery-failed',
+    'merge-audit-divergence',
+    'merge-branch-unknown',
+    'merge-commit-failed',
+    'merge-conflict',
     'merge-conflict-double-ship-failed',
+    'merge-git-failure',
+    'merge-integration-busy',
+    'merge-integration-dirty',
+    'merge-integration-not-a-git-repo',
     'merger-out-of-scope',
     'ollama-cloud-route-invalid',
     'override-cli-unavailable',
@@ -186,6 +194,9 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'user-input-required',
     'worktree-create-failed',
     'worktree-dirty-before-dispatch',
+    'worktree-not-a-git-repo',
+    'worktree-path-conflict',
+    'worktree-path-escape',
   ]);
 
   assert.deepEqual(transientInMap, [
@@ -483,7 +494,143 @@ test('v0.10.0: isTerminalHalt returns true for all 18 new codes', () => {
   }
 });
 
-test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transient + 18 new = 37)', () => {
+test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transient + 18 new = 37, pre-slice-7)', () => {
+  // NOTE: This test was the original slice-1 count snapshot.
+  // After slice-7 adds 11 more codes, use the slice-7 count snapshot test below.
+  // We keep this test in a form that matches the actual count (48 after slice 7).
+  // The original 37 = 16 legacy terminal + 3 transient + 18 v0.10.0 new.
+  // Slice 7 adds 11 more, so total = 48.
+  assert.equal(HALT_MAP.size, 48, 'HALT_MAP must have exactly 48 entries (37 pre-slice-7 + 11 slice-7 additions)');
+});
+
+// ── v0.10.0 slice-7: 11 new halt codes (8 merge + 3 retroactive worktree) ───
+
+const SLICE7_NEW_HALT_CODES = [
+  // 8 merge coordinator halt codes
+  'merge-conflict',
+  'merge-integration-dirty',
+  'merge-integration-busy',
+  'merge-integration-not-a-git-repo',
+  'merge-branch-unknown',
+  'merge-git-failure',
+  'merge-commit-failed',
+  'merge-audit-divergence',
+  // 3 retroactive worktree halt codes (slice 3 used them without registering)
+  'worktree-path-escape',
+  'worktree-path-conflict',
+  'worktree-not-a-git-repo',
+];
+
+test('slice-7: all 11 new halt codes are present in HALT_MAP', () => {
+  for (const code of SLICE7_NEW_HALT_CODES) {
+    assert.ok(HALT_MAP.has(code), `HALT_MAP must contain "${code}"`);
+  }
+});
+
+test('slice-7: all 11 new halt codes are mapped to terminal: true', () => {
+  for (const code of SLICE7_NEW_HALT_CODES) {
+    const entry = HALT_MAP.get(code);
+    assert.ok(entry, `HALT_MAP must contain "${code}"`);
+    assert.equal(entry.terminal, true, `"${code}" must be terminal: true`);
+  }
+});
+
+test('slice-7: all 11 new halt codes have non-empty resume_hint', () => {
+  for (const code of SLICE7_NEW_HALT_CODES) {
+    const entry = HALT_MAP.get(code);
+    assert.ok(entry, `HALT_MAP must contain "${code}"`);
+    assert.ok(
+      typeof entry.resume_hint === 'string' && entry.resume_hint.length > 0,
+      `"${code}" must have a non-empty resume_hint`
+    );
+  }
+});
+
+test('slice-7: isTerminalHalt returns true for all 11 new halt codes', () => {
+  for (const code of SLICE7_NEW_HALT_CODES) {
+    const env = wrapAsHaltEnvelope(code);
+    assert.equal(
+      isTerminalHalt(env),
+      true,
+      `isTerminalHalt must return true for "${code}"`
+    );
+  }
+});
+
+test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48)', () => {
   // Snapshot the total count so additions are always explicit.
-  assert.equal(HALT_MAP.size, 37, 'HALT_MAP must have exactly 37 entries');
+  assert.equal(HALT_MAP.size, 48, 'HALT_MAP must have exactly 48 entries after slice-7 additions');
+});
+
+test('slice-7: snapshot terminal vs transient classification includes new codes', () => {
+  // Updated snapshot with 11 new terminal codes added.
+  const terminalInMap = [];
+  const transientInMap = [];
+  for (const [reason, entry] of HALT_MAP) {
+    if (entry.terminal) {
+      terminalInMap.push(reason);
+    } else {
+      transientInMap.push(reason);
+    }
+  }
+
+  terminalInMap.sort();
+  transientInMap.sort();
+
+  // Transient set unchanged.
+  assert.deepEqual(transientInMap, [
+    'dispatch-retry-eligible',
+    'panel-quorum-lost',
+    'transient-network',
+  ]);
+
+  // Terminal set now includes all 11 new codes.
+  const expectedTerminal = [
+    'claude-cli-auth-missing',
+    'claude-cli-auth-rejected',
+    'claude-cli-protocol-unsupported',
+    'cli-dispatch-failed',
+    'codex-blocked',
+    'codex-cli-blocked',
+    'codex-needs-context',
+    'expert-blocker',
+    'implementer-cap-exceeded',
+    'implementer-claimed-file-violation',
+    'implementer-claimed-files-missing',
+    'implementer-directive-malformed',
+    'implementer-high-cost-rationale-missing',
+    'implementer-member-id-invalid',
+    'implementer-required-child-failed',
+    'mailbox-delivery-failed',
+    'merge-audit-divergence',
+    'merge-branch-unknown',
+    'merge-commit-failed',
+    'merge-conflict',
+    'merge-conflict-double-ship-failed',
+    'merge-git-failure',
+    'merge-integration-busy',
+    'merge-integration-dirty',
+    'merge-integration-not-a-git-repo',
+    'merger-out-of-scope',
+    'ollama-cloud-route-invalid',
+    'override-cli-unavailable',
+    'override-variant-unknown',
+    'panel-config-invalid',
+    'panel-disagreement',
+    'panel-quorum-unavailable',
+    'parallel-files-malformed',
+    'post-merge-review-revise',
+    'reconciler-failed',
+    'role-composer-fan-out-unjustified',
+    'sidecar-replay-concurrent-order-invalid',
+    'subagent-blocked',
+    'subagent-needs-context',
+    'user-input-required',
+    'worktree-create-failed',
+    'worktree-dirty-before-dispatch',
+    'worktree-not-a-git-repo',
+    'worktree-path-conflict',
+    'worktree-path-escape',
+  ];
+  assert.deepEqual(terminalInMap, expectedTerminal);
 });
