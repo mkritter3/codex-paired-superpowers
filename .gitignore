@@ -13,3 +13,6 @@ docs/specs/*.codex.json
 # v0.4.1+ sidecar location (transient runtime state by default;
 # explicit `git mv` from slice 4 preserved tracked audit trails)
 .superpowers-codex-paired/
+
+# v0.7.0 worktree-isolation directory for autopilot subagent dispatch
+.git-worktrees/
