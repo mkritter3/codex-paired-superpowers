@@ -177,7 +177,18 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'merge-integration-busy',
     'merge-integration-dirty',
     'merge-integration-not-a-git-repo',
+    // slice-8 new codes (sorted)
+    'merge-review-dispatch-failed',
+    'merge-review-malformed',
+    'merger-audit-divergence',
+    'merger-commit-failed',
+    'merger-conflict-state-mismatch',
+    'merger-dispatch-failed',
+    'merger-integration-busy',
+    'merger-integration-not-a-git-repo',
     'merger-out-of-scope',
+    'merger-prompt-too-large',
+    'merger-unresolved-conflicts',
     'ollama-cloud-route-invalid',
     'override-cli-unavailable',
     'override-variant-unknown',
@@ -496,11 +507,10 @@ test('v0.10.0: isTerminalHalt returns true for all 18 new codes', () => {
 
 test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transient + 18 new = 37, pre-slice-7)', () => {
   // NOTE: This test was the original slice-1 count snapshot.
-  // After slice-7 adds 11 more codes, use the slice-7 count snapshot test below.
-  // We keep this test in a form that matches the actual count (48 after slice 7).
+  // After slice-7 adds 11 more codes, slice-8 adds 10 more, total = 58.
   // The original 37 = 16 legacy terminal + 3 transient + 18 v0.10.0 new.
-  // Slice 7 adds 11 more, so total = 48.
-  assert.equal(HALT_MAP.size, 48, 'HALT_MAP must have exactly 48 entries (37 pre-slice-7 + 11 slice-7 additions)');
+  // Slice 7 adds 11 more, slice 8 adds 10 more, so total = 58.
+  assert.equal(HALT_MAP.size, 58, 'HALT_MAP must have exactly 58 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 additions)');
 });
 
 // ── v0.10.0 slice-7: 11 new halt codes (8 merge + 3 retroactive worktree) ───
@@ -520,6 +530,73 @@ const SLICE7_NEW_HALT_CODES = [
   'worktree-path-conflict',
   'worktree-not-a-git-repo',
 ];
+
+// ── v0.10.0 slice-8: 10 new merger-agent halt codes ──────────────────────────
+
+const SLICE8_NEW_HALT_CODES = [
+  'merger-integration-not-a-git-repo',
+  'merger-integration-busy',
+  'merger-conflict-state-mismatch',
+  'merger-prompt-too-large',
+  'merger-dispatch-failed',
+  'merger-unresolved-conflicts',
+  'merge-review-malformed',
+  'merge-review-dispatch-failed',
+  'merger-commit-failed',
+  'merger-audit-divergence',
+];
+
+test('slice-8: all 10 new merger halt codes are present in HALT_MAP', () => {
+  for (const code of SLICE8_NEW_HALT_CODES) {
+    assert.ok(HALT_MAP.has(code), `HALT_MAP must contain "${code}"`);
+  }
+});
+
+test('slice-8: all 10 new merger halt codes are mapped to terminal: true', () => {
+  for (const code of SLICE8_NEW_HALT_CODES) {
+    const entry = HALT_MAP.get(code);
+    assert.ok(entry, `HALT_MAP must contain "${code}"`);
+    assert.equal(entry.terminal, true, `"${code}" must be terminal: true`);
+  }
+});
+
+test('slice-8: all 10 new merger halt codes have non-empty resume_hint', () => {
+  for (const code of SLICE8_NEW_HALT_CODES) {
+    const entry = HALT_MAP.get(code);
+    assert.ok(entry, `HALT_MAP must contain "${code}"`);
+    assert.ok(
+      typeof entry.resume_hint === 'string' && entry.resume_hint.length > 0,
+      `"${code}" must have a non-empty resume_hint`
+    );
+  }
+});
+
+test('slice-8: isTerminalHalt returns true for all 10 new merger halt codes', () => {
+  for (const code of SLICE8_NEW_HALT_CODES) {
+    const env = wrapAsHaltEnvelope(code);
+    assert.equal(
+      isTerminalHalt(env),
+      true,
+      `isTerminalHalt must return true for "${code}"`
+    );
+  }
+});
+
+test('slice-8: wrapAsHaltEnvelope returns correct shape for all 10 new merger codes', () => {
+  for (const code of SLICE8_NEW_HALT_CODES) {
+    const env = wrapAsHaltEnvelope(code);
+    assert.equal(env.halt, code, `envelope.halt should equal "${code}"`);
+    assert.equal(env.terminal, true, `"${code}" should be terminal: true`);
+    assert.ok(
+      typeof env.resume_hint === 'string' && env.resume_hint.length > 0,
+      `"${code}" should have a non-empty resume_hint`
+    );
+  }
+});
+
+test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new = 58)', () => {
+  assert.equal(HALT_MAP.size, 58, 'HALT_MAP must have exactly 58 entries after slice-8 additions');
+});
 
 test('slice-7: all 11 new halt codes are present in HALT_MAP', () => {
   for (const code of SLICE7_NEW_HALT_CODES) {
@@ -557,9 +634,10 @@ test('slice-7: isTerminalHalt returns true for all 11 new halt codes', () => {
   }
 });
 
-test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48)', () => {
+test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48, but slice-8 adds 10 more = 58)', () => {
   // Snapshot the total count so additions are always explicit.
-  assert.equal(HALT_MAP.size, 48, 'HALT_MAP must have exactly 48 entries after slice-7 additions');
+  // After slice-8: 48 + 10 = 58.
+  assert.equal(HALT_MAP.size, 58, 'HALT_MAP must have exactly 58 entries after slice-7 + slice-8 additions');
 });
 
 test('slice-7: snapshot terminal vs transient classification includes new codes', () => {
@@ -584,7 +662,7 @@ test('slice-7: snapshot terminal vs transient classification includes new codes'
     'transient-network',
   ]);
 
-  // Terminal set now includes all 11 new codes.
+  // Terminal set now includes all 11 slice-7 codes + 10 slice-8 codes.
   const expectedTerminal = [
     'claude-cli-auth-missing',
     'claude-cli-auth-rejected',
@@ -611,7 +689,18 @@ test('slice-7: snapshot terminal vs transient classification includes new codes'
     'merge-integration-busy',
     'merge-integration-dirty',
     'merge-integration-not-a-git-repo',
+    // slice-8 new codes (sorted)
+    'merge-review-dispatch-failed',
+    'merge-review-malformed',
+    'merger-audit-divergence',
+    'merger-commit-failed',
+    'merger-conflict-state-mismatch',
+    'merger-dispatch-failed',
+    'merger-integration-busy',
+    'merger-integration-not-a-git-repo',
     'merger-out-of-scope',
+    'merger-prompt-too-large',
+    'merger-unresolved-conflicts',
     'ollama-cloud-route-invalid',
     'override-cli-unavailable',
     'override-variant-unknown',

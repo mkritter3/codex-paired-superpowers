@@ -942,6 +942,46 @@ test('startImplementerRun: rejects member with missing adapter', async () => {
   }
 });
 
+// ── compat.breaking slice-8: 4 new event types accepted ─────────────────────
+
+const SLICE8_NEW_EVENT_TYPES = [
+  'merger_started',
+  'merger_completed',
+  'merge_review_claude',
+  'merge_review_codex',
+];
+
+for (const eventType of SLICE8_NEW_EVENT_TYPES) {
+  test(`appendImplementerEventLocked: accepts new slice-8 event_type "${eventType}"`, async () => {
+    const { dir, spec } = makeSpec();
+    try {
+      const runId = await startBasicRun(spec);
+      const r = await appendImplementerEventLocked(
+        spec,
+        baseEvent({ implementer_run_id: runId, event_type: eventType })
+      );
+      assert.equal(r.event_seq, 1, `event_seq should be 1 for event_type "${eventType}"`);
+      const stored = readImplementerRun(spec, 'slice-3').events[0];
+      assert.equal(stored.event_type, eventType, `stored event_type should be "${eventType}"`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('appendImplementerEventLocked: still rejects unknown event_type after slice-8 additions', async () => {
+  const { dir, spec } = makeSpec();
+  try {
+    const runId = await startBasicRun(spec);
+    await assert.rejects(
+      () => appendImplementerEventLocked(spec, baseEvent({ implementer_run_id: runId, event_type: 'unknown_merger_event' })),
+      /event_type/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ── helper: locate the sidecar file path (mirrors sidecar.js logic) ─────────
 
 function __sidecarFilePath(specPath) {
