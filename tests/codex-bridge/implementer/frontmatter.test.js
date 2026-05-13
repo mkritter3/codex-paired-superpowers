@@ -32,9 +32,10 @@ function buildPlan({ high_cost, high_cost_rationale } = {}) {
 function buildSliceSection(members) {
   const lines = ['## Slice 1: Test', '', '**Implementers:**'];
   for (const m of members) {
+    const parsedDefaults = parseMemberIdDefaults(m.member_id);
     lines.push(`- member_id: ${m.member_id}`);
-    lines.push(`  adapter: ${m.adapter ?? 'claude-cli'}`);
-    lines.push(`  model: ${m.model ?? 'kimi-k2.6:cloud'}`);
+    lines.push(`  adapter: ${m.adapter ?? parsedDefaults.adapter}`);
+    lines.push(`  model: ${m.model ?? parsedDefaults.model}`);
     lines.push(`  required: ${m.required ?? true}`);
     if (m.files && m.files.length > 0) {
       lines.push('  files:');
@@ -48,6 +49,26 @@ function buildSliceSection(members) {
   }
   lines.push('', '**Commit:** ...');
   return lines.join('\n');
+}
+
+/**
+ * Derive adapter/model defaults from the member_id for helper-generated
+ * happy paths.
+ *
+ * @param {string} memberId
+ * @returns {{ adapter: string, model: string }}
+ */
+function parseMemberIdDefaults(memberId) {
+  const atIdx = memberId.indexOf('@');
+  const hashIdx = memberId.lastIndexOf('#');
+  const runtime = atIdx === -1 || hashIdx === -1 ? '' : memberId.slice(atIdx + 1, hashIdx);
+  const colonIdx = runtime.indexOf(':');
+  const cliKind = colonIdx === -1 ? 'claude' : runtime.slice(0, colonIdx);
+  const model = colonIdx === -1 ? 'kimi-k2.6:cloud' : runtime.slice(colonIdx + 1);
+  return {
+    adapter: cliKind === 'codex' ? 'codex-cli' : 'claude-cli',
+    model,
+  };
 }
 
 // ── Returns null when no Implementers block present ───────────────────────────
@@ -386,6 +407,69 @@ test('parseImplementersBlock: unknown adapter throws implementer-directive-malfo
     (err) => {
       assert.ok(err instanceof Error);
       assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: claude member_id with codex adapter throws malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = buildSliceSection([
+    {
+      member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0',
+      adapter: 'codex-cli',
+      files: ['lib/a.js'],
+    },
+  ]);
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      assert.match(err.message, /cliKind='claude'/);
+      assert.match(err.message, /adapter='codex-cli'/);
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: codex member_id with claude adapter throws malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = buildSliceSection([
+    {
+      member_id: 'expert-implementer@codex:gpt-5.5#0',
+      adapter: 'claude-cli',
+      files: ['lib/a.js'],
+    },
+  ]);
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      assert.match(err.message, /cliKind='codex'/);
+      assert.match(err.message, /adapter='claude-cli'/);
+      return true;
+    }
+  );
+});
+
+test('parseImplementersBlock: member_id model mismatch throws malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = buildSliceSection([
+    {
+      member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0',
+      model: 'glm-4.7:cloud',
+      files: ['lib/a.js'],
+    },
+  ]);
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      assert.match(err.message, /modelId='kimi-k2\.6:cloud'/);
+      assert.match(err.message, /model='glm-4\.7:cloud'/);
       return true;
     }
   );
