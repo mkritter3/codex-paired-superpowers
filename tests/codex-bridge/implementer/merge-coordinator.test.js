@@ -517,12 +517,63 @@ test('edge: same-line conflict — first merges, second halts; mergedSoFar === 1
     assert.equal(result.conflictedMemberId, 'memberB');
     assert.equal(result.conflictedFilesTotal, 1);
 
-    // Integration worktree should have no tracked changes after merge abort
-    // (untracked files like .codex-paired/ are not counted as dirty)
+    // Integration worktree MUST preserve the conflicted state after halt so that
+    // slice 8's merger agent can resolve conflicts in place.
+    // See: docs/architecture/2026-05-12-v0.10.0-implementer-experts-design.md:309
     const statusOut = execFileSync('git', ['-C', integrationWt, 'status', '--porcelain'], { encoding: 'utf8' });
-    const trackedChanges = statusOut.split('\n')
-      .filter(line => line.length >= 2 && !line.startsWith('??') && !line.startsWith('!!'));
-    assert.equal(trackedChanges.length, 0, `integration worktree should have no tracked changes after conflict abort, got: ${statusOut.trim()}`);
+    // Status output must be non-empty (conflicted files show as UU)
+    assert.ok(statusOut.trim().length > 0, `integration worktree status must be non-empty after conflict halt (conflict state must be preserved), got: ${JSON.stringify(statusOut)}`);
+    // There must be at least one UU (unmerged) entry
+    const unmergedLines = statusOut.split('\n')
+      .filter(line => line.startsWith('UU') || line.startsWith('AA') || line.startsWith('DD') || line.startsWith('AU') || line.startsWith('UA'));
+    assert.ok(unmergedLines.length > 0, `must have unmerged (UU) entries in status after conflict halt, got: ${statusOut.trim()}`);
+    // git diff --name-only --diff-filter=U must also show the conflicted file
+    const diffUOut = execFileSync('git', ['-C', integrationWt, 'diff', '--name-only', '--diff-filter=U'], { encoding: 'utf8' });
+    assert.ok(diffUOut.trim().includes('lib/conflict.js'), `conflicted file must appear in diff --diff-filter=U after halt, got: ${diffUOut.trim()}`);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── critical: conflict-state preservation handoff invariant ──────────────────
+// Asserts that after merge-conflict halt, the conflicted file CONTAINS all three
+// Git conflict marker strings so the slice 8 merger agent can work in-place.
+
+test('critical: conflict-state preserved — conflicted file contains all 3 Git marker strings after halt', async () => {
+  const { repoRoot } = makeBaseRepo();
+  try {
+    const integrationWt = addIntegrationWorktree(repoRoot);
+
+    // Both branches write different content to the same file on the same line
+    makeBranch(repoRoot, 'impl/branch-A', { 'lib/marker-test.js': 'const val = "FROM_A";\n' });
+    makeBranch(repoRoot, 'impl/branch-B', { 'lib/marker-test.js': 'const val = "FROM_B";\n' });
+
+    const memberSpecs = {
+      'memberA': { branchName: 'impl/branch-A', runtimeKind: 'codex-cli', worktreeId: 'wt-A' },
+      'memberB': { branchName: 'impl/branch-B', runtimeKind: 'codex-cli', worktreeId: 'wt-B' },
+    };
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-7', memberSpecs);
+    const { members, memberOrder } = buildCoordinatorArgs(memberSpecs);
+
+    const result = await mergeImplementerBranches({
+      integrationWorktree: integrationWt,
+      members,
+      memberOrder,
+      specPath: spec,
+      sliceId: 'slice-7',
+      implementerRunId,
+    });
+
+    assert.equal(result.halted, true);
+    assert.equal(result.halt, 'merge-conflict');
+
+    // Read the conflicted file directly — it must contain all 3 Git conflict markers
+    const { readFileSync } = await import('node:fs');
+    const conflictedContent = readFileSync(join(integrationWt, 'lib/marker-test.js'), 'utf8');
+    assert.ok(conflictedContent.includes('<<<<<<<'), `conflicted file must contain '<<<<<<<' marker, got: ${JSON.stringify(conflictedContent)}`);
+    assert.ok(conflictedContent.includes('======='), `conflicted file must contain '=======' marker, got: ${JSON.stringify(conflictedContent)}`);
+    assert.ok(conflictedContent.includes('>>>>>>>'), `conflicted file must contain '>>>>>>>' marker, got: ${JSON.stringify(conflictedContent)}`);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
