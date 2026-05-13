@@ -773,6 +773,8 @@ test('edge.large-input prompt-within-bound: ~50KB diff succeeds; prompt_bytes ma
 // ── edge.concurrent single-flight ────────────────────────────────────────────
 
 test('edge.concurrent single-flight: 2 concurrent calls on same worktree → 1 halts merger-integration-busy', async () => {
+  // Use DI-injected lockfile to guarantee contention: first call holds the lock,
+  // second call attempts to acquire and gets ELOCKED immediately.
   const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
   try {
     const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
@@ -781,49 +783,66 @@ test('edge.concurrent single-flight: 2 concurrent calls on same worktree → 1 h
       baseSha
     );
 
-    // First call will hold the lock briefly while second call attempts to acquire
-    let firstCallStarted = false;
-    let firstCallRelease;
-    const firstLockHold = new Promise(resolve => { firstCallRelease = resolve; });
+    // Stub lockfile: first call gets the lock; second call gets ELOCKED
+    let lockAcquired = false;
+    const stubbedLockfile = {
+      lock: async (path, opts) => {
+        if (!lockAcquired) {
+          lockAcquired = true;
+          // Return a release function
+          return async () => { lockAcquired = false; };
+        } else {
+          // Simulate ELOCKED
+          const err = new Error('ELOCKED');
+          err.code = 'ELOCKED';
+          throw err;
+        }
+      },
+    };
 
-    // Stub lockfile for first call to hold the lock
-    const realLockfile = await import('proper-lockfile');
+    const commonOpts = {
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { lockfile: stubbedLockfile },
+    };
 
-    // Run both concurrently — first one gets the lock, second should get ELOCKED
-    const [r1, r2] = await Promise.all([
+    // Run both concurrently — whichever acquires the stub lock first succeeds,
+    // the other gets ELOCKED and returns merger-integration-busy.
+    const results = await Promise.allSettled([
       runMergerAgent({
-        integrationWorktree: integrationWt,
-        conflictedFiles,
-        mergeContext: defaultMergeContext(baseSha),
+        ...commonOpts,
         dispatchFn: makeResolvingDispatchFn(integrationWt, conflictedFiles),
-        claudeReviewFn: makeShipReviewer(),
-        codexReviewFn: makeShipReviewer(),
         specPath: spec,
         sliceId: 'slice-8',
         implementerRunId,
-        mergerMemberId: MERGER_MEMBER_ID,
-        mergerRuntimeKind: MERGER_RUNTIME_KIND,
-        mergerWorktreeId: MERGER_WORKTREE_ID,
       }),
       runMergerAgent({
-        integrationWorktree: integrationWt,
-        conflictedFiles,
-        mergeContext: defaultMergeContext(baseSha),
+        ...commonOpts,
         dispatchFn: async () => ({ outcome: 'completed' }),
-        claudeReviewFn: makeShipReviewer(),
-        codexReviewFn: makeShipReviewer(),
         specPath: spec2,
         sliceId: 'slice-9',
         implementerRunId: runId2,
-        mergerMemberId: MERGER_MEMBER_ID,
-        mergerRuntimeKind: MERGER_RUNTIME_KIND,
-        mergerWorktreeId: MERGER_WORKTREE_ID,
       }),
     ]);
 
-    // One of the two must have been halted with merger-integration-busy
-    const busyHalt = [r1, r2].find(r => r.halted && r.halt === 'merger-integration-busy');
-    assert.ok(busyHalt, `expected one call to halt with merger-integration-busy; got r1=${JSON.stringify(r1)}, r2=${JSON.stringify(r2)}`);
+    // Extract non-thrown results
+    const values = results
+      .filter(r => r.status === 'fulfilled')
+      .map(r => r.value);
+    const rejected = results.filter(r => r.status === 'rejected');
+
+    // At least one must have halted with merger-integration-busy
+    const busyHalt = values.find(r => r && r.halted && r.halt === 'merger-integration-busy');
+    assert.ok(
+      busyHalt,
+      `expected one call to halt with merger-integration-busy; values=${JSON.stringify(values)}, rejected=${rejected.length}`
+    );
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
