@@ -25,6 +25,7 @@ import {
 import { writeToMailbox } from '../../../lib/codex-bridge/mailbox.js';
 import { writeBreadcrumb } from '../../../lib/codex-bridge/hook-mailbox-inject.js';
 import { redactSecretFields, containsCanary } from '../../../lib/codex-bridge/implementer/secret-redaction.js';
+import { runPostMergeReview } from '../../../lib/codex-bridge/implementer/post-merge-review.js';
 import { CANARY_TOKENS, ALL_CANARIES, hasAnyCanary } from './fixtures/canary-tokens.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -122,13 +123,119 @@ test('canary end-to-end: all 5 producer paths — no canary leaks to artifact ro
       writeBreadcrumb(dir, 'slice-3', `error with ${canary}`);
     }
 
-    // 4. Prompt-compose: canary in source data → redacted by redactSecretFields
-    for (const canary of ALL_CANARIES) {
-      const rawPrompt = `# Merger Prompt\nConflict: ${canary}\nResolve this.`;
-      const redactedPrompt = redactSecretFields(rawPrompt);
+    // 4. Prompt-compose: canary in mergedDiff → redacted by runPostMergeReview
+    //    (Critique 3 fix: use actual production path, not redactSecretFields directly)
+    {
+      const CLAUDE_REVIEWER_ID = 'reviewer@claude-cli:opus-4#0';
+      const CODEX_REVIEWER_ID = 'reviewer@codex-cli:gpt-5#0';
+
+      // Set up sidecar run for the reviewer members
+      const pmrMembers = {
+        [CLAUDE_REVIEWER_ID]: {
+          adapter: 'claude-cli',
+          model: 'opus-4',
+          required: true,
+          worktree_id: 'wt-claude-0',
+          branch: 'implementer/slice-3/claude-0',
+          claimed_files: ['lib/a.js'],
+        },
+        [CODEX_REVIEWER_ID]: {
+          adapter: 'codex-cli',
+          model: 'gpt-5',
+          required: true,
+          worktree_id: 'wt-codex-0',
+          branch: 'implementer/slice-3/codex-0',
+          claimed_files: ['lib/b.js'],
+        },
+      };
+      const { implementer_run_id: pmrRunId } = await startImplementerRun(spec, 'slice-4', {
+        base_sha: 'abc123',
+        members: pmrMembers,
+      });
+
+      // Test one representative canary (testing each would be slow; 1 proves the path)
+      const canary = ALL_CANARIES[0];
+      const bigDiff =
+        `--- a/lib/a.js\n+++ b/lib/a.js\n@@ -1,1 +1,3 @@\n` +
+        `+${'z'.repeat(500)}\n` +
+        `+leaked=${canary}\n` +
+        `+${'z'.repeat(500)}\n`;
+
+      let capturedPrompt = null;
+      const spyDispatchPanel = async (_role, request, _dispatchFns, _opts) => {
+        capturedPrompt = request.prompt;
+        return {
+          panel_id: 'panel-e2e-spy',
+          outcome: 'panel-SHIP',
+          member_results: [
+            {
+              member_id: CLAUDE_REVIEWER_ID,
+              runtime_kind: 'claude-cli',
+              parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+              parse_failure_reason: null,
+            },
+            {
+              member_id: CODEX_REVIEWER_ID,
+              runtime_kind: 'codex-cli',
+              parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+              parse_failure_reason: null,
+            },
+          ],
+          findings_by_member: [],
+          skipped_candidates: [],
+          consensus_round_ran: false,
+          aggregate: {
+            outcome: 'panel-SHIP',
+            ship_count: 2,
+            revise_count: 0,
+            parse_failure_count: 0,
+            quorum_size: 2,
+            has_quorum: true,
+            findings_by_member: [],
+          },
+        };
+      };
+
+      const pmrResult = await runPostMergeReview({
+        integrationWorktree: spec, // fake worktree path for lock derivation
+        slicePlan: 'Implement the feature.',
+        mergedDiff: bigDiff,
+        dispatchFns: new Map([
+          [CLAUDE_REVIEWER_ID, async () => ({ ok: true, result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] } })],
+          [CODEX_REVIEWER_ID, async () => ({ ok: true, result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] } })],
+        ]),
+        claudeReviewerId: CLAUDE_REVIEWER_ID,
+        codexReviewerId: CODEX_REVIEWER_ID,
+        specPath: spec,
+        sliceId: 'slice-4',
+        implementerRunId: pmrRunId,
+        reviewerMemberId: CLAUDE_REVIEWER_ID,
+        reviewerRuntimeKind: 'claude-cli',
+        reviewerWorktreeId: 'wt-claude-0',
+        _deps: {
+          lockfile: { lock: async (_path, _opts) => async () => {} },
+          lockPath: '/tmp/cps-e2e-canary-pmr.lock',
+          dispatchPanel: spyDispatchPanel,
+        },
+      });
+
+      assert.equal(pmrResult.halted, false, `runPostMergeReview should not halt: ${pmrResult.halt}`);
+      assert.ok(capturedPrompt !== null, 'dispatchPanel spy must have captured a prompt');
+
+      // Prompt length > 1000 — not collapsed to '<REDACTED>'
       assert.ok(
-        typeof redactedPrompt === 'string' && !redactedPrompt.includes(canary),
-        `Prompt redaction must remove canary: ${canary}`
+        capturedPrompt.length > 1000,
+        `prompt length ${capturedPrompt.length} — was it collapsed? Prompt-compose must NOT collapse on canary`
+      );
+      // Canary is not present
+      assert.ok(
+        capturedPrompt.indexOf(canary) === -1,
+        `prompt must not contain canary "${canary}" after redaction`
+      );
+      // '<REDACTED>' IS present
+      assert.ok(
+        capturedPrompt.indexOf('<REDACTED>') !== -1,
+        'prompt must contain <REDACTED> in place of the canary'
       );
     }
 
