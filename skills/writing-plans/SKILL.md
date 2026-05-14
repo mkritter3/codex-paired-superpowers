@@ -66,18 +66,73 @@ Look up the existing threadId from the sidecar:
 THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>")
 ```
 
-Round 1 prompt: build the plan-review prompt and invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`**:
+### Goals extraction (do this once, before Round 1)
+
+Open the spec and extract the **goals**, not the implementation. A goal is a sentence of the form *"After this ships, the user can do X"* or *"The system will guarantee invariant Y."* It is NOT a file path, a task list item, or a slice header. Concretely:
+
+- Pull from the spec's `## Goal` / `## Goals` / `## Success criteria` sections.
+- If the spec lacks an explicit goals section, derive 3-6 bullets from the user-intent block and the acceptance criteria. Each bullet is one observable outcome from the user's perspective.
+- Cross-check against archived user asks: `mcp__plugin_episodic-memory_episodic-memory__search` with the feature name. If the user has historically asked for a capability adjacent to this work, that's a goal candidate — include it or explicitly defer it under the goals block with rationale.
+- Store the extracted goals in the sidecar so they persist across rounds. The block is read on every round to keep prompt composition byte-deterministic:
+
+  ```bash
+  printf '<<<GOALS>>>\n- Goal 1...\n- Goal 2...\n<<<END_GOALS>>>' | \
+    node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-goals --specPath "<spec-path>"
+  ```
+
+  Read it back any time:
+
+  ```bash
+  node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-get-goals --specPath "<spec-path>" | jq -r .block
+  ```
+
+  Goals are normally pinned during brainstorming (Phase 2). If the spec arrived without a persisted goals block (legacy specs from before v0.10.1, or specs imported from elsewhere), extract and persist them here before invoking Round 1. Goals can be revised between rounds by the user — `sidecar-set-goals` overwrites the prior value.
+
+The goals block is what Codex critiques against — NOT the plan as written. This is how both sides aim at the right result instead of optimizing the wrong target.
+
+### Round 1 prompt
+
+Build the plan-review prompt and invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`**:
 
 ```json
 {
   "threadId": "<THREAD_ID>",
-  "prompt": "Phase: plan-review\nRound: 1\nThe spec we shipped together is at <spec-path>. I have drafted the implementation plan at <plan-path>.\nReview the plan against this spec. Critique with L11 rigor. Specifically check:\n  1. Slice boundaries: does each slice produce something testable on its own?\n  2. Task granularity: are steps 2-5 minutes each?\n  3. Missing tasks: any spec requirement without a covering task?\n  4. TDD adequacy: is the red-green-refactor explicit?\n  5. File decomposition: any file growing too large?\n  6. Type/name consistency across tasks?\n\nEnd with the required verdict block.\n<<<PLAN>>>\n<full plan text>\n<<<END_PLAN>>>"
+  "prompt": "Phase: plan-review\nRound: 1\n\n<<<GOALS>>>\n<extracted goals — one bullet per observable user outcome; NO implementation references>\n<<<END_GOALS>>>\n\nThe spec we shipped together is at <spec-path>. I have drafted the implementation plan at <plan-path>.\n\nYour job in this round has two parts:\n\nPART A — Independent codebase audit. Use your file-system tools. Do NOT take the plan's claims at face value. Specifically:\n  1. For every file path the plan cites as NEW, verify it does not already exist: `find <repo-root> -path '<cited-path>'`.\n  2. For every primitive the plan proposes to build (new module, new schema, new dispatcher, new audit format), grep the repo for prior art: `grep -rn '<capability-keyword>' lib/ src/ skills/` and `git log --all --oneline --grep='<keyword>'`. If the primitive exists, the plan MUST reuse or explicitly justify replacement. Reinvention without rationale is a SHIP-blocking critique.\n  3. If the goals reference a user-historical capability, search for prior implementations in git history. The codex-paired-superpowers repo has multiple prior features (v0.7.3 dependency-graph, v0.7.3 mailbox peer writes, v0.8.0 expert composer, v0.9.0 panel mode) — check whether the new plan reaches for them.\n  4. Record each audit command + result in your response under `## Audit log`.\n\nPART B — Plan critique against goals. With the audit in hand, critique the plan with L11 rigor. Specifically check:\n  1. Goal coverage: every goal in <<<GOALS>>> has at least one slice that delivers it. Goals without slices → REVISE.\n  2. Reuse vs rebuild: every new primitive either reuses an audited existing primitive or has a written rationale for why a new one is needed.\n  3. Slice boundaries: does each slice produce something testable on its own?\n  4. Task granularity: are steps 2-5 minutes each?\n  5. Missing tasks: any spec requirement without a covering task?\n  6. TDD adequacy: is the red-green-refactor explicit per slice?\n  7. File decomposition: any file growing too large?\n  8. Type/name consistency across tasks?\n\nEnd with the required verdict block. In your rationale, include a one-line audit summary AND a one-line goal-coverage summary.\n\n<<<PLAN>>>\n<full plan text>\n<<<END_PLAN>>>"
 }
 ```
 
-The response's `content` is Codex's review + verdict block.
+The response's `content` is Codex's audit log + review + verdict block.
 
-Subsequent rounds: send the revised plan + both prior critiques. Same anti-yes-man rules as brainstorming. Same sidecar round logging (`phase: "plan"`).
+### Recording the audit (required before logging the round)
+
+Before invoking `sidecar-append-round`, you MUST extract Codex's `## Audit log` section and persist it as a structured entry. This makes the audit replayable evidence — the honest-reporting Stop-gate (v0.10.1) refuses to record a SHIP verdict from Codex without an audit entry for the same (phase, round, side).
+
+```bash
+printf '%s' '{
+  "phase": "plan",
+  "round": 1,
+  "side": "codex",
+  "commands": [
+    {"cmd": "<command Codex reported>", "summary": "<one-line result>"},
+    ...
+  ],
+  "verdict_basis": "<one-line: how the audit informed the verdict>"
+}' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
+```
+
+If Codex's response has no `## Audit log` section, **do not log a SHIP verdict** — push back via a round-(N+1) prompt asking Codex to perform the audit. Goal-aligned critique without codebase verification is exactly the failure mode this gate exists to prevent.
+
+Claude's own verdict ALSO records an audit entry (`side: "claude"`) — Claude must verify the same claims independently against the repo. The Stop-gate enforces this symmetrically: a Claude SHIP verdict without a matching audit entry is also blocked.
+
+Verify the audit landed:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-has-audit \
+  --specPath "<spec-path>" --phase plan --round 1 --side codex
+# expect: true
+```
+
+Subsequent rounds: send the revised plan + both prior critiques + the same `<<<GOALS>>>` block (goals are invariant across rounds unless the user explicitly revises them). Codex re-runs PART A only when the plan changes file paths or proposes new primitives; otherwise PART A is "no change since round N, audit still valid" — and you still record an audit entry referencing the prior round's audit (the (phase, round, side) triple must be present for the Stop-gate to clear). Same anti-yes-man rules as brainstorming. Same sidecar round logging (`phase: "plan"`).
 
 After each round, append:
 

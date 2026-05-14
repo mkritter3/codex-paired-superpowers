@@ -29,11 +29,41 @@ Read relevant files. Build a short context note: existing patterns, conventions,
 ## Phase 2 — Open Codex session (uncounted)
 Pick a spec path: `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` (or user override).
 
+### Goal extraction (do this before composing the prompt)
+
+Before handing off to Codex, extract a **goals block** from the user intent gathered in Phase 0 + relevant prior asks from session history.
+
+1. Re-read the Phase 0 answers. Each "what does done look like" / "scope boundary" answer is a goal candidate. Rewrite each as a sentence of the form *"After this ships, the user can X"* or *"The system guarantees invariant Y."* Never include file paths, module names, or implementation choices in a goal.
+2. Search archived conversations for prior asks on this topic:
+   ```
+   mcp__plugin_episodic-memory_episodic-memory__search query=["<feature-name>", "<related-concept-1>", "<related-concept-2>"]
+   ```
+   If the user has previously asked for an adjacent capability, include it as a goal (or explicitly defer it with rationale). The v0.10.0 retrospective lesson: the user had asked for inter-agent communication + dependency DAG "since v0.6" and the spec didn't surface those asks, so the spec optimized for the wrong target.
+3. Search the codebase for primitives that might already satisfy the goal:
+   ```
+   grep -rn "<capability-keyword>" lib/ src/ skills/
+   git log --all --oneline --grep="<keyword>"
+   ```
+   Record each command + result. If a goal is partially satisfied by existing code, write the goal as "extend X to also do Y" instead of "build new system Z."
+4. Compose the goals block:
+   ```
+   <<<GOALS>>>
+   - Goal 1: <observable user outcome, no implementation>
+   - Goal 2: ...
+   ## Existing primitives that may satisfy these goals
+   - <path>:<line> — <one-line summary>
+   ## Prior user asks (from session archive)
+   - <date>: <summary> — covered by Goal N / explicitly deferred because <reason>
+   <<<END_GOALS>>>
+   ```
+   This block is invariant across the revision loop — Codex critiques against it every round.
+
 Compose the initial Codex prompt by concatenating, in order:
 1. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/system-rubric.md`
 2. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/verdict-format.md`
-3. `Phase: spec-draft. Here is the user intent (verbatim) and the codebase context. Draft a complete L11-grade spec. End with the required verdict block.`
-4. The user intent + codebase context.
+3. The `<<<GOALS>>>...<<<END_GOALS>>>` block from step 4 above.
+4. `Phase: spec-draft.\n\nAbove is the goals block. Draft a complete L11-grade spec whose acceptance criteria map 1:1 to the goals.\n\nBefore drafting, run your own codebase audit (PART A from the system rubric): verify every primitive you intend to introduce is not already present in the repo, and verify every existing primitive listed under "Existing primitives that may satisfy these goals" is correctly characterized. Record audit commands + results in the spec under "## Codebase audit." If an existing primitive can satisfy a goal, the spec MUST extend it rather than build a parallel layer absent a written rationale.\n\nEnd with the required verdict block.`
+5. The user intent + codebase context (Phase 0 + Phase 1 raw material).
 
 Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with these EXACT parameters (do NOT substitute schema-description example values like `gpt-5.2-codex` — those are stale references from the upstream codex CLI, NOT what this plugin runs on):
 
@@ -79,7 +109,34 @@ For each round N starting at 1:
 
 1. **Form Claude's verdict** on the current Codex draft. Apply the L11 rubric independently. Verify any specific claim against actual code/files before accepting.
 
-2. **Append the round to the sidecar** with both verdicts:
+2. **Record both sides' audit logs** before the round is logged. Extract the `## Codebase audit` section from Codex's draft + your own audit commands. This is required by the honest-reporting Stop-gate (v0.10.1) for any side claiming SHIP — the gate refuses to log SHIP without a matching audit entry.
+
+   ```bash
+   # Codex side — what Codex audited:
+   printf '%s' '{
+     "phase": "spec",
+     "round": N,
+     "side": "codex",
+     "commands": [
+       {"cmd": "<command from Codex audit log>", "summary": "<result>"},
+       ...
+     ],
+     "verdict_basis": "<one-line: how the audit informed the verdict>"
+   }' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
+
+   # Claude side — what YOU verified independently:
+   printf '%s' '{
+     "phase": "spec",
+     "round": N,
+     "side": "claude",
+     "commands": [...],
+     "verdict_basis": "..."
+   }' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
+   ```
+
+   For REVISE verdicts the audit is recommended but not required by the gate. For SHIP verdicts on either side, the audit is mandatory.
+
+3. **Append the round to the sidecar** with both verdicts:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round \
@@ -87,9 +144,11 @@ For each round N starting at 1:
      --round '{"phase":"spec","round":N,"claude":"SHIP|REVISE: ...","codex":"SHIP|REVISE: ..."}'
    ```
 
-3. **If both shipped, exit.** Move to Phase 4.
+   If this command exits with `Honest-reporting audit gate (v0.10.1)`, an audit is missing — run the missing `sidecar-append-audit` from step 2 then retry. If you genuinely did not perform an audit, emit REVISE in the round instead of fabricating one.
 
-4. **Otherwise, send round N+1 to Codex.** Build the prompt: phase header, round number, the current draft (or a reference to it), `## Critique from previous round` listing Claude's REVISE items and Codex's REVISE items (whichever were non-SHIP), and instruction to revise.
+4. **If both shipped, exit.** Move to Phase 4.
+
+5. **Otherwise, send round N+1 to Codex.** Build the prompt: phase header, round number, the current draft (or a reference to it), `## Critique from previous round` listing Claude's REVISE items and Codex's REVISE items (whichever were non-SHIP), and instruction to revise.
 
    Read the threadId from the sidecar:
 
