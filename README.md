@@ -766,3 +766,7 @@ Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook archit
 - **v0.2.0** — switched from `codex exec` subprocess transport to bundled `codex mcp-server` MCP transport. Long-lived process, native JSON-RPC, faster (no spawn-per-call, no session-log replay). Removed `lib/codex-bridge/invoke.js` and the `session-start`/`session-resume`/`run-loop` CLI subcommands. Skills now invoke `mcp__plugin_codex-paired-superpowers_codex__*` tools directly.
 - **v0.1.1** — clarified round semantics in brainstorming SKILL.md; removed dead `initialArtifact` parameter from `runRoundLoop`.
 - **v0.1.0** — first working release.
+
+## v0.10.0 ecosystem notes
+
+See [docs/integration/v0.10.0-ecosystem-notes.md](docs/integration/v0.10.0-ecosystem-notes.md) for namespace, sidecar reader, ralph-loop coupling, feature-dev coexistence, and PR attribution details.

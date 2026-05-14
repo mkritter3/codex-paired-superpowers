@@ -216,6 +216,35 @@ In either path, the per-slice review fires from `subagent-driven-development` (f
 - **Spec not double-SHIP'd:** halt. Run brainstorming first.
 - **Round-7 deadlock on plan:** annotate the plan with both positions, surface to user, record arbitration in sidecar.
 
+## When to use implementer-experts (v0.10.0)
+
+Recommended for slices where:
+- file partitions are clear (disjoint claimed_files)
+- the work is genuinely parallelizable (no inter-implementer dependencies)
+- the cost increase (2-5× tokens) is justified by faster wall-clock
+
+Avoid for:
+- single-file edits
+- tightly-coupled refactors
+- low-risk diffs where serial implementation is just as fast
+
+Frontmatter example:
+```yaml
+**Implementers:**
+- member_id: expert-implementer@claude:kimi-k2.6:cloud#0
+  adapter: claude-cli
+  model: kimi-k2.6:cloud
+  required: true
+  files:
+    - lib/codex-bridge/foo.js
+- member_id: expert-implementer@codex:gpt-5.5#0
+  adapter: codex
+  model: gpt-5.5
+  required: true
+  files:
+    - tests/foo.test.js
+```
+
 ## Troubleshooting setup errors
 
 If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. Resume after green.

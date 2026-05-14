@@ -496,3 +496,79 @@ test('every skill preserves honest-reporting activation block', () => {
     );
   }
 });
+
+// ── v0.10.0 skill structural smokes ─────────────────────────────────────────
+
+test('autopilot SKILL.md contains v0.10.0 implementer-experts strings', () => {
+  const content = readSkill('autopilot');
+  for (const required of [
+    'dispatchImplementers',
+    'Implementers:',
+    'merge-conflict',
+    'post-merge-review',
+  ]) {
+    assert.ok(
+      content.includes(required),
+      `autopilot/SKILL.md missing v0.10.0 required string: ${JSON.stringify(required)}`
+    );
+  }
+});
+
+test('writing-plans SKILL.md contains v0.10.0 implementer-experts strings', () => {
+  const content = readSkill('writing-plans');
+  for (const required of [
+    '**Implementers:**',
+    'When to use implementer-experts',
+  ]) {
+    assert.ok(
+      content.includes(required),
+      `writing-plans/SKILL.md missing v0.10.0 required string: ${JSON.stringify(required)}`
+    );
+  }
+});
+
+// ── v0.10.0 ecosystem-doc structural smokes ──────────────────────────────────
+
+function readIntegrationDoc(name) {
+  return readFileSync(join(PLUGIN_ROOT, 'docs', 'integration', name), 'utf8');
+}
+
+test('docs/integration/v0.10.0-ecosystem-notes.md contains 6 boundary topic headers', () => {
+  const content = readIntegrationDoc('v0.10.0-ecosystem-notes.md');
+  const requiredHeaders = [
+    '## 1. Namespace claim list',
+    '## 2. Sidecar reader API deferred status',
+    '## 3. Ralph-loop one-sided coupling',
+    '## 4. Feature-dev coexistence',
+    '## 5. Commit/PR attribution',
+    '## 6. Future-grep policy',
+  ];
+  for (const header of requiredHeaders) {
+    assert.ok(
+      content.includes(header),
+      `v0.10.0-ecosystem-notes.md missing required header: ${JSON.stringify(header)}`
+    );
+  }
+});
+
+test('docs/integration/future-grep-policy.md contains canonical grep commands', () => {
+  const content = readIntegrationDoc('future-grep-policy.md');
+  for (const required of [
+    "grep -r 'Implementers:'",
+    "grep -r 'high_cost'",
+    "grep -r 'expert-implementer'",
+  ]) {
+    assert.ok(
+      content.includes(required),
+      `future-grep-policy.md missing required grep: ${JSON.stringify(required)}`
+    );
+  }
+});
+
+test('README.md contains pointer to v0.10.0-ecosystem-notes.md', () => {
+  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8');
+  assert.ok(
+    readme.includes('docs/integration/v0.10.0-ecosystem-notes.md'),
+    'README.md must contain a link to docs/integration/v0.10.0-ecosystem-notes.md'
+  );
+});

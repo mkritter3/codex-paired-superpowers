@@ -1646,6 +1646,23 @@ wait briefly, then re-invoke /autopilot
 
 **Implementation note (prose-only skills):** If ralph-loop is implemented as a Claude Code `/ralph-loop` skill (not a shell script), apply the same contract in the skill's reasoning loop: read the autopilot session result, check `terminal`, and either exit or re-invoke per the rules above.
 
+## Phase B implementer-experts branch
+
+If the slice's plan frontmatter contains an `**Implementers:**` block (parsed by
+slice-1's `parseImplementersBlock`), dispatch via `dispatchImplementers` from
+`lib/codex-bridge/implementer/orchestrator.js` instead of the single-implementer
+path. The orchestrator handles:
+
+- worktree fan-out per member
+- shared abortSignal for cancellation
+- sidecar `started` events
+- runtime_kind translation (claude → claude-cli)
+
+After all implementers complete:
+- `mergeImplementerBranches` (slice 7) integrates branches in member-ID order
+- On `merge-conflict`: `runMergerAgent` (slice 8) resolves with double-SHIP gate
+- `runPostMergeReview` (slice 9) runs the final post-merge-review paired review
+
 ## Troubleshooting setup errors
 
 If autopilot fails to start, or any phase fails with errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. The doctor diagnoses the install and prints the exact commands to fix each issue. Resume autopilot after the doctor reports all checks green.
