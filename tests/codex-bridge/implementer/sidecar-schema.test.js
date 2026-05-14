@@ -16,6 +16,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as lockfile from 'proper-lockfile';
 import {
   initSidecar,
@@ -30,6 +31,10 @@ import { writeToMailbox } from '../../../lib/codex-bridge/mailbox.js';
 
 const ZERO_HASH = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
 const ONE_HASH = 'sha256:1111111111111111111111111111111111111111111111111111111111111111';
+
+function sha256PayloadHash(payload) {
+  return 'sha256:' + createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
 
 const SIDECAR_PATH = resolve('lib/codex-bridge/sidecar.js');
 
@@ -55,17 +60,22 @@ function defaultMember() {
 }
 
 function baseEvent(overrides = {}) {
-  return {
+  const base = {
     event_type: 'started',
     implementer_run_id: overrides.implementer_run_id ?? 'placeholder',
     slice_id: 'slice-3',
     member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0',
     runtime_kind: 'claude-cli',
     worktree_id: 'wt-slice-3-claude-0',
-    payload_hash: ZERO_HASH,
     payload: { hello: 'world' },
     ...overrides,
   };
+  // Compute payload_hash from the actual payload unless the caller explicitly
+  // provides one (e.g. to test hash-format rejection via payload_hash override).
+  if (!('payload_hash' in overrides)) {
+    base.payload_hash = sha256PayloadHash(base.payload);
+  }
+  return base;
 }
 
 async function startBasicRun(spec) {
@@ -467,6 +477,7 @@ test('appendImplementerEventLocked: event_seq is contiguous globally across two 
       seqs.push(r.event_seq);
     }
     for (let i = 0; i < 3; i++) {
+      const payload4 = { i };
       const r = await appendImplementerEventLocked(spec, {
         event_type: 'checkpoint',
         implementer_run_id: runB.implementer_run_id,
@@ -474,8 +485,8 @@ test('appendImplementerEventLocked: event_seq is contiguous globally across two 
         member_id: 'expert-implementer@codex:gpt-5.5#0',
         runtime_kind: 'codex',
         worktree_id: 'wt-slice-4-codex-0',
-        payload_hash: ZERO_HASH,
-        payload: { i },
+        payload_hash: sha256PayloadHash(payload4),
+        payload: payload4,
       });
       seqs.push(r.event_seq);
     }
@@ -511,6 +522,7 @@ test('appendImplementerEventLocked: 4 parallel cross-process appends yield conti
     const workerScript = `
       import('${SIDECAR_PATH}').then(async ({ appendImplementerEventLocked }) => {
         const fs = await import('node:fs');
+        const { createHash } = await import('node:crypto');
         // With node -e SCRIPT -- a b: process.argv === [node, 'a', 'b']
         const idx = process.argv[1];
         const barrier = process.argv[2];
@@ -521,6 +533,8 @@ test('appendImplementerEventLocked: 4 parallel cross-process appends yield conti
           if (Date.now() - start > 10_000) throw new Error('barrier timeout');
           await new Promise((r) => setTimeout(r, 20));
         }
+        const payload = { pid: process.pid, idx: parseInt(idx, 10) };
+        const payload_hash = 'sha256:' + createHash('sha256').update(JSON.stringify(payload)).digest('hex');
         const ev = {
           event_type: 'checkpoint',
           implementer_run_id: '${implementer_run_id}',
@@ -528,8 +542,8 @@ test('appendImplementerEventLocked: 4 parallel cross-process appends yield conti
           member_id: 'expert-implementer@claude:kimi-k2.6:cloud#0',
           runtime_kind: 'claude-cli',
           worktree_id: 'wt-slice-3-claude-0',
-          payload_hash: '${ZERO_HASH}',
-          payload: { pid: process.pid, idx: parseInt(idx, 10) },
+          payload_hash,
+          payload,
         };
         const r = await appendImplementerEventLocked(${JSON.stringify(spec)}, ev);
         process.stdout.write(JSON.stringify(r));
@@ -602,6 +616,7 @@ test('startImplementerRun + appendImplementerEventLocked: in-flight race resolve
       .catch(() => null) // any start outcome — we want the run_id if it succeeds
       .then(async (r) => {
         const runId = r ? r.implementer_run_id : 'unknown';
+        const initPayload = { phase: 'init' };
         return appendImplementerEventLocked(spec, {
           event_type: 'started',
           implementer_run_id: runId,
@@ -609,11 +624,12 @@ test('startImplementerRun + appendImplementerEventLocked: in-flight race resolve
           member_id: memberId,
           runtime_kind: 'claude-cli',
           worktree_id: 'wt-slice-3-claude-0',
-          payload_hash: ZERO_HASH,
-          payload: { phase: 'init' },
+          payload_hash: sha256PayloadHash(initPayload),
+          payload: initPayload,
         });
       });
     // Also fire a separate append that races without knowing the run_id.
+    const eagerPayload = { phase: 'eager' };
     const eagerAppend = appendImplementerEventLocked(spec, {
       event_type: 'started',
       implementer_run_id: 'unknown-runid',
@@ -621,8 +637,8 @@ test('startImplementerRun + appendImplementerEventLocked: in-flight race resolve
       member_id: memberId,
       runtime_kind: 'claude-cli',
       worktree_id: 'wt-slice-3-claude-0',
-      payload_hash: ZERO_HASH,
-      payload: { phase: 'eager' },
+      payload_hash: sha256PayloadHash(eagerPayload),
+      payload: eagerPayload,
     }).then(
       (ok) => ({ ok: true, val: ok }),
       (err) => ({ ok: false, err: err.message })
