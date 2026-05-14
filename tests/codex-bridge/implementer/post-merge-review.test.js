@@ -564,24 +564,73 @@ test('edge.boundary: 1 timeout + 1 SHIP → halt post-merge-review-degraded-quor
 });
 
 // ── 7. edge.boundary parse-failure-rejects ────────────────────────────────────
+//
+// These tests drive the REAL dispatchPanel (no fake override) so the real
+// verdict-aggregator path fires. When one reviewer returns malformed output,
+// the aggregator drops below quorum and returns panel-quorum-lost. The
+// outcome-classification fix (parse_failure preempts) must classify this as
+// post-merge-review-malformed, NOT degraded-quorum.
 
-test('edge.boundary: 1 parse failure → halt post-merge-review-malformed', async () => {
+test('edge.boundary: 1 parse failure (real dispatchPanel) → halt post-merge-review-malformed', async () => {
   const { dir, spec, implementerRunId } = await makeSpecWithRun();
   try {
+    // claudeFn returns malformed shape (ok: true but result is null) →
+    // dispatchOne stores parsed_result=null, parse_failure_reason='dispatch-fn-bad-shape'
+    // (since {ok: true, result: null} hits the else branch: ok===true but result is falsy).
+    // Actually let's use ok:false to guarantee a parse_failure_reason.
+    const malformedFn = async () => ({ ok: false, reason: 'test-parse-error' });
+    const shipFn = async () => ({
+      ok: true,
+      result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+    });
+
     const result = await runPostMergeReview({
-      ...baseOpts(spec, implementerRunId),
+      ...baseOpts(spec, implementerRunId, {
+        dispatchFns: new Map([
+          [CLAUDE_REVIEWER_ID, malformedFn],
+          [CODEX_REVIEWER_ID, shipFn],
+        ]),
+      }),
+      // No _deps.dispatchPanel override — uses real dispatchPanel from dispatcher.js
       _deps: {
         ...makeFakeLockDeps(),
-        dispatchPanel: makeFakeDispatchPanel({
-          outcome: 'panel-SHIP',
-          claudeStatus: 'SHIP',
-          parseFailureCount: 1,
-        }),
       },
     });
 
+    // Real aggregator: 1 parse failure + 1 SHIP → below quorum (quorum=2) →
+    // panel-quorum-lost. Outcome classification MUST return malformed (not
+    // degraded-quorum) because parse_failure_count > 0 preempts all else.
     assert.equal(result.halted, true);
-    assert.equal(result.halt, 'post-merge-review-malformed');
+    assert.equal(result.halt, 'post-merge-review-malformed',
+      `expected malformed halt; got ${result.halt}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('edge.boundary: 2 parse failures (real dispatchPanel, both malformed) → halt post-merge-review-malformed', async () => {
+  const { dir, spec, implementerRunId } = await makeSpecWithRun();
+  try {
+    const malformedFn = async () => ({ ok: false, reason: 'test-parse-error' });
+
+    const result = await runPostMergeReview({
+      ...baseOpts(spec, implementerRunId, {
+        dispatchFns: new Map([
+          [CLAUDE_REVIEWER_ID, malformedFn],
+          [CODEX_REVIEWER_ID, malformedFn],
+        ]),
+      }),
+      // No _deps.dispatchPanel override — uses real dispatchPanel from dispatcher.js
+      _deps: {
+        ...makeFakeLockDeps(),
+      },
+    });
+
+    // Both reviewers malformed → parse_failure_count=2 → panel-quorum-lost.
+    // Must be classified as post-merge-review-malformed, not degraded-quorum.
+    assert.equal(result.halted, true);
+    assert.equal(result.halt, 'post-merge-review-malformed',
+      `expected malformed halt; got ${result.halt}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1150,66 +1199,55 @@ test('stress.scale: 5 members in sidecar; rendered prompt contains all 5 member_
   }
 });
 
-// ── 21. perf.slo deterministic-timeout ───────────────────────────────────────
+// ── 21. perf.slo real-timer-timeout ──────────────────────────────────────────
+//
+// Option A: real wall-time test. memberTimeoutMs=50ms; one reviewer resolves
+// after 200ms (real Promise.race timeout fires at 50ms). Total wall time ~50ms
+// which is well under the 2s SLO bound. Uses the REAL dispatchPanel so the
+// real Promise.race timeout path fires, producing parse_failure_reason=
+// 'dispatch_fn-timeout'. Classified as degraded-quorum (not malformed) because
+// timeout is NOT a parse failure — the reviewer was simply unavailable.
 
-test('perf.slo: memberTimeoutMs=500; one reviewer hangs; halt post-merge-review-degraded-quorum; wall time < 2s', async () => {
+test('perf.slo: memberTimeoutMs=50; one reviewer resolves after 200ms (real timer); halt post-merge-review-degraded-quorum; wall time < 2s', async () => {
   const { dir, spec, implementerRunId } = await makeSpecWithRun();
   try {
-    // Use a fake dispatchPanel that simulates a timeout on the codex member.
-    // We don't use a never-resolving promise (which leaks into the event loop);
-    // instead we simulate the timeout outcome directly in the fake dispatch panel
-    // to avoid leaving dangling promises after the test completes.
-    //
-    // To test the real memberTimeoutMs path we rely on the degraded-quorum
-    // detection logic in post-merge-review.js: the fake panel returns a member
-    // result with parse_failure_reason='dispatch_fn-timeout' as the real
-    // dispatchOne would after the timeout fires.
     const startMs = Date.now();
+
+    // claudeFn returns immediately with a valid SHIP verdict.
+    const claudeFn = async () => ({
+      ok: true,
+      result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+    });
+
+    // codexFn resolves after 200ms — well past the 50ms memberTimeoutMs.
+    // The real dispatchPanel's Promise.race will fire the timeout sentinel at
+    // 50ms, producing parse_failure_reason='dispatch_fn-timeout' for this member.
+    const codexFn = async () => {
+      await new Promise(r => setTimeout(r, 200));
+      return {
+        ok: true,
+        result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+      };
+    };
+
     const result = await runPostMergeReview({
-      ...baseOpts(spec, implementerRunId),
-      memberTimeoutMs: 500,
+      ...baseOpts(spec, implementerRunId, {
+        dispatchFns: new Map([
+          [CLAUDE_REVIEWER_ID, claudeFn],
+          [CODEX_REVIEWER_ID, codexFn],
+        ]),
+      }),
+      memberTimeoutMs: 50,
+      // No _deps.dispatchPanel override — uses real dispatchPanel from dispatcher.js
       _deps: {
         ...makeFakeLockDeps(),
-        // Inject a panel that reports one timeout (equivalent to what the real
-        // dispatchPanel would return after memberTimeoutMs elapses).
-        dispatchPanel: async (_role, _req, _fns, _opts) => {
-          // Simulate 500ms wall delay to verify the SLO assertion below
-          await new Promise(r => setTimeout(r, 10)); // minimal delay in test
-          return {
-            panel_id: 'perf-test-panel',
-            outcome: 'panel-SHIP', // would be the outcome if timeout member dropped
-            member_results: [
-              {
-                member_id: CLAUDE_REVIEWER_ID,
-                runtime_kind: 'claude-cli',
-                parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
-                parse_failure_reason: null,
-              },
-              {
-                member_id: CODEX_REVIEWER_ID,
-                runtime_kind: 'codex-cli',
-                parsed_result: null,
-                parse_failure_reason: 'dispatch_fn-timeout', // simulated timeout
-              },
-            ],
-            findings_by_member: [],
-            skipped_candidates: [],
-            consensus_round_ran: false,
-            aggregate: {
-              outcome: 'panel-SHIP',
-              ship_count: 1,
-              revise_count: 0,
-              parse_failure_count: 1,
-              quorum_size: 2,
-              has_quorum: false,
-              findings_by_member: [],
-            },
-          };
-        },
       },
     });
     const wallMs = Date.now() - startMs;
 
+    // The timeout member produces parse_failure_reason='dispatch_fn-timeout'.
+    // timeoutCount=1 → degraded-quorum (not malformed — timeout is not a
+    // parse failure, it's an availability failure).
     assert.ok(
       result.halted === true,
       `expected halted result; got ${JSON.stringify(result)}`
