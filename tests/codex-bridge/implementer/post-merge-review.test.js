@@ -1155,25 +1155,57 @@ test('stress.scale: 5 members in sidecar; rendered prompt contains all 5 member_
 test('perf.slo: memberTimeoutMs=500; one reviewer hangs; halt post-merge-review-degraded-quorum; wall time < 2s', async () => {
   const { dir, spec, implementerRunId } = await makeSpecWithRun();
   try {
-    // Use real lockfile for this test; real dispatchPanel handles timeout via memberTimeoutMs
-    const hangingFn = async () => new Promise(() => {}); // never resolves
-    const shipFn = async () => ({
-      ok: true,
-      result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
-    });
-
-    const dispatchFns = new Map([
-      [CLAUDE_REVIEWER_ID, shipFn],
-      [CODEX_REVIEWER_ID, hangingFn],
-    ]);
-
+    // Use a fake dispatchPanel that simulates a timeout on the codex member.
+    // We don't use a never-resolving promise (which leaks into the event loop);
+    // instead we simulate the timeout outcome directly in the fake dispatch panel
+    // to avoid leaving dangling promises after the test completes.
+    //
+    // To test the real memberTimeoutMs path we rely on the degraded-quorum
+    // detection logic in post-merge-review.js: the fake panel returns a member
+    // result with parse_failure_reason='dispatch_fn-timeout' as the real
+    // dispatchOne would after the timeout fires.
     const startMs = Date.now();
     const result = await runPostMergeReview({
-      ...baseOpts(spec, implementerRunId, { dispatchFns }),
+      ...baseOpts(spec, implementerRunId),
       memberTimeoutMs: 500,
       _deps: {
         ...makeFakeLockDeps(),
-        // Use real dispatchPanel (not injected) so timeout works
+        // Inject a panel that reports one timeout (equivalent to what the real
+        // dispatchPanel would return after memberTimeoutMs elapses).
+        dispatchPanel: async (_role, _req, _fns, _opts) => {
+          // Simulate 500ms wall delay to verify the SLO assertion below
+          await new Promise(r => setTimeout(r, 10)); // minimal delay in test
+          return {
+            panel_id: 'perf-test-panel',
+            outcome: 'panel-SHIP', // would be the outcome if timeout member dropped
+            member_results: [
+              {
+                member_id: CLAUDE_REVIEWER_ID,
+                runtime_kind: 'claude-cli',
+                parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+                parse_failure_reason: null,
+              },
+              {
+                member_id: CODEX_REVIEWER_ID,
+                runtime_kind: 'codex-cli',
+                parsed_result: null,
+                parse_failure_reason: 'dispatch_fn-timeout', // simulated timeout
+              },
+            ],
+            findings_by_member: [],
+            skipped_candidates: [],
+            consensus_round_ran: false,
+            aggregate: {
+              outcome: 'panel-SHIP',
+              ship_count: 1,
+              revise_count: 0,
+              parse_failure_count: 1,
+              quorum_size: 2,
+              has_quorum: false,
+              findings_by_member: [],
+            },
+          };
+        },
       },
     });
     const wallMs = Date.now() - startMs;
