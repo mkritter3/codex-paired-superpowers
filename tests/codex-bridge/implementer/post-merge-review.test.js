@@ -1329,3 +1329,65 @@ test('critical.residual-risk: step A malformed + step B both-SHIP + step C idemp
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── 23. critical.idempotency-preserves-revise-halt ───────────────────────────
+//
+// Regression: prior to fix, a second invocation after a REVISE halt would
+// return {halted: false, outcome: 'revise'} — a final-gate bypass on replay.
+// After fix, the second invocation must return the same terminal halt envelope.
+
+test('critical.idempotency-preserves-revise-halt: second invocation after REVISE → same terminal halt; dispatchPanel NOT called', async () => {
+  const { dir, spec, implementerRunId } = await makeSpecWithRun();
+  try {
+    // First invocation: 1 SHIP + 1 REVISE → panel-disagreement → halt post-merge-review-revise
+    const result1 = await runPostMergeReview({
+      ...baseOpts(spec, implementerRunId),
+      _deps: {
+        ...makeFakeLockDeps(),
+        dispatchPanel: makeFakeDispatchPanel({
+          outcome: 'panel-disagreement',
+          claudeStatus: 'SHIP',
+          codexStatus: 'REVISE',
+          codexBlocking: ['codex requires revision'],
+        }),
+      },
+    });
+
+    assert.equal(result1.halted, true, 'first invocation must halt');
+    assert.equal(result1.halt, 'post-merge-review-revise', 'first invocation halt code must be post-merge-review-revise');
+    assert.ok(Array.isArray(result1.findings), 'first invocation must have findings array');
+
+    // Verify the sidecar has exactly 1 post_merge_review event with panel-disagreement status
+    const run1 = readImplementerRun(spec, SLICE_ID);
+    const pmrEvents1 = run1.events.filter(e => e.event_type === 'post_merge_review');
+    assert.equal(pmrEvents1.length, 1, 'exactly 1 post_merge_review event after first invocation');
+    assert.equal(pmrEvents1[0].payload.panel_status, 'panel-disagreement', 'event panel_status must be panel-disagreement');
+
+    // Second invocation with same args.
+    // dispatchPanel spy THROWS if called — proves the idempotency path short-circuits
+    // before any new review is dispatched.
+    const throwingDispatchPanel = async () => {
+      throw new Error('dispatchPanel must NOT be called on idempotency replay');
+    };
+
+    const result2 = await runPostMergeReview({
+      ...baseOpts(spec, implementerRunId),
+      _deps: {
+        ...makeFakeLockDeps(),
+        dispatchPanel: throwingDispatchPanel,
+      },
+    });
+
+    // Must preserve the terminal halt — NOT bypass it
+    assert.equal(result2.halted, true, 'second invocation must also halt (idempotency preserves terminal halt)');
+    assert.equal(result2.halt, 'post-merge-review-revise', 'second invocation must return the same halt code');
+    assert.ok(Array.isArray(result2.findings), 'second invocation must have findings array');
+
+    // Sidecar event count must remain at 1 — no duplicate event
+    const run2 = readImplementerRun(spec, SLICE_ID);
+    const pmrEvents2 = run2.events.filter(e => e.event_type === 'post_merge_review');
+    assert.equal(pmrEvents2.length, 1, 'sidecar event count must remain 1 after idempotent REVISE replay');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
