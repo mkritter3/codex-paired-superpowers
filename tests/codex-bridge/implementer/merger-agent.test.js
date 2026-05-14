@@ -1871,3 +1871,407 @@ test('critical.residual-risk audit-divergence-recovery-on-next-invocation: re-ap
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
   }
 });
+
+// ── recovery identity-match security tests ────────────────────────────────────
+//
+// These tests exercise the tightened 6-condition identity match added in
+// round-4. They use a real repo (for git plumbing) plus a stubbed git.exec
+// that intercepts 'log' to return synthetic commit bodies with specific wrong
+// conditions. All rejection cases fall through to merger-conflict-state-mismatch
+// (clean worktree, no unmerged paths) because recovery did NOT trigger.
+
+/**
+ * Build a real git repo in a clean state (no unmerged conflicts) with
+ * a pre-existing merge-resolution commit on HEAD that has full correct trailers.
+ * Returns { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId, mergerCommitSha }.
+ */
+async function makeCleanRepoWithMergerCommit(sliceIdStr = 'slice-8') {
+  const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
+  const { spec, implementerRunId } = await makeSidecarRun(repoRoot, sliceIdStr, MERGER_MEMBER_SPECS, baseSha);
+
+  // First run: resolve conflicts and create the merge-resolution commit.
+  // Suppress the post-commit audit by throwing on committed event, so the
+  // agent halts with merger-audit-divergence but the commit IS on HEAD.
+  const { appendImplementerEventLocked: realAppend } = await import('../../../lib/codex-bridge/sidecar.js');
+  const throwingAppend = async (specPathArg, event) => {
+    if (event.event_type === 'merger_completed' && event.payload && event.payload.outcome === 'committed') {
+      throw new Error('simulated audit failure for setup');
+    }
+    return realAppend(specPathArg, event);
+  };
+
+  const firstResult = await runMergerAgent({
+    integrationWorktree: integrationWt,
+    conflictedFiles,
+    mergeContext: defaultMergeContext(baseSha),
+    dispatchFn: makeResolvingDispatchFn(integrationWt, conflictedFiles),
+    claudeReviewFn: makeShipReviewer(),
+    codexReviewFn: makeShipReviewer(),
+    specPath: spec,
+    sliceId: sliceIdStr,
+    implementerRunId,
+    mergerMemberId: MERGER_MEMBER_ID,
+    mergerRuntimeKind: MERGER_RUNTIME_KIND,
+    mergerWorktreeId: MERGER_WORKTREE_ID,
+    _deps: { appendImplementerEventLocked: throwingAppend },
+  });
+
+  assert.equal(firstResult.halted, true, `setup: expected audit-divergence halt; got: ${JSON.stringify(firstResult)}`);
+  assert.equal(firstResult.halt, 'merger-audit-divergence', 'setup: wrong halt code');
+
+  const mergerCommitSha = firstResult.mergerCommitSha;
+  // The commit is on HEAD; worktree is now clean (no unmerged conflicts).
+  return { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId, mergerCommitSha };
+}
+
+/**
+ * Build a fake git stub that intercepts 'log' commands to return a synthetic
+ * log body, while passing all other commands through to the real git.
+ */
+function makeGitStubWithFakeLog(fakeLogBody) {
+  const realGit = (args, cwd) => {
+    try {
+      const stdout = execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+      return { stdout, stderr: '', status: 0 };
+    } catch (err) {
+      return { stdout: err.stdout || '', stderr: err.stderr || '', status: 1 };
+    }
+  };
+  return {
+    exec: (args, cwd) => {
+      if (args[0] === 'log') {
+        return { stdout: fakeLogBody, stderr: '', status: 0 };
+      }
+      return realGit(args, cwd);
+    },
+  };
+}
+
+/**
+ * Build a synthetic git log entry in the sentinel format used by the recovery scan.
+ */
+function fakeSentinelLog(sha, body) {
+  return `${sha}\n${body}\n--END-CPS-COMMIT--\n`;
+}
+
+// ── security test 1: recovery rejects spoofed subject ────────────────────────
+
+test('security.recovery-rejects-spoofed-subject: wrong subject → no recovery → merger-conflict-state-mismatch', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    const fakeSha = 'a'.repeat(40);
+    const fakeBody = [
+      'feat: my-feature', // WRONG subject — not merge-resolution(slice:8):
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: SHIP`,
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeSentinelLog(fakeSha, fakeBody)) },
+    });
+
+    // Recovery must NOT have triggered; fell through to conflict-state-mismatch
+    // (no unmerged paths in clean worktree vs non-empty conflictedFiles list)
+    assert.equal(result.halted, true, `expected halt, got: ${JSON.stringify(result)}`);
+    assert.equal(result.halt, 'merger-conflict-state-mismatch',
+      `expected merger-conflict-state-mismatch (recovery skipped), got: ${result.halt}`);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── security test 2: recovery rejects wrong Slice-Id ─────────────────────────
+
+test('security.recovery-rejects-wrong-slice-id: wrong Slice-Id → no recovery → merger-conflict-state-mismatch', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    const fakeSha = 'b'.repeat(40);
+    const fakeBody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-99`, // WRONG slice id
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: SHIP`,
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeSentinelLog(fakeSha, fakeBody)) },
+    });
+
+    assert.equal(result.halted, true, `expected halt, got: ${JSON.stringify(result)}`);
+    assert.equal(result.halt, 'merger-conflict-state-mismatch',
+      `expected merger-conflict-state-mismatch (recovery skipped on wrong Slice-Id), got: ${result.halt}`);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── security test 3: recovery rejects wrong Implementer-Run-Id ───────────────
+
+test('security.recovery-rejects-wrong-run-id: stale Implementer-Run-Id → no recovery → merger-conflict-state-mismatch', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    const fakeSha = 'c'.repeat(40);
+    const staleRunId = 'stale-uuid-00000000-0000-0000-0000-000000000000';
+    const fakeBody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${staleRunId}`, // WRONG run-id — does not match current implementerRunId
+      `Claude-Review: SHIP`,
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId, // correct run id — does NOT match fakeBody's stale id
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeSentinelLog(fakeSha, fakeBody)) },
+    });
+
+    assert.equal(result.halted, true, `expected halt, got: ${JSON.stringify(result)}`);
+    assert.equal(result.halt, 'merger-conflict-state-mismatch',
+      `expected merger-conflict-state-mismatch (recovery skipped on stale run-id), got: ${result.halt}`);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── security test 4: recovery rejects unrelated commit with matching member-id ─
+
+test('security.recovery-rejects-unrelated-commit: matching Merger-Member-Id but no merge-resolution subject → no recovery', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    const fakeSha = 'd'.repeat(40);
+    const fakeBody = [
+      'chore: some-unrelated-commit', // completely unrelated subject
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`, // correct member id but wrong subject
+    ].join('\n');
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeSentinelLog(fakeSha, fakeBody)) },
+    });
+
+    assert.equal(result.halted, true, `expected halt, got: ${JSON.stringify(result)}`);
+    assert.equal(result.halt, 'merger-conflict-state-mismatch',
+      `expected merger-conflict-state-mismatch (unrelated commit not accepted for recovery), got: ${result.halt}`);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── security test 5: recovery picks HEAD when multiple matching commits exist ──
+
+test('security.recovery-picks-head-on-multiple-matches: most recent (HEAD) commit is used for recovery', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    // Build fake log with 2 matching entries: newerSha first (HEAD), olderSha second.
+    // Recovery must pick newerSha (the first entry in log order = most recent).
+    const newerSha = 'e'.repeat(40);
+    const olderFakeSha = 'f'.repeat(40);
+
+    const makeFullBody = (runId) => [
+      `merge-resolution(slice:8): lib/conflict.js`,
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${runId}`,
+      `Claude-Review: SHIP`,
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    const fakeLog =
+      fakeSentinelLog(newerSha, makeFullBody(implementerRunId)) +
+      fakeSentinelLog(olderFakeSha, makeFullBody(implementerRunId));
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called during recovery'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called during recovery'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called during recovery'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeLog) },
+    });
+
+    // Recovery must succeed and use the FIRST (most-recent = newerSha) commit
+    assert.equal(result.halted, false, `expected recovery success, got: ${JSON.stringify(result)}`);
+    assert.equal(result.recovered, true, 'recovered flag must be true');
+    assert.equal(result.mergerCommitSha, newerSha,
+      `recovery must use the most-recent commit (newerSha), got: ${result.mergerCommitSha}`);
+    assert.equal(result.claudeVerdict, 'SHIP', 'recovered claudeVerdict must be SHIP');
+    assert.equal(result.codexVerdict, 'SHIP', 'recovered codexVerdict must be SHIP');
+
+    // Sidecar must have the committed event with newerSha, NOT olderFakeSha
+    const run = readImplementerRun(spec, 'slice-8');
+    const committedEvts = run.events.filter(
+      e => e.event_type === 'merger_completed' && e.payload.outcome === 'committed'
+    );
+    assert.equal(committedEvts.length, 1, 'exactly one committed event must be appended');
+    assert.equal(committedEvts[0].payload.merger_commit_sha, newerSha,
+      `committed event must reference newerSha; got: ${committedEvts[0].payload.merger_commit_sha}`);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── security test 6: happy recovery still works after tightening ──────────────
+
+test('security.happy-recovery-still-works: full identity match succeeds; committed event appended; recovered:true', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId, mergerCommitSha } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    // Second run: healthy append, no git stub — uses real log.
+    // The real merge-resolution commit on HEAD has all 6 correct trailers.
+    const secondResult = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called during recovery'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called during recovery'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called during recovery'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      // No _deps override — uses real git + real sidecar
+    });
+
+    assert.equal(secondResult.halted, false, `expected recovery success, got: ${JSON.stringify(secondResult)}`);
+    assert.equal(secondResult.recovered, true, 'recovered flag must be true');
+    assert.equal(secondResult.mergerCommitSha, mergerCommitSha,
+      'recovered mergerCommitSha must match the commit from setup');
+    assert.equal(secondResult.claudeVerdict, 'SHIP', 'recovered claudeVerdict must be SHIP');
+    assert.equal(secondResult.codexVerdict, 'SHIP', 'recovered codexVerdict must be SHIP');
+
+    // Sidecar now has the missing committed event
+    const run = readImplementerRun(spec, 'slice-8');
+    const committedEvts = run.events.filter(
+      e => e.event_type === 'merger_completed' && e.payload.outcome === 'committed'
+    );
+    assert.equal(committedEvts.length, 1, 'exactly one committed event must be present after recovery');
+    assert.equal(committedEvts[0].payload.merger_commit_sha, mergerCommitSha,
+      'committed event must reference the correct commit SHA');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── security test 7: malformed Claude-Review trailer → halt merger-audit-divergence ─
+
+test('security.recovery-malformed-claude-review: Claude-Review:REVISE in candidate → halt merger-audit-divergence', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    const fakeSha = '0'.repeat(40);
+    const fakeBody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: REVISE`, // MALFORMED — should be SHIP
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeSentinelLog(fakeSha, fakeBody)) },
+    });
+
+    // Must halt with merger-audit-divergence (not silently skip)
+    assert.equal(result.halted, true, `expected halt, got: ${JSON.stringify(result)}`);
+    assert.equal(result.halt, 'merger-audit-divergence',
+      `expected merger-audit-divergence for malformed Claude-Review:REVISE, got: ${result.halt}`);
+    assert.ok(
+      typeof result.diagnostic === 'string' && result.diagnostic.length > 0,
+      `diagnostic must be present; got: ${result.diagnostic}`
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
