@@ -2275,3 +2275,247 @@ test('security.recovery-malformed-claude-review: Claude-Review:REVISE in candida
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
   }
 });
+
+// ── idempotent.recovery-no-op-when-audit-healthy ──────────────────────────────
+//
+// When runMergerAgent is re-invoked after a fully successful merge
+// (sidecar already has merger_completed.outcome:'committed'), the recovery
+// scan should detect the healthy state and return a clean idempotent no-op
+// result. NO new commit should be added. NO new sidecar events should be
+// written. The halt merger-conflict-state-mismatch must NOT be returned.
+
+test('idempotent.recovery-no-op-when-audit-healthy: re-run after successful merge returns idempotent result, no new commit, no new events', async () => {
+  const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    // ── First run: complete successfully (SHIP-SHIP, commit, full sidecar) ───
+    const firstResult = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: makeResolvingDispatchFn(integrationWt, conflictedFiles),
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.equal(firstResult.halted, false, `first run should succeed; got: ${JSON.stringify(firstResult)}`);
+    assert.ok(typeof firstResult.mergerCommitSha === 'string' && firstResult.mergerCommitSha.length > 0);
+    assert.equal(firstResult.claudeVerdict, 'SHIP');
+    assert.equal(firstResult.codexVerdict, 'SHIP');
+
+    const firstCommitSha = firstResult.mergerCommitSha;
+
+    // Verify the sidecar has merger_completed.outcome:'committed' after first run
+    const runAfterFirst = readImplementerRun(spec, 'slice-8');
+    const committedEvtsFirst = runAfterFirst.events.filter(
+      e => e.event_type === 'merger_completed' && e.payload.outcome === 'committed'
+    );
+    assert.equal(committedEvtsFirst.length, 1, 'sidecar must have exactly one committed event after first run');
+    const eventCountAfterFirst = runAfterFirst.events.length;
+
+    // ── Second run: re-invoke with the same args ──────────────────────────────
+    const secondResult = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => {
+        throw new Error('dispatchFn must NOT be called on idempotent re-run');
+      },
+      claudeReviewFn: async () => {
+        throw new Error('claudeReviewFn must NOT be called on idempotent re-run');
+      },
+      codexReviewFn: async () => {
+        throw new Error('codexReviewFn must NOT be called on idempotent re-run');
+      },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    // Must return idempotent success — NOT merger-conflict-state-mismatch
+    assert.equal(secondResult.halted, false, `second run must not halt; got: ${JSON.stringify(secondResult)}`);
+    assert.equal(secondResult.idempotent, true, 'idempotent flag must be true');
+    assert.equal(secondResult.recovered, false, 'recovered flag must be false (not a new recovery)');
+    assert.equal(secondResult.mergerCommitSha, firstCommitSha,
+      'mergerCommitSha must match the commit from the first run');
+    assert.equal(secondResult.claudeVerdict, 'SHIP', 'claudeVerdict must be SHIP');
+    assert.equal(secondResult.codexVerdict, 'SHIP', 'codexVerdict must be SHIP');
+
+    // No new commit on HEAD
+    const headShaAfterSecond = execFileSync('git', ['-C', integrationWt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    assert.equal(headShaAfterSecond, firstCommitSha, 'HEAD must be unchanged after idempotent re-run');
+
+    // No new sidecar events (event count unchanged)
+    const runAfterSecond = readImplementerRun(spec, 'slice-8');
+    assert.equal(runAfterSecond.events.length, eventCountAfterFirst,
+      `event count must not increase on idempotent re-run; before: ${eventCountAfterFirst}, after: ${runAfterSecond.events.length}`);
+
+    // Explicitly: NOT merger-conflict-state-mismatch
+    assert.notEqual(secondResult.halt, 'merger-conflict-state-mismatch',
+      'must NOT return merger-conflict-state-mismatch on idempotent re-run');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── malformed-newer-precedes-valid-older ──────────────────────────────────────
+//
+// When scanning commits from HEAD backwards, if we encounter a commit with
+// full identity match but non-SHIP review trailers (HEAD, newer), we must HALT
+// IMMEDIATELY with merger-audit-divergence. We must NOT continue scanning for
+// an older valid candidate deeper in the log.
+
+test('security.malformed-newer-precedes-valid-older: malformed HEAD commit halts immediately, older valid commit NOT used', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    // Commit A (HEAD, newer): full identity match + Claude-Review: REVISE (malformed)
+    const commitASha = '1'.repeat(40);
+    const commitABody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: REVISE`, // MALFORMED
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    // Commit B (HEAD~1, older): full identity match + both reviews SHIP (valid)
+    const commitBSha = '2'.repeat(40);
+    const commitBBody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: SHIP`,
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    // Log returns A first (newer/HEAD), then B (older)
+    const fakeLog =
+      fakeSentinelLog(commitASha, commitABody) +
+      fakeSentinelLog(commitBSha, commitBBody);
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeLog) },
+    });
+
+    // Must halt with merger-audit-divergence referencing commit A's SHA
+    assert.equal(result.halted, true, `expected halt, got: ${JSON.stringify(result)}`);
+    assert.equal(result.halt, 'merger-audit-divergence',
+      `expected merger-audit-divergence, got: ${result.halt}`);
+    assert.equal(result.mergerCommitSha, commitASha,
+      `diagnostic must reference commit A's SHA (${commitASha}), got: ${result.mergerCommitSha}`);
+
+    // Diagnostic must name the malformed trailer
+    assert.ok(
+      typeof result.diagnostic === 'string' && result.diagnostic.includes('Claude-Review'),
+      `diagnostic must mention Claude-Review; got: ${result.diagnostic}`
+    );
+
+    // Must NOT have attempted recovery with commit B
+    assert.notEqual(result.mergerCommitSha, commitBSha,
+      'must NOT have recovered using the older valid commit B');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+// ── valid-newer-malformed-older-still-recovers ────────────────────────────────
+//
+// When the scan-from-HEAD-backwards encounters a newer commit that is fully
+// valid (SHIP-SHIP), it must use it for recovery immediately. The older commit
+// (with malformed trailers) is never visited because the scan terminates on the
+// first valid match.
+
+test('security.valid-newer-malformed-older-still-recovers: valid HEAD commit recovers, older malformed commit not reached', async () => {
+  const { repoRoot, integrationWt, spec, baseSha, conflictedFiles, implementerRunId } =
+    await makeCleanRepoWithMergerCommit('slice-8');
+  try {
+    // Commit A (HEAD, newer): full identity match + both reviews SHIP (valid)
+    const commitASha = '3'.repeat(40);
+    const commitABody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: SHIP`,
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    // Commit B (HEAD~1, older): full identity match + Claude-Review: REVISE (malformed)
+    const commitBSha = '4'.repeat(40);
+    const commitBBody = [
+      'merge-resolution(slice:8): lib/conflict.js',
+      '',
+      `Merger-Member-Id: ${MERGER_MEMBER_ID}`,
+      `Slice-Id: slice-8`,
+      `Implementer-Run-Id: ${implementerRunId}`,
+      `Claude-Review: REVISE`, // malformed — but older; should never be reached
+      `Codex-Review: SHIP`,
+    ].join('\n');
+
+    // Log returns A first (newer/HEAD), then B (older)
+    const fakeLog =
+      fakeSentinelLog(commitASha, commitABody) +
+      fakeSentinelLog(commitBSha, commitBBody);
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => { throw new Error('dispatchFn must NOT be called during recovery'); },
+      claudeReviewFn: async () => { throw new Error('claudeReviewFn must NOT be called during recovery'); },
+      codexReviewFn: async () => { throw new Error('codexReviewFn must NOT be called during recovery'); },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { git: makeGitStubWithFakeLog(fakeLog) },
+    });
+
+    // Must succeed with recovery using commit A's SHA
+    assert.equal(result.halted, false, `expected recovery success, got: ${JSON.stringify(result)}`);
+    assert.equal(result.recovered, true, 'recovered flag must be true');
+    assert.equal(result.mergerCommitSha, commitASha,
+      `recovery must use commit A's SHA (${commitASha}), got: ${result.mergerCommitSha}`);
+    assert.equal(result.claudeVerdict, 'SHIP', 'recovered claudeVerdict must be SHIP');
+    assert.equal(result.codexVerdict, 'SHIP', 'recovered codexVerdict must be SHIP');
+
+    // Commit B (malformed, older) was never reached — no halt for it
+    assert.notEqual(result.halt, 'merger-audit-divergence',
+      'must NOT halt due to the older malformed commit B (never reached)');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
