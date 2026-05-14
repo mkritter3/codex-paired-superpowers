@@ -196,6 +196,13 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'panel-disagreement',
     'panel-quorum-unavailable',
     'parallel-files-malformed',
+    'post-merge-review-audit-divergence',
+    'post-merge-review-config-invalid',
+    'post-merge-review-degraded-quorum',
+    'post-merge-review-malformed',
+    'post-merge-review-panel-error',
+    'post-merge-review-prompt-too-large',
+    'post-merge-review-quorum-failed',
     'post-merge-review-revise',
     'reconciler-failed',
     'role-composer-fan-out-unjustified',
@@ -215,6 +222,57 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'panel-quorum-lost',
     'transient-network',
   ]);
+});
+
+// ── slice-9 new post-merge-review halt codes ─────────────────────────────────
+
+test('slice-9: post-merge-review-malformed is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-malformed');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('slice-9: post-merge-review-prompt-too-large is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-prompt-too-large');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('slice-9: post-merge-review-audit-divergence is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-audit-divergence');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('slice-9: post-merge-review-degraded-quorum is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-degraded-quorum');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('slice-9: post-merge-review-quorum-failed is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-quorum-failed');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('slice-9: post-merge-review-panel-error is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-panel-error');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+test('slice-9: post-merge-review-config-invalid is terminal with non-empty resume_hint', () => {
+  const env = wrapAsHaltEnvelope('post-merge-review-config-invalid');
+  assert.equal(env.terminal, true);
+  assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
 });
 
 // ── isTerminalHalt guard ─────────────────────────────────────────────────────
@@ -507,10 +565,10 @@ test('v0.10.0: isTerminalHalt returns true for all 18 new codes', () => {
 
 test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transient + 18 new = 37, pre-slice-7)', () => {
   // NOTE: This test was the original slice-1 count snapshot.
-  // After slice-7 adds 11 more codes, slice-8 adds 10 more, total = 58.
+  // After slice-7 adds 11 more codes, slice-8 adds 10 more, slice-9 adds 7 more, total = 65.
   // The original 37 = 16 legacy terminal + 3 transient + 18 v0.10.0 new.
-  // Slice 7 adds 11 more, slice 8 adds 10 more, so total = 58.
-  assert.equal(HALT_MAP.size, 58, 'HALT_MAP must have exactly 58 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 additions)');
+  // Slice 7 adds 11 more, slice 8 adds 10 more, slice-9 adds 7 more, so total = 65.
+  assert.equal(HALT_MAP.size, 65, 'HALT_MAP must have exactly 65 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 + 7 slice-9 additions)');
 });
 
 // ── v0.10.0 slice-7: 11 new halt codes (8 merge + 3 retroactive worktree) ───
@@ -594,8 +652,8 @@ test('slice-8: wrapAsHaltEnvelope returns correct shape for all 10 new merger co
   }
 });
 
-test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new = 58)', () => {
-  assert.equal(HALT_MAP.size, 58, 'HALT_MAP must have exactly 58 entries after slice-8 additions');
+test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new + 7 slice-9 = 65)', () => {
+  assert.equal(HALT_MAP.size, 65, 'HALT_MAP must have exactly 65 entries after slice-8 + slice-9 additions');
 });
 
 test('slice-7: all 11 new halt codes are present in HALT_MAP', () => {
@@ -634,10 +692,10 @@ test('slice-7: isTerminalHalt returns true for all 11 new halt codes', () => {
   }
 });
 
-test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48, but slice-8 adds 10 more = 58)', () => {
+test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48, but slice-8 adds 10 more = 58, slice-9 adds 7 more = 65)', () => {
   // Snapshot the total count so additions are always explicit.
-  // After slice-8: 48 + 10 = 58.
-  assert.equal(HALT_MAP.size, 58, 'HALT_MAP must have exactly 58 entries after slice-7 + slice-8 additions');
+  // After slice-8: 48 + 10 = 58. After slice-9: 58 + 7 = 65.
+  assert.equal(HALT_MAP.size, 65, 'HALT_MAP must have exactly 65 entries after slice-7 + slice-8 + slice-9 additions');
 });
 
 test('slice-7: snapshot terminal vs transient classification includes new codes', () => {
@@ -662,7 +720,7 @@ test('slice-7: snapshot terminal vs transient classification includes new codes'
     'transient-network',
   ]);
 
-  // Terminal set now includes all 11 slice-7 codes + 10 slice-8 codes.
+  // Terminal set now includes all 11 slice-7 codes + 10 slice-8 codes + 7 slice-9 codes.
   const expectedTerminal = [
     'claude-cli-auth-missing',
     'claude-cli-auth-rejected',
@@ -708,6 +766,14 @@ test('slice-7: snapshot terminal vs transient classification includes new codes'
     'panel-disagreement',
     'panel-quorum-unavailable',
     'parallel-files-malformed',
+    // slice-9 new codes (sorted)
+    'post-merge-review-audit-divergence',
+    'post-merge-review-config-invalid',
+    'post-merge-review-degraded-quorum',
+    'post-merge-review-malformed',
+    'post-merge-review-panel-error',
+    'post-merge-review-prompt-too-large',
+    'post-merge-review-quorum-failed',
     'post-merge-review-revise',
     'reconciler-failed',
     'role-composer-fan-out-unjustified',
