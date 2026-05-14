@@ -255,3 +255,42 @@ test('appendImplementerEventLocked: normal appends still work after canary rejec
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── Test: payload_hash mismatch is rejected (critique 1) ─────────────────────
+
+test('appendImplementerEventLocked rejects payload+payload_hash mismatch', async () => {
+  const { dir, spec } = makeSpec();
+  try {
+    const runId = await startRun(spec);
+
+    // Build a clean payload with a well-formed but wrong hash (the zero-hash)
+    const cleanPayload = { ok: true };
+    const zeroHash = 'sha256:' + '0'.repeat(64);
+
+    const badEvent = {
+      event_type: 'started',
+      implementer_run_id: runId,
+      slice_id: 'slice-3',
+      member_id: MEMBER_ID,
+      runtime_kind: 'claude-cli',
+      worktree_id: 'wt-slice-3-claude-0',
+      payload_hash: zeroHash,
+      payload: cleanPayload,
+    };
+
+    await assert.rejects(
+      () => appendImplementerEventLocked(spec, badEvent),
+      (err) => {
+        assert.match(err.message, /payload_hash mismatch/);
+        return true;
+      },
+      'Should throw on payload_hash mismatch'
+    );
+
+    // Events array must be unchanged after the rejection
+    const run = readImplementerRun(spec, 'slice-3');
+    assert.equal(run.events.length, 0, 'No events should have been appended after hash mismatch');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
