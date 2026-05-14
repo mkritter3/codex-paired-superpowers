@@ -418,3 +418,351 @@ test('replay-from-sidecar: inputs_hash mismatch detected when role prompt is tam
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// replayImplementerEvents tests (v0.10.0 slice 10)
+// ────────────────────────────────────────────────────────────────────────────
+
+import { replayImplementerEvents } from '../../lib/codex-bridge/replay.js';
+
+// ── Sidecar builder helpers ──────────────────────────────────────────────────
+
+function buildMinimalSidecar() {
+  return {
+    version: 1,
+    slice_reviews: {},
+  };
+}
+
+function addImplementerBlock(sidecar, sliceId, events = []) {
+  if (!sidecar.slice_reviews[sliceId]) {
+    sidecar.slice_reviews[sliceId] = { phases: {} };
+  }
+  sidecar.slice_reviews[sliceId].phases.implementer_experts = {
+    implementer_run_id: 'run-1',
+    base_sha: 'abc123',
+    status: 'running',
+    members: {},
+    events,
+  };
+  return sidecar;
+}
+
+function makeEvent(overrides = {}) {
+  return {
+    event_seq: 1,
+    event_type: 'started',
+    implementer_run_id: 'run-1',
+    slice_id: 'slice-3',
+    member_id: 'member-a',
+    runtime_kind: 'claude-cli',
+    worktree_id: 'wt-1',
+    payload_hash: 'sha256:' + sha256Hex('{}'),
+    payload: {},
+    ...overrides,
+  };
+}
+
+// ── happy: 3-implementer slice interleaved → global sort by event_seq ────────
+
+test('replayImplementerEvents: 3-member interleaved events → sorted by event_seq', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 3, member_id: 'member-c' }),
+    makeEvent({ event_seq: 1, member_id: 'member-a' }),
+    makeEvent({ event_seq: 5, member_id: 'member-b' }),
+    makeEvent({ event_seq: 2, member_id: 'member-b', event_type: 'checkpoint' }),
+    makeEvent({ event_seq: 4, member_id: 'member-a', event_type: 'completed' }),
+  ]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3' });
+
+  assert.deepEqual(
+    result.events.map(e => e.event_seq),
+    [1, 2, 3, 4, 5],
+    'Events must be sorted ascending by event_seq'
+  );
+  assert.deepEqual(result.warnings, []);
+});
+
+// ── happy: memberId filter, still sorted globally ───────────────────────────
+
+test('replayImplementerEvents: memberId filter → only that member, still sorted', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1, member_id: 'member-a' }),
+    makeEvent({ event_seq: 2, member_id: 'member-b' }),
+    makeEvent({ event_seq: 3, member_id: 'member-a', event_type: 'completed' }),
+    makeEvent({ event_seq: 4, member_id: 'member-b', event_type: 'completed' }),
+  ]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3', memberId: 'member-a' });
+
+  assert.deepEqual(
+    result.events.map(e => e.event_seq),
+    [1, 3],
+    'Only member-a events, sorted'
+  );
+  assert.deepEqual(
+    result.events.map(e => e.member_id),
+    ['member-a', 'member-a']
+  );
+  assert.deepEqual(result.warnings, []);
+});
+
+// ── happy: mailbox causal — walks parent + child references ─────────────────
+
+test('replayImplementerEvents: mailboxCausal walks parent and child references', () => {
+  const sidecar = buildMinimalSidecar();
+  // Event 1: sent message, event 3 is reply (parent_event_seq=1)
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1, member_id: 'member-a', mailbox_message_id: 'msg-1' }),
+    makeEvent({ event_seq: 2, member_id: 'member-b', event_type: 'checkpoint' }),
+    makeEvent({ event_seq: 3, member_id: 'member-b', mailbox_message_id: 'msg-2', parent_event_seq: 1 }),
+  ]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3', mailboxCausal: true });
+
+  assert.ok(Array.isArray(result.causalChains), 'causalChains must be an array');
+  // Chain should include events 1 and 3 (connected via parent_event_seq)
+  const hasChainWith1and3 = result.causalChains.some(c =>
+    c.chain.includes(1) && c.chain.includes(3)
+  );
+  assert.ok(hasChainWith1and3, 'Causal chain must connect event_seq 1 and 3');
+});
+
+// ── mailbox causal cross-member: memberId filter doesn't restrict causal traversal ──
+
+test('replayImplementerEvents: mailboxCausal cross-member traversal ignores memberId', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1, member_id: 'member-a', mailbox_message_id: 'msg-x' }),
+    makeEvent({ event_seq: 2, member_id: 'member-b', parent_event_seq: 1, mailbox_message_id: 'msg-y' }),
+    makeEvent({ event_seq: 3, member_id: 'member-a', event_type: 'completed' }),
+  ]);
+
+  // Filter to member-a only, but causal should still pull in member-b's event
+  const result = replayImplementerEvents(sidecar, {
+    sliceId: 'slice-3',
+    memberId: 'member-a',
+    mailboxCausal: true,
+  });
+
+  assert.ok(Array.isArray(result.causalChains), 'causalChains must be present');
+  // Chain root includes events from both members
+  const chain = result.causalChains.find(c => c.chain.includes(1));
+  assert.ok(chain, 'Chain starting at event 1 must exist');
+  assert.ok(
+    chain.chain.includes(2),
+    'Cross-member causal traversal must include member-b event_seq=2'
+  );
+});
+
+// ── edge.zero-null-empty: missing/non-object sidecar → throw ─────────────────
+
+for (const [label, value] of [
+  ['null', null],
+  ['undefined', undefined],
+  ['string', 'not-an-object'],
+  ['array', []],
+  ['number', 42],
+]) {
+  test(`replayImplementerEvents: sidecar=${label} → throws`, () => {
+    assert.throws(
+      () => replayImplementerEvents(value, { sliceId: 'slice-3' }),
+      /sidecar must be a non-null object/,
+      `Should throw for sidecar=${label}`
+    );
+  });
+}
+
+// ── edge.zero-null-empty: missing/empty sliceId → throw ─────────────────────
+
+for (const [label, value] of [
+  ['missing', {}],
+  ['null', { sliceId: null }],
+  ['empty-string', { sliceId: '' }],
+  ['number', { sliceId: 42 }],
+]) {
+  test(`replayImplementerEvents: sliceId=${label} → throws`, () => {
+    const sidecar = buildMinimalSidecar();
+    assert.throws(
+      () => replayImplementerEvents(sidecar, value),
+      /sliceId must be a non-empty string/,
+      `Should throw for sliceId=${label}`
+    );
+  });
+}
+
+// ── edge.zero-null-empty: missing phases.implementer_experts → empty + warning ──
+
+test('replayImplementerEvents: missing implementer_experts block → empty result with warning', () => {
+  const sidecar = buildMinimalSidecar();
+  sidecar.slice_reviews['slice-3'] = { phases: {} }; // no implementer_experts
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3' });
+
+  assert.deepEqual(result.events, []);
+  assert.ok(
+    result.warnings.some(w => w.includes('no implementer_experts block')),
+    `Expected warning about missing block; got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+// ── edge.boundary: parent_event_seq pointing outside slice → chain stops ──────
+
+test('replayImplementerEvents: parent_event_seq pointing outside slice → chain stops at missing seq', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1, member_id: 'member-a', mailbox_message_id: 'msg-1', parent_event_seq: 999 }),
+  ]);
+
+  // Should not throw; chain should just stop at event_seq=999 (missing from seqMap)
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3', mailboxCausal: true });
+
+  assert.ok(Array.isArray(result.events), 'events must be an array');
+  assert.equal(result.events.length, 1);
+  assert.ok(Array.isArray(result.causalChains), 'causalChains must be present');
+  // Chain should include event_seq=1 (parent 999 doesn't exist, traversal stops)
+  const chain = result.causalChains.find(c => c.chain.includes(1));
+  assert.ok(chain, 'Chain containing event 1 must exist');
+  assert.ok(!chain.chain.includes(999), 'Chain must not include missing event 999');
+});
+
+// ── edge.boundary: duplicate mailbox_message_id → warning + dedupe ───────────
+
+test('replayImplementerEvents: duplicate mailbox_message_id → warning + dedupe', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1, member_id: 'member-a', mailbox_message_id: 'msg-dup' }),
+    makeEvent({ event_seq: 2, member_id: 'member-b', mailbox_message_id: 'msg-dup' }),
+  ]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3', mailboxCausal: true });
+
+  assert.ok(
+    result.warnings.some(w => w.includes('duplicate mailbox_message_id')),
+    `Expected duplicate warning; got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+// ── edge.boundary: cycle in parent_event_seq → visited-set prevents loop ─────
+
+test('replayImplementerEvents: cycle in parent_event_seq → cycle warning + no infinite loop', () => {
+  const sidecar = buildMinimalSidecar();
+  // Create a cycle: event 1 → parent 2, event 2 → parent 1
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1, member_id: 'member-a', mailbox_message_id: 'msg-1', parent_event_seq: 2 }),
+    makeEvent({ event_seq: 2, member_id: 'member-b', mailbox_message_id: 'msg-2', parent_event_seq: 1 }),
+  ]);
+
+  // Must complete without hanging
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3', mailboxCausal: true });
+
+  // Should have a cycle warning
+  assert.ok(
+    result.warnings.some(w => w.includes('cycle detected')),
+    `Expected cycle warning; got: ${JSON.stringify(result.warnings)}`
+  );
+  assert.ok(Array.isArray(result.events), 'events must be an array');
+});
+
+// ── fail.malformed-input: non-numeric event_seq → skip with location warning ──
+
+test('replayImplementerEvents: non-numeric event_seq → skipped with warning', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 'not-a-number', event_type: 'started' }),
+    makeEvent({ event_seq: 1, event_type: 'completed' }),
+  ]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3' });
+
+  assert.equal(result.events.length, 1, 'Only the valid event should be returned');
+  assert.equal(result.events[0].event_seq, 1);
+  assert.ok(
+    result.warnings.some(w => w.includes('invalid event_seq')),
+    `Expected event_seq warning; got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+// ── fail.malformed-input: missing event_type → skip with warning ──────────────
+
+test('replayImplementerEvents: missing event_type → skipped with warning', () => {
+  const sidecar = buildMinimalSidecar();
+  const rawEvents = [
+    makeEvent({ event_seq: 1 }),
+    makeEvent({ event_seq: 3, event_type: 'completed' }),
+  ];
+  // Add event 2 without event_type
+  const ev2 = { event_seq: 2, implementer_run_id: 'run-1', slice_id: 'slice-3', member_id: 'm', runtime_kind: 'claude-cli', worktree_id: 'wt', payload_hash: 'sha256:' + sha256Hex('{}'), payload: {} };
+  addImplementerBlock(sidecar, 'slice-3', [rawEvents[0], ev2, rawEvents[1]]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3' });
+
+  assert.equal(result.events.length, 2, 'Events 1 and 3 should be returned (2 skipped)');
+  assert.ok(
+    result.warnings.some(w => w.includes('event_type')),
+    `Expected event_type warning; got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+// ── fail.malformed-input: non-integer parent_event_seq → skip with warning ───
+
+test('replayImplementerEvents: non-integer parent_event_seq → skipped with warning', () => {
+  const sidecar = buildMinimalSidecar();
+  addImplementerBlock(sidecar, 'slice-3', [
+    makeEvent({ event_seq: 1 }),
+    makeEvent({ event_seq: 2, parent_event_seq: 'not-an-int' }),
+    makeEvent({ event_seq: 3, event_type: 'completed' }),
+  ]);
+
+  const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3' });
+
+  assert.equal(result.events.length, 2, 'Event with invalid parent_event_seq should be skipped');
+  assert.ok(
+    result.warnings.some(w => w.includes('invalid parent_event_seq')),
+    `Expected parent_event_seq warning; got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+// ── stress.scale: 1000 events → deterministic order + <500ms ─────────────────
+
+test('replayImplementerEvents: 1000 events → deterministic order in <500ms', () => {
+  const sidecar = buildMinimalSidecar();
+
+  // Build 1000 events with shuffled event_seqs
+  const events = [];
+  for (let i = 1; i <= 1000; i++) {
+    events.push(makeEvent({
+      event_seq: i,
+      member_id: `member-${(i % 3) + 1}`,
+      event_type: i % 10 === 0 ? 'checkpoint' : 'started',
+    }));
+  }
+  // Shuffle
+  for (let i = events.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [events[i], events[j]] = [events[j], events[i]];
+  }
+
+  addImplementerBlock(sidecar, 'slice-3', events);
+
+  const runs = [];
+  for (let run = 0; run < 3; run++) {
+    const start = Date.now();
+    const result = replayImplementerEvents(sidecar, { sliceId: 'slice-3' });
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed < 500, `Run ${run} took ${elapsed}ms, must be <500ms`);
+    runs.push(result.events.map(e => e.event_seq));
+  }
+
+  // Deterministic: all 3 runs produce identical order
+  assert.deepEqual(runs[0], runs[1], '3 runs must produce identical order (run 0 vs 1)');
+  assert.deepEqual(runs[1], runs[2], '3 runs must produce identical order (run 1 vs 2)');
+
+  // Verify sorted ascending
+  const sorted = [...runs[0]].sort((a, b) => a - b);
+  assert.deepEqual(runs[0], sorted, 'Events must be sorted ascending by event_seq');
+  assert.equal(runs[0].length, 1000);
+});
