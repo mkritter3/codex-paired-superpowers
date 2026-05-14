@@ -1734,3 +1734,140 @@ test('forensic preservation: worktree is NOT git-reset on any halt path', async 
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
   }
 });
+
+// ── critical.residual-risk audit-divergence-recovery-on-next-invocation ───────
+
+test('critical.residual-risk audit-divergence-recovery-on-next-invocation: re-appends missing committed event on second run', async () => {
+  const { repoRoot, integrationWt, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    // ── First run: simulate post-commit audit-divergence ────────────────────────
+    // The appendImplementerEventLocked throws for merger_completed.outcome='committed'
+    // on both the first attempt AND the retry, so the agent halts with
+    // merger-audit-divergence. The merge-resolution commit IS on HEAD but the
+    // sidecar lacks the committed event.
+
+    const { appendImplementerEventLocked: realAppend } = await import('../../../lib/codex-bridge/sidecar.js');
+    let committedAppendCount = 0;
+
+    const throwingAppend = async (specPath, event) => {
+      if (event.event_type === 'merger_completed' && event.payload && event.payload.outcome === 'committed') {
+        committedAppendCount++;
+        throw new Error('simulated post-commit audit failure');
+      }
+      return realAppend(specPath, event);
+    };
+
+    const firstResult = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: makeResolvingDispatchFn(integrationWt, conflictedFiles),
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      _deps: { appendImplementerEventLocked: throwingAppend },
+    });
+
+    // Verify the first run halted with merger-audit-divergence
+    assert.equal(firstResult.halted, true, `expected halt, got: ${JSON.stringify(firstResult)}`);
+    assert.equal(firstResult.halt, 'merger-audit-divergence');
+    assert.ok(typeof firstResult.mergerCommitSha === 'string' && firstResult.mergerCommitSha.length > 0,
+      'mergerCommitSha must be present in audit-divergence halt');
+    // Both the initial attempt and retry threw
+    assert.equal(committedAppendCount, 2, 'expected exactly 2 committed append attempts (initial + retry)');
+
+    const capturedCommitSha = firstResult.mergerCommitSha;
+
+    // Verify the merge-resolution commit IS on HEAD
+    const headSha = execFileSync('git', ['-C', integrationWt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    assert.equal(headSha, capturedCommitSha,
+      'merge-resolution commit must be on HEAD after audit-divergence halt');
+
+    // Verify the commit has the Merger-Member-Id trailer
+    const commitMsg = execFileSync('git', ['-C', integrationWt, 'log', '--format=%B', '-1'], { encoding: 'utf8' });
+    assert.ok(commitMsg.includes(`Merger-Member-Id: ${MERGER_MEMBER_ID}`),
+      `commit message must contain Merger-Member-Id trailer: ${commitMsg}`);
+
+    // Verify the sidecar has expected events but NOT merger_completed.outcome:'committed'
+    const runAfterFirstRun = readImplementerRun(spec, 'slice-8');
+    const eventTypesAfterFirst = runAfterFirstRun.events.map(e => e.event_type);
+    assert.ok(eventTypesAfterFirst.includes('merger_started'), 'sidecar must have merger_started');
+    assert.ok(eventTypesAfterFirst.includes('merge_review_claude'), 'sidecar must have merge_review_claude');
+    assert.ok(eventTypesAfterFirst.includes('merge_review_codex'), 'sidecar must have merge_review_codex');
+
+    // Must have merger_completed.outcome='completed' (pre-commit)
+    const completedEventsAfterFirst = runAfterFirstRun.events.filter(e => e.event_type === 'merger_completed');
+    const completedOutcomesAfterFirst = completedEventsAfterFirst.map(e => e.payload.outcome);
+    assert.ok(completedOutcomesAfterFirst.includes('completed'), 'must have merger_completed.outcome=completed');
+
+    // Must NOT have merger_completed.outcome='committed'
+    assert.ok(
+      !completedOutcomesAfterFirst.includes('committed'),
+      `sidecar must NOT have merger_completed.outcome=committed after first run; got: ${JSON.stringify(completedOutcomesAfterFirst)}`
+    );
+
+    // ── Second run: healthy appendImplementerEventLocked → recovery ─────────────
+    // Re-run with a healthy append function. The recovery scan should detect the
+    // merge-resolution commit on HEAD, find the missing committed event, re-append
+    // it, and return {halted: false, recovered: true, mergerCommitSha: <same>}.
+
+    const secondResult = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: defaultMergeContext(baseSha),
+      dispatchFn: async () => {
+        throw new Error('dispatchFn must NOT be called during recovery');
+      },
+      claudeReviewFn: async () => {
+        throw new Error('claudeReviewFn must NOT be called during recovery');
+      },
+      codexReviewFn: async () => {
+        throw new Error('codexReviewFn must NOT be called during recovery');
+      },
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+      // No _deps override — uses real sidecar append
+    });
+
+    // Should return success with recovered:true
+    assert.equal(secondResult.halted, false, `expected recovery success, got: ${JSON.stringify(secondResult)}`);
+    assert.equal(secondResult.mergerCommitSha, capturedCommitSha,
+      'recovered mergerCommitSha must match the commit from the first run');
+    assert.equal(secondResult.claudeVerdict, 'SHIP', 'recovered claudeVerdict must be SHIP');
+    assert.equal(secondResult.codexVerdict, 'SHIP', 'recovered codexVerdict must be SHIP');
+    assert.equal(secondResult.recovered, true, 'recovered flag must be true');
+
+    // Sidecar now has the missing merger_completed.outcome:'committed' event
+    const runAfterRecovery = readImplementerRun(spec, 'slice-8');
+    const committedEventsAfterRecovery = runAfterRecovery.events.filter(
+      e => e.event_type === 'merger_completed' && e.payload.outcome === 'committed'
+    );
+    assert.equal(committedEventsAfterRecovery.length, 1,
+      'exactly one merger_completed.outcome=committed event must be present after recovery');
+    assert.equal(
+      committedEventsAfterRecovery[0].payload.merger_commit_sha,
+      capturedCommitSha,
+      'committed event must reference the correct commit SHA'
+    );
+
+    // HEAD must be unchanged — no new commit was added
+    const headShaAfterRecovery = execFileSync('git', ['-C', integrationWt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    assert.equal(headShaAfterRecovery, capturedCommitSha,
+      'HEAD must be unchanged after recovery (no new commit should be added)');
+
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
