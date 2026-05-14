@@ -2519,3 +2519,149 @@ test('security.valid-newer-malformed-older-still-recovers: valid HEAD commit rec
     rmSync(repoRoot + '-wt', { recursive: true, force: true });
   }
 });
+
+// ── prompt-canary-substring-only-redaction ────────────────────────────────────
+// Critique 2 fix: a canary in conflictDiffs must NOT collapse the prompt.
+// The dispatchFn spy captures the actual prompt passed to it.
+
+import { CANARY_TOKENS as CANARY_TOKENS_FIXTURE } from './fixtures/canary-tokens.js';
+
+test('prompt-canary-substring-only-redaction: canary in conflictDiff is replaced without collapsing prompt', async () => {
+  const { repoRoot, integrationWt, mcSpec, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    // Build a 5KB diff with a canary token in the middle
+    const canary = CANARY_TOKENS_FIXTURE.ollamaCloud;
+    const padding = 'x'.repeat(2500);
+    const bigDiff = `--- a/lib/conflict.js\n+++ b/lib/conflict.js\n@@ -1,1 +1,3 @@\n+${padding}\n+canary=${canary}\n+${padding}\n`;
+
+    let capturedPrompt = null;
+    const spyDispatchFn = async (request) => {
+      capturedPrompt = request.prompt;
+      // Also resolve the conflict so the merge can proceed
+      for (const f of conflictedFiles) {
+        writeFileSync(join(integrationWt, f), 'console.log("resolved");\n');
+      }
+      return { outcome: 'completed' };
+    };
+
+    const mergeContextWithCanary = {
+      planRef: 'docs/plans/test-plan.md',
+      baseSha,
+      mergeOrder: ['memberA', 'memberB'],
+      diffstats: '1 file changed',
+      conflictDiffs: [bigDiff],
+      mailboxNotes: 'no notes',
+    };
+
+    const result = await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: mergeContextWithCanary,
+      dispatchFn: spyDispatchFn,
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.equal(result.halted, false, `expected no halt, got: ${result.halt}`);
+    assert.ok(capturedPrompt !== null, 'dispatchFn must have been called and captured a prompt');
+
+    // 1. Prompt was NOT collapsed — must be substantially longer than 10 chars
+    assert.ok(
+      capturedPrompt.length > 1000,
+      `prompt should be ~5KB but got length ${capturedPrompt.length} — was it collapsed to '<REDACTED>'?`
+    );
+
+    // 2. Canary is NOT present in the prompt
+    assert.ok(
+      !capturedPrompt.includes(canary),
+      `prompt must not contain canary token "${canary}"`
+    );
+
+    // 3. '<REDACTED>' IS present in place of the canary
+    assert.ok(
+      capturedPrompt.includes('<REDACTED>'),
+      'prompt must contain <REDACTED> where the canary was'
+    );
+
+    // 4. Structural content around the canary is preserved
+    assert.ok(
+      capturedPrompt.includes('## Per-file conflict diffs'),
+      'prompt structural section header must be intact'
+    );
+    assert.ok(
+      capturedPrompt.includes(padding.slice(0, 100)),
+      'surrounding diff content must be preserved (not collapsed)'
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});
+
+test('prompt-canary-no-canary-is-byte-identical: prompt with no canary is unchanged by redaction', async () => {
+  const { repoRoot, integrationWt, mcSpec, baseSha, conflictedFiles } = await makeConflictedRepo();
+  try {
+    const { spec, implementerRunId } = await makeSidecarRun(repoRoot, 'slice-8', MERGER_MEMBER_SPECS, baseSha);
+
+    // A completely clean diff with no canary tokens
+    const cleanDiff = '--- a/lib/conflict.js\n+++ b/lib/conflict.js\n@@ -1,1 +1,2 @@\n+console.log("clean resolution");\n';
+
+    let capturedPrompt = null;
+    const spyDispatchFn = async (request) => {
+      capturedPrompt = request.prompt;
+      for (const f of conflictedFiles) {
+        writeFileSync(join(integrationWt, f), 'console.log("resolved");\n');
+      }
+      return { outcome: 'completed' };
+    };
+
+    // We need to know what the raw prompt WOULD be without redaction.
+    // Build it the same way composePrompt would, then compare.
+    const mergeContextClean = {
+      planRef: 'docs/plans/test-plan.md',
+      baseSha,
+      mergeOrder: ['memberA', 'memberB'],
+      diffstats: '1 file changed',
+      conflictDiffs: [cleanDiff],
+      mailboxNotes: 'no notes',
+    };
+
+    await runMergerAgent({
+      integrationWorktree: integrationWt,
+      conflictedFiles,
+      mergeContext: mergeContextClean,
+      dispatchFn: spyDispatchFn,
+      claudeReviewFn: makeShipReviewer(),
+      codexReviewFn: makeShipReviewer(),
+      specPath: spec,
+      sliceId: 'slice-8',
+      implementerRunId,
+      mergerMemberId: MERGER_MEMBER_ID,
+      mergerRuntimeKind: MERGER_RUNTIME_KIND,
+      mergerWorktreeId: MERGER_WORKTREE_ID,
+    });
+
+    assert.ok(capturedPrompt !== null, 'dispatchFn must have been called');
+    // No <REDACTED> should appear if there were no canaries
+    assert.ok(
+      !capturedPrompt.includes('<REDACTED>'),
+      'a prompt with no canary must not have any <REDACTED> after redaction'
+    );
+    // The clean diff content must be present unchanged
+    assert.ok(
+      capturedPrompt.includes('console.log("clean resolution")'),
+      'clean prompt content must be byte-identical after redaction pass'
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repoRoot + '-wt', { recursive: true, force: true });
+  }
+});

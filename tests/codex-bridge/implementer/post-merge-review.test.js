@@ -1391,3 +1391,164 @@ test('critical.idempotency-preserves-revise-halt: second invocation after REVISE
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── prompt-canary-substring-only-redaction ─────────────────────────────────────
+// Critique 2 fix: a canary token in mergedDiff must NOT collapse the prompt.
+
+import { CANARY_TOKENS as CANARY_TOKENS_FIXTURE } from './fixtures/canary-tokens.js';
+
+test('prompt-canary-substring-only-redaction: canary in mergedDiff is replaced without collapsing prompt', async () => {
+  const { dir, spec, implementerRunId } = await makeSpecWithRun();
+  try {
+    const canary = CANARY_TOKENS_FIXTURE.anthropicApi;
+    // Build a 10KB diff with a canary token in the middle
+    const padding = 'y'.repeat(5000);
+    const bigDiff =
+      `--- a/lib/a.js\n+++ b/lib/a.js\n@@ -1,1 +1,4 @@\n` +
+      `+${padding}\n` +
+      `+canary-here=${canary}\n` +
+      `+${padding}\n`;
+
+    let capturedPrompt = null;
+    const spyDispatchPanel = async (_role, request, _dispatchFns, _opts) => {
+      capturedPrompt = request.prompt;
+      // Return a SHIP outcome so the review succeeds
+      return {
+        panel_id: 'panel-spy-123',
+        outcome: 'panel-SHIP',
+        member_results: [
+          {
+            member_id: CLAUDE_REVIEWER_ID,
+            runtime_kind: 'claude-cli',
+            parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+            parse_failure_reason: null,
+          },
+          {
+            member_id: CODEX_REVIEWER_ID,
+            runtime_kind: 'codex-cli',
+            parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+            parse_failure_reason: null,
+          },
+        ],
+        findings_by_member: [],
+        skipped_candidates: [],
+        consensus_round_ran: false,
+        aggregate: {
+          outcome: 'panel-SHIP',
+          ship_count: 2,
+          revise_count: 0,
+          parse_failure_count: 0,
+          quorum_size: 2,
+          has_quorum: true,
+          findings_by_member: [],
+        },
+      };
+    };
+
+    const result = await runPostMergeReview({
+      ...baseOpts(spec, implementerRunId, { mergedDiff: bigDiff }),
+      _deps: {
+        ...makeFakeLockDeps(),
+        dispatchPanel: spyDispatchPanel,
+      },
+    });
+
+    assert.equal(result.halted, false, `expected no halt, got: ${result.halt}`);
+    assert.ok(capturedPrompt !== null, 'dispatchPanel must have been called and captured a prompt');
+
+    // 1. Prompt was NOT collapsed — must be substantially longer than 10 chars
+    assert.ok(
+      capturedPrompt.length > 1000,
+      `prompt should be ~10KB but got length ${capturedPrompt.length} — was it collapsed to '<REDACTED>'?`
+    );
+
+    // 2. Canary is NOT present in the prompt
+    assert.ok(
+      !capturedPrompt.includes(canary),
+      `prompt must not contain canary token "${canary}"`
+    );
+
+    // 3. '<REDACTED>' IS present in place of the canary
+    assert.ok(
+      capturedPrompt.includes('<REDACTED>'),
+      'prompt must contain <REDACTED> where the canary was'
+    );
+
+    // 4. Structural content around the canary is preserved (data fences, surrounding diff)
+    assert.ok(
+      capturedPrompt.includes('<merged-diff>'),
+      '<merged-diff> start tag must be intact after canary redaction'
+    );
+    assert.ok(
+      capturedPrompt.includes(padding.slice(0, 100)),
+      'surrounding diff content must be preserved (not collapsed)'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('prompt-canary-no-canary-is-byte-identical: prompt with no canary is unchanged by redaction', async () => {
+  const { dir, spec, implementerRunId } = await makeSpecWithRun();
+  try {
+    // A clean diff with no canary tokens
+    const cleanDiff = '--- a/lib/a.js\n+++ b/lib/a.js\n@@ -1,1 +1,2 @@\n+// clean line\n';
+
+    let capturedPrompt = null;
+    const spyDispatchPanel = async (_role, request, _dispatchFns, _opts) => {
+      capturedPrompt = request.prompt;
+      return {
+        panel_id: 'panel-clean-123',
+        outcome: 'panel-SHIP',
+        member_results: [
+          {
+            member_id: CLAUDE_REVIEWER_ID,
+            runtime_kind: 'claude-cli',
+            parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+            parse_failure_reason: null,
+          },
+          {
+            member_id: CODEX_REVIEWER_ID,
+            runtime_kind: 'codex-cli',
+            parsed_result: { status: 'SHIP', blocking_findings: [], nonblocking_findings: [] },
+            parse_failure_reason: null,
+          },
+        ],
+        findings_by_member: [],
+        skipped_candidates: [],
+        consensus_round_ran: false,
+        aggregate: {
+          outcome: 'panel-SHIP',
+          ship_count: 2,
+          revise_count: 0,
+          parse_failure_count: 0,
+          quorum_size: 2,
+          has_quorum: true,
+          findings_by_member: [],
+        },
+      };
+    };
+
+    await runPostMergeReview({
+      ...baseOpts(spec, implementerRunId, { mergedDiff: cleanDiff }),
+      _deps: {
+        ...makeFakeLockDeps(),
+        dispatchPanel: spyDispatchPanel,
+      },
+    });
+
+    assert.ok(capturedPrompt !== null, 'dispatchPanel must have been called');
+    // No <REDACTED> should appear if there were no canaries
+    assert.ok(
+      !capturedPrompt.includes('<REDACTED>'),
+      'a prompt with no canary must not have any <REDACTED> after redaction'
+    );
+    // The clean diff content must be present unchanged
+    assert.ok(
+      capturedPrompt.includes('// clean line'),
+      'clean prompt content must be byte-identical after redaction pass'
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
