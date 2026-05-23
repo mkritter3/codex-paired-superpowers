@@ -8,6 +8,44 @@ description: Use to run a written, double-SHIP'd implementation plan slice-by-sl
 ## What this is
 Given a plan that's already double-SHIP'd in `writing-plans`, run it slice-by-slice with full Claude↔Codex review at every phase, until all slices ship or the loop halts on a real blocker. Designed to be wrapped by `ralph-loop` so it survives Claude session boundaries.
 
+## Outer-mode under app-autopilot (v0.11.0)
+
+When autopilot is invoked as part of an **app-autopilot** run (multi-plan, `/goal`-driven), three behaviors change. Otherwise (single-plan, user-initiated autopilot), everything works exactly as it did in v0.10.x.
+
+**Outer-mode detection.** Autopilot is in outer-mode when EITHER:
+1. The environment variable `CODEX_PAIRED_OUTER_MODE=app-autopilot` is set, OR
+2. The sidecar has a non-null `app_state` block (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js app-state-get --specPath <spec>` emits non-empty).
+
+Either trigger flips on outer-mode. The env var lets app-autopilot signal explicitly inside the headless child; the sidecar check is a belt-and-suspenders fallback if the env var didn't survive a process boundary.
+
+**Behavior changes when outer-mode is on:**
+
+1. **Do NOT spawn ralph-loop.** Skip the `ralph-loop` wrap entirely on entry and on resume. The `/goal` evaluator is the outer driver; spawning ralph-loop would create a competing continuation loop with race conditions. Operate as a single-pass execution: do the work for one slice (or one phase if mid-slice), surface progress + state, return. The next `/goal` turn will re-enter autopilot via app-autopilot's Step 3.
+
+2. **Print `<<<PLAN_SHIPPED>>>` when the plan finishes.** When the last slice ships and `current_phase = "all_done"`, before returning, emit a single line to stdout:
+
+   ```
+   <<<PLAN_SHIPPED>>> path=<plan-path> goals_audited=[goal-id-1,goal-id-2,...]
+   ```
+
+   - `<plan-path>` is the plan file that just finished (the one autopilot was driving).
+   - `goals_audited` is a comma-separated list of goal ids this plan delivered, derived from the plan's frontmatter `**Goals:**` block (a new optional field; if absent, the orchestrator parses from each slice's "delivers goal: <id>" annotations). If the plan didn't declare which goals it ships, emit `goals_audited=[]` and app-autopilot will fall back to asking Codex to map the diff against the goals block.
+
+   app-autopilot's per-turn loop reads this line, marks the goals shipped in `app_state` via `app-state-mark-goal-shipped`, and proceeds.
+
+3. **Print `APP_HALT: <reason>` on non-recoverable halt.** Replace the bare halt-summary block with a line of this exact shape:
+
+   ```
+   APP_HALT: <halt_reason_slug>: <one-line plain-English explanation>
+   ```
+
+   - `<halt_reason_slug>` matches the existing `halt_reason` values (`dirty-tree-on-phase-retry`, `history-divergence`, `external-commit-detected`, `subagent-blocked`, `cli-infrastructure-error`, `validation-coverage-malformed:*`, `panel-quorum-lost`, etc.).
+   - The one-line explanation is for the user — plain English, no jargon.
+
+   The existing halt machinery (anchor-clear, halt-envelope, sidecar `autopilot.halt_reason` write) still runs unchanged. The new sentinel line is *additional* output the `/goal` evaluator pattern-matches.
+
+**Backward compatibility.** Outside outer-mode (no env var AND no `app_state` block), the original v0.10.x flow runs unchanged: ralph-loop is spawned, no PLAN_SHIPPED line is printed, halts surface as before.
+
 ## Honest-reporting activation (v0.8.1, do this first)
 On entry, write the honest-reporting marker so the Stop/PreToolUse hook keeps claims sourced for the autopilot run:
 
@@ -61,13 +99,13 @@ Read the current `autopilot` block. Dispatch on `current_phase`:
 - **docs-update** → run Phase D.
 - **live-verification** → run Phase E (see below).
 - **shipped** → mark the slice shipped (`slice_reviews[slice-N].shipped = true`), advance `current_slice` to the next unfinished slice, set `current_phase = "plan-slice"`, reset `phase_start_sha = HEAD`.
-- **all_done** → write a final autopilot block with `halt_reason: "completed"`, clear the anchor, return success.
+- **all_done** → write a final autopilot block with `halt_reason: "completed"`, clear the anchor, return success. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), ALSO print the `<<<PLAN_SHIPPED>>> path=<plan> goals_audited=[...]` sentinel to stdout before returning.
 
 After each phase ships (double-SHIP), advance `current_phase` to the next phase in the sequence and update `phase_start_sha = HEAD` and `last_commit_sha = HEAD` atomically.
 
 ### On halt (any reason)
 1. Set `autopilot.halt_reason` in the sidecar (atomic).
-2. Print a summary to the user: which slice, which phase, what blocked.
+2. Print a summary to the user: which slice, which phase, what blocked. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), the summary MUST also include a literal `APP_HALT: <halt_reason>: <plain-English one-liner>` line so the parent `/goal` evaluator picks it up.
 3. **Clear the active anchor** (`anchor-clear --repoRoot <repo>`). This is critical: while halted, the user must be able to make manual recovery commits without the provenance hook blocking them. The sidecar's `autopilot` block (with `halt_reason` set) remains and is the source of truth for resumption.
 4. **Emit the halt envelope** (v0.9.0). Before returning, wrap the halt reason through the halt-envelope module so ralph-loop receives the structured shape:
 
@@ -84,7 +122,7 @@ After each phase ships (double-SHIP), advance `current_phase` to the next phase 
 
    `terminal: true` means the operator must act before ralph re-fires. Ralph-loop MUST NOT re-fire on a terminal halt — it should exit and surface the `resume_hint` to the user. `terminal: false` means a transient condition; ralph may retry after a brief delay. Unknown halt reasons always produce `terminal: true` (fail-closed).
 
-5. On the next `/autopilot` invocation (manually or via ralph), the autopilot reads the sidecar, sees `halt_reason` set, and either re-writes the anchor and resumes (if the halt cause has been addressed) or exits with the same halt reason.
+5. On the next `/autopilot` invocation (manually or via ralph), the autopilot reads the sidecar, sees `halt_reason` set, and either re-writes the anchor and resumes (if the halt cause has been addressed) or exits with the same halt reason. **Under outer-mode**, the "next invocation" is the next `/goal` turn — app-autopilot's per-turn Step 1 reconciliation reads the sidecar and decides whether to retry (clearing `halt_reason` to null on success) or re-print `APP_HALT` (if the blocker persists).
 
 ### On ralph tick (cross-session resume or post-halt continuation)
 Ralph re-invokes `/autopilot <plan-path>` on each tick. The plan path is the authoritative entrypoint — autopilot uses it to rediscover the spec and sidecar regardless of whether the active anchor is present.

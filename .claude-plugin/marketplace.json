@@ -5,8 +5,8 @@
   "plugins": [
     {
       "name": "codex-paired-superpowers",
-      "description": "Six superpowers skills paired with Codex (GPT-5.5) as an L11 engineering partner; one persistent Codex thread per feature; 7-round revision loop with structured verdict protocol. v0.10.0: implementer experts — parallel N-way fanout, merger + double-SHIP gate. v0.10.1: codex independently audits codebase against goals before SHIP — goals block + audit log + machine-enforced gate.",
-      "version": "0.10.1",
+      "description": "Six superpowers skills paired with Codex (GPT-5.5) as an L11 engineering partner; one persistent Codex thread per feature; 7-round revision loop with structured verdict protocol. v0.10.0: implementer experts — parallel N-way fanout, merger + double-SHIP gate. v0.10.1: codex independently audits codebase against goals before SHIP — goals block + audit log + machine-enforced gate. v0.11.0: app-autopilot — multi-plan unattended app rollout driven by Claude Code's /goal command.",
+      "version": "0.11.0",
       "source": {
         "source": "url",
         "url": "https://github.com/mkritter3/codex-paired-superpowers.git"

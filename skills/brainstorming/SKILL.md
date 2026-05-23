@@ -23,6 +23,17 @@ The marker has an 8-hour TTL and auto-expires; no cleanup needed. See `skills/ho
 ## Phase 0 — User intent (uncounted)
 Ask the **user** a small number of multiple-choice questions to establish: what to build, who it's for, what "done" looks like, scope boundaries. Each question is one message. Never ask the user a technical question.
 
+### Phase 0.5 — Spec scope (v0.11.0)
+
+Before extracting goals, ask the user (in plain English) whether this spec is:
+
+- **Feature-scoped** — one focused change, single plan, ships in one autopilot pass. The default for adjustments to an existing app.
+- **App-scoped** — multi-plan rollout that will ship the whole product idea (or a major chunk of it) across many plans, with Codex pairing on each next-plan decision. Triggers the `app-autopilot` handoff at Phase 5 instead of single-plan autopilot.
+
+Phrase it conversationally: "Are we shaping one focused change here, or are we mapping out a whole app you want me to build end-to-end?" Record the choice in working memory; it gates the goals-tier check below and the Phase 5 handoff.
+
+Default to feature-scoped if the user is ambiguous. App-scoped MUST have ≥ 3 goals (single-goal apps are feature-scoped by definition); enforce after goals extraction below.
+
 ## Phase 1 — Codebase exploration (uncounted)
 Read relevant files. Build a short context note: existing patterns, conventions, file organization, prior art. This becomes context for Codex.
 
@@ -57,6 +68,8 @@ Before handing off to Codex, extract a **goals block** from the user intent gath
    <<<END_GOALS>>>
    ```
    This block is invariant across the revision loop — Codex critiques against it every round.
+
+   **App-scope gate (v0.11.0).** If Phase 0.5 marked this spec app-scoped and the goals block has < 3 goals, halt and route back to Phase 0.5: either expand the goal set or downgrade to feature-scoped. App-scoped specs drive multi-plan rollouts; a single-goal "app" is just a feature.
 
 Compose the initial Codex prompt by concatenating, in order:
 1. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/system-rubric.md`
@@ -343,7 +356,28 @@ Concatenate each expert's `blocking_findings[]` + `nonblocking_findings[]` (verb
 Show the user the final spec path. Quote the goal + open contentions if any. Wait for explicit "yes" or revisions. If the user requests changes, re-enter the loop at round 1 with the user's input as additional critique.
 
 ## Phase 5 — Hand off
-Invoke `superpowers:writing-plans` (or this plugin's forked version once shipped). Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar.
+
+**Feature-scoped specs (single plan, the historical default):**
+Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. From there the user chooses subagent-driven execution, inline execution, or autopilot.
+
+**App-scoped specs (multi-plan, v0.11.0):**
+Three things happen in sequence — no user intervention between them.
+
+1. **Initialize `app_state` in the sidecar.** Parse the `<<<GOALS>>>` block, slug each goal (e.g. `goal-1`, `goal-2`, or a short kebab-case derived from the goal text), and write:
+
+   ```bash
+   echo '[
+     {"id":"goal-signup","text":"After this ships, a user can sign up."},
+     {"id":"goal-login","text":"After this ships, a user can log in."},
+     ...
+   ]' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js app-state-init --specPath "<spec-path>"
+   ```
+
+2. **Run `codex-paired-superpowers:writing-plans` for the FIRST plan only.** That skill already handles the full Codex-paired 7-round loop + TDD panel review. The first plan should ship some-but-not-necessarily-all of the spec's goals — pick the smallest cohesive subset that gives the user a working slice of the app (a "walking skeleton" first plan). Subsequent plans are written autonomously by `app-autopilot` between turns; they reuse the same skill verbatim.
+
+3. **Run the conversational handoff** in `${CLAUDE_PLUGIN_ROOT}/skills/app-autopilot/templates/handoff-script.md`. Read the template, render the variables (goals list in plain English, first-plan summary, total goal count), and present to the user. On their "yes," fire `/goal` via the Bash tool as documented in that template. From that point, the headless `claude -p` child runs the `app-autopilot` skill on each turn until all goals ship or `APP_HALT` appears.
+
+If the user says no at step 3, leave the spec, plan, and `app_state` in place. They can come back later and say "go" — main Claude can fire the goal then; no rework needed.
 
 ## Failure modes
 - **Codex unreachable:** retry once, then surface to user with option to abort or skip the round.
