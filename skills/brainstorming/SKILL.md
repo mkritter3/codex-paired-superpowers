@@ -23,14 +23,14 @@ The marker has an 8-hour TTL and auto-expires; no cleanup needed. See `skills/ho
 ## Phase 0 — User intent (uncounted)
 Ask the **user** a small number of multiple-choice questions to establish: what to build, who it's for, what "done" looks like, scope boundaries. Each question is one message. Never ask the user a technical question.
 
-### Phase 0.5 — Spec scope (v0.11.0)
+### Phase 0.5 — Spec scope (v0.11.0, refined in v0.12.0)
 
 Before extracting goals, ask the user (in plain English) whether this spec is:
 
 - **Feature-scoped** — one focused change, single plan, ships in one autopilot pass. The default for adjustments to an existing app.
-- **App-scoped** — multi-plan rollout that will ship the whole product idea (or a major chunk of it) across many plans, with Codex pairing on each next-plan decision. Triggers the `app-autopilot` handoff at Phase 5 instead of single-plan autopilot.
+- **App-scoped** — covers a multi-plan rollout (a whole new app, or a major chunk of an existing one). The user will run `writing-plans` + `autopilot` once per plan, with the same spec, until the goals are fully shipped. (Optionally, the user can opt into `app-autopilot` to drive this loop unattended via `/goal` — experimental.)
 
-Phrase it conversationally: "Are we shaping one focused change here, or are we mapping out a whole app you want me to build end-to-end?" Record the choice in working memory; it gates the goals-tier check below and the Phase 5 handoff.
+Phrase it conversationally: "Are we shaping one focused change here, or are we mapping out a whole app you want me to build end-to-end?" Record the choice in working memory; it gates the goals-tier check below and the Phase 5 handoff wording.
 
 Default to feature-scoped if the user is ambiguous. App-scoped MUST have ≥ 3 goals (single-goal apps are feature-scoped by definition); enforce after goals extraction below.
 
@@ -75,8 +75,10 @@ Compose the initial Codex prompt by concatenating, in order:
 1. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/system-rubric.md`
 2. Contents of `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/verdict-format.md`
 3. The `<<<GOALS>>>...<<<END_GOALS>>>` block from step 4 above.
-4. `Phase: spec-draft.\n\nAbove is the goals block. Draft a complete L11-grade spec whose acceptance criteria map 1:1 to the goals.\n\nBefore drafting, run your own codebase audit (PART A from the system rubric): verify every primitive you intend to introduce is not already present in the repo, and verify every existing primitive listed under "Existing primitives that may satisfy these goals" is correctly characterized. Record audit commands + results in the spec under "## Codebase audit." If an existing primitive can satisfy a goal, the spec MUST extend it rather than build a parallel layer absent a written rationale.\n\nEnd with the required verdict block.`
+4. `Phase: spec-draft.\n\nAbove is the goals block. Draft a complete L11-grade spec whose acceptance criteria map 1:1 to the goals.\n\nBefore drafting, run your own codebase audit (PART A from the system rubric): verify every primitive you intend to introduce is not already present in the repo, and verify every existing primitive listed under "Existing primitives that may satisfy these goals" is correctly characterized. Record audit commands + results in the spec under "## Codebase audit." If an existing primitive can satisfy a goal, the spec MUST extend it rather than build a parallel layer absent a written rationale.\n\nWrite the spec directly to <spec-path> using your file-write tools — the MCP server runs with workspace-write sandbox so you have write access. After the file is written, end your reply with the required verdict block AND a single line `Wrote spec to <spec-path>` so Claude can verify.`
 5. The user intent + codebase context (Phase 0 + Phase 1 raw material).
+
+> **v0.12.0 — codex has workspace-write.** The MCP server is now launched with `-c sandbox_mode=workspace-write`, so Codex can write the spec file itself. Don't ask Codex to return the spec body to Claude and then have Claude write it — that double-handling wasted tokens and lost detail. Instead, instruct Codex (as shown in step 4 above) to write `<spec-path>` directly, then Claude just verifies the file exists.
 
 Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with these EXACT parameters (do NOT substitute schema-description example values like `gpt-5.2-codex` — those are stale references from the upstream codex CLI, NOT what this plugin runs on):
 
@@ -90,15 +92,16 @@ Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_c
 
 **Critical — model invariant.** The `model` field is load-bearing. If you pass anything other than `"gpt-5.5"`, the thread runs on the wrong model and the entire feature's review loop is invalidated (and `codex-reply` calls inherit the wrong model — you'd need to re-create the thread to recover). The MCP tool's schema docstring mentions `gpt-5.2` and `gpt-5.2-codex` as examples; those are NOT defaults for this plugin. Always pass `"gpt-5.5"` literally. See `codex-pairing.md` for the canonical invocation form.
 
-The response is `{ threadId, content }`. `content` is Codex's draft + its verdict block. Capture both fields.
+The response is `{ threadId, content }`. `content` is Codex's reply (which includes the verdict block and the `Wrote spec to <spec-path>` confirmation line). The actual spec body lives on disk at `<spec-path>` — Codex wrote it directly via workspace-write.
 
-Then create the spec file (write the draft into it) and initialize the sidecar:
+Verify and initialize the sidecar:
 
 ```bash
-mkdir -p $(dirname "<spec-path>")
-# Write Codex's content to the spec file (use Edit/Write tool, not bash):
-#   <spec-path> ← Codex content (strip the verdict block from the spec body
-#                 if you don't want it in the doc)
+# Confirm Codex actually wrote the file. If the file is missing, fall back to
+# extracting the body from Codex's reply yourself — but treat that as a Codex
+# defect and surface it (the workspace-write contract said it would write).
+test -f "<spec-path>" || echo "WARN: Codex did not write <spec-path>; extracting from reply"
+
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-init \
   --specPath "<spec-path>" \
   --feature "<feature-name>" \
@@ -357,27 +360,16 @@ Show the user the final spec path. Quote the goal + open contentions if any. Wai
 
 ## Phase 5 — Hand off
 
-**Feature-scoped specs (single plan, the historical default):**
-Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. From there the user chooses subagent-driven execution, inline execution, or autopilot.
+**Default path (both feature-scoped and app-scoped specs):**
+Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. From there the user chooses subagent-driven execution, inline execution, or `autopilot` (which wraps via ralph-loop for cross-session continuity and loop-prevention).
 
-**App-scoped specs (multi-plan, v0.11.0):**
-Three things happen in sequence — no user intervention between them.
+For **app-scoped specs**, mention to the user — in plain English — that the spec covers multiple goals and the work will likely span several plans. After the first plan ships through autopilot, the user can come back and run `writing-plans` again for the next chunk of work, using the same spec. Each round of `writing-plans` sees the prior plans + current repo state via the sidecar and can target the remaining goals.
 
-1. **Initialize `app_state` in the sidecar.** Parse the `<<<GOALS>>>` block, slug each goal (e.g. `goal-1`, `goal-2`, or a short kebab-case derived from the goal text), and write:
+**Why we default to autopilot + ralph-loop instead of /goal:**
+The autopilot + ralph-loop combo (v0.10.x) has battle-tested loop-prevention: halt envelopes classify halts as terminal vs transient, panel-quorum-lost halts force exit (not retry), dirty-tree reconciliation runs every tick, etc. (see `lib/codex-bridge/halt-envelope.js` and `tests/codex-bridge/halt-envelope-e2e.test.js`). Claude's `/goal` evaluator is transcript-only — it can re-trigger turns endlessly if the success sentinel isn't surfaced cleanly. Ralph-loop's halt-classification guards against that; `/goal` does not.
 
-   ```bash
-   echo '[
-     {"id":"goal-signup","text":"After this ships, a user can sign up."},
-     {"id":"goal-login","text":"After this ships, a user can log in."},
-     ...
-   ]' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js app-state-init --specPath "<spec-path>"
-   ```
-
-2. **Run `codex-paired-superpowers:writing-plans` for the FIRST plan only.** That skill already handles the full Codex-paired 7-round loop + TDD panel review. The first plan should ship some-but-not-necessarily-all of the spec's goals — pick the smallest cohesive subset that gives the user a working slice of the app (a "walking skeleton" first plan). Subsequent plans are written autonomously by `app-autopilot` between turns; they reuse the same skill verbatim.
-
-3. **Run the conversational handoff** in `${CLAUDE_PLUGIN_ROOT}/skills/app-autopilot/templates/handoff-script.md`. Read the template, render the variables (goals list in plain English, first-plan summary, total goal count), and present to the user. On their "yes," fire `/goal` via the Bash tool as documented in that template. From that point, the headless `claude -p` child runs the `app-autopilot` skill on each turn until all goals ship or `APP_HALT` appears.
-
-If the user says no at step 3, leave the spec, plan, and `app_state` in place. They can come back later and say "go" — main Claude can fire the goal then; no rework needed.
+**Opt-in: /goal-driven app-autopilot (experimental, v0.11.0):**
+If the user explicitly asks for unattended multi-plan execution driven by Claude's `/goal` command, route to `codex-paired-superpowers:app-autopilot`. That skill walks through `app-state-init` → first plan → conversational handoff → fires `claude -p "/goal '...'"`. Read `skills/app-autopilot/SKILL.md` for the full flow and known limitations. Do NOT default to this path — only use it when the user opts in by name.
 
 ## Failure modes
 - **Codex unreachable:** retry once, then surface to user with option to abort or skip the round.

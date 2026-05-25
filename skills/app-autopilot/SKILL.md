@@ -1,9 +1,17 @@
 ---
 name: app-autopilot
-description: Use to ship a full multi-feature app under one Claude `/goal` condition. Brainstorms an app-scoped spec, drafts the first plan with Codex, then loops: run autopilot on the active plan → on plan ship, Claude↔Codex draft the next plan → repeat until every goal in the spec is audited as shipped. Replaces ralph-loop continuation with `/goal`.
+description: EXPERIMENTAL OPT-IN. Multi-plan unattended app rollout driven by Claude Code's `/goal` command. Only use when the user explicitly asks for /goal-driven execution by name. Default path for multi-plan apps is `autopilot` + ralph-loop (see `skills/autopilot/SKILL.md`), which has battle-tested loop-prevention this skill lacks.
 ---
 
-# App-autopilot
+# App-autopilot (experimental, opt-in)
+
+> **⚠ Status: experimental (v0.11.0).** As of v0.12.0, this is NOT the default path for multi-plan apps. Use `autopilot` + ralph-loop instead — the brainstorming Phase 5 handoff defaults there. Only invoke `app-autopilot` when the user explicitly asks for `/goal`-driven execution by name.
+>
+> **Why it's not the default.** Claude's `/goal` evaluator is transcript-only — it can re-trigger turns endlessly if the success sentinel (`Goals shipped: N/N`) or halt sentinel (`APP_HALT`) isn't surfaced cleanly by the headless child. Ralph-loop has halt-envelope classification (terminal vs transient), panel-quorum-lost handling, dirty-tree reconciliation per tick, and other loop-prevention guards (`lib/codex-bridge/halt-envelope.js`, `tests/codex-bridge/halt-envelope-e2e.test.js`). app-autopilot inherits NONE of those guards — it relies entirely on the goal-condition string matching reliably.
+>
+> **Known failure modes.** (1) Headless `claude -p` child doesn't surface `<<<APP_AUTOPILOT_PROGRESS>>>` to the parent transcript → evaluator never sees "Goals shipped: N/N" → loops forever. (2) Outer-mode detection in `autopilot` misfires → ralph-loop also spawns → competing continuation loops with race conditions. (3) Codex disagreement in the next-plan drafting step burns the 7-round budget without converging → halt sentinel not emitted because the loop is still inside writing-plans.
+>
+> **If you're hitting any of these,** stop using `app-autopilot` and route through brainstorming → writing-plans → autopilot manually, one plan at a time. The sidecar's `app_state` block is still useful for tracking which goals shipped under which plan; just don't drive the loop from `/goal`.
 
 ## What this is
 
