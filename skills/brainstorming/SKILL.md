@@ -372,12 +372,12 @@ Show the user the final spec path. Quote the goal + open contentions if any. Wai
 ## Phase 5 — Hand off
 
 **Default path (both feature-scoped and app-scoped specs):**
-Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. From there the user chooses subagent-driven execution, inline execution, or `autopilot` (which wraps via ralph-loop for cross-session continuity and loop-prevention).
+Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. From there the user chooses subagent-driven execution, inline execution, or `autopilot` (self-continuing: re-running `/autopilot` resumes from the sidecar across sessions, with built-in loop-prevention).
 
 For **app-scoped specs**, mention to the user — in plain English — that the spec covers multiple goals and the work will likely span several plans. After the first plan ships through autopilot, the user can come back and run `writing-plans` again for the next chunk of work, using the same spec. Each round of `writing-plans` sees the prior plans + current repo state via the sidecar and can target the remaining goals.
 
-**Why we default to autopilot + ralph-loop instead of /goal:**
-The autopilot + ralph-loop combo (v0.10.x) has battle-tested loop-prevention: halt envelopes classify halts as terminal vs transient, panel-quorum-lost halts force exit (not retry), dirty-tree reconciliation runs every tick, etc. (see `lib/codex-bridge/halt-envelope.js` and `tests/codex-bridge/halt-envelope-e2e.test.js`). Claude's `/goal` evaluator is transcript-only — it can re-trigger turns endlessly if the success sentinel isn't surfaced cleanly. Ralph-loop's halt-classification guards against that; `/goal` does not.
+**Why we default to autopilot instead of /goal:**
+Autopilot has battle-tested loop-prevention: halt envelopes classify halts as terminal vs transient, panel-quorum-lost halts force exit (not retry), dirty-tree reconciliation runs on every resume, etc. (see `lib/codex-bridge/halt-envelope.js` and `tests/codex-bridge/halt-envelope-e2e.test.js`). It is self-continuing — re-running `/autopilot` resumes from the sidecar, and the halt-envelope contract decides whether resuming is safe (transient) or needs operator action first (terminal). Claude's `/goal` evaluator is transcript-only — it can re-trigger turns endlessly if the success sentinel isn't surfaced cleanly; autopilot's halt-classification guards against that, `/goal` does not.
 
 **Opt-in: /goal-driven app-autopilot (experimental, v0.11.0):**
 If the user explicitly asks for unattended multi-plan execution driven by Claude's `/goal` command, route to `codex-paired-superpowers:app-autopilot`. That skill walks through `app-state-init` → first plan → conversational handoff → fires `claude -p "/goal '...'"`. Read `skills/app-autopilot/SKILL.md` for the full flow and known limitations. Do NOT default to this path — only use it when the user opts in by name.

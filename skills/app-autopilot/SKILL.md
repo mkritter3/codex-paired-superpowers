@@ -1,15 +1,15 @@
 ---
 name: app-autopilot
-description: EXPERIMENTAL OPT-IN. Multi-plan unattended app rollout driven by Claude Code's `/goal` command. Only use when the user explicitly asks for /goal-driven execution by name. Default path for multi-plan apps is `autopilot` + ralph-loop (see `skills/autopilot/SKILL.md`), which has battle-tested loop-prevention this skill lacks.
+description: EXPERIMENTAL OPT-IN. Multi-plan unattended app rollout driven by Claude Code's `/goal` command. Only use when the user explicitly asks for /goal-driven execution by name. Default path for multi-plan apps is the self-continuing `autopilot` (see `skills/autopilot/SKILL.md`), which has battle-tested loop-prevention this skill lacks.
 ---
 
 # App-autopilot (experimental, opt-in)
 
-> **⚠ Status: experimental (v0.11.0).** As of v0.12.0, this is NOT the default path for multi-plan apps. Use `autopilot` + ralph-loop instead — the brainstorming Phase 5 handoff defaults there. Only invoke `app-autopilot` when the user explicitly asks for `/goal`-driven execution by name.
+> **⚠ Status: experimental (v0.11.0).** As of v0.12.0, this is NOT the default path for multi-plan apps. Use the self-continuing `autopilot` instead — the brainstorming Phase 5 handoff defaults there. Only invoke `app-autopilot` when the user explicitly asks for `/goal`-driven execution by name.
 >
-> **Why it's not the default.** Claude's `/goal` evaluator is transcript-only — it can re-trigger turns endlessly if the success sentinel (`Goals shipped: N/N`) or halt sentinel (`APP_HALT`) isn't surfaced cleanly by the headless child. Ralph-loop has halt-envelope classification (terminal vs transient), panel-quorum-lost handling, dirty-tree reconciliation per tick, and other loop-prevention guards (`lib/codex-bridge/halt-envelope.js`, `tests/codex-bridge/halt-envelope-e2e.test.js`). app-autopilot inherits NONE of those guards — it relies entirely on the goal-condition string matching reliably.
+> **Why it's not the default.** Claude's `/goal` evaluator is transcript-only — it can re-trigger turns endlessly if the success sentinel (`Goals shipped: N/N`) or halt sentinel (`APP_HALT`) isn't surfaced cleanly by the headless child. Autopilot has halt-envelope classification (terminal vs transient), panel-quorum-lost handling, dirty-tree reconciliation on every resume, and other loop-prevention guards (`lib/codex-bridge/halt-envelope.js`, `tests/codex-bridge/halt-envelope-e2e.test.js`). app-autopilot inherits NONE of those guards — it relies entirely on the goal-condition string matching reliably.
 >
-> **Known failure modes.** (1) Headless `claude -p` child doesn't surface `<<<APP_AUTOPILOT_PROGRESS>>>` to the parent transcript → evaluator never sees "Goals shipped: N/N" → loops forever. (2) Outer-mode detection in `autopilot` misfires → ralph-loop also spawns → competing continuation loops with race conditions. (3) Codex disagreement in the next-plan drafting step burns the 7-round budget without converging → halt sentinel not emitted because the loop is still inside writing-plans.
+> **Known failure modes.** (1) Headless `claude -p` child doesn't surface `<<<APP_AUTOPILOT_PROGRESS>>>` to the parent transcript → evaluator never sees "Goals shipped: N/N" → loops forever. (2) Codex disagreement in the next-plan drafting step burns the 7-round budget without converging → halt sentinel not emitted because the loop is still inside writing-plans.
 >
 > **If you're hitting any of these,** stop using `app-autopilot` and route through brainstorming → writing-plans → autopilot manually, one plan at a time. The sidecar's `app_state` block is still useful for tracking which goals shipped under which plan; just don't drive the loop from `/goal`.
 
@@ -100,7 +100,7 @@ Compute from `app-state-get`:
 Invoke the existing `autopilot` skill on `active_plan`, but in **outer-mode**:
 
 - Set the environment flag or sidecar marker (see `skills/autopilot/SKILL.md` § Outer-mode under app-autopilot) so autopilot:
-  - Does NOT spawn a ralph-loop continuation (we're the outer driver now).
+  - Does NOT self-continue/loop over further slices (we're the outer driver now — one pass per turn).
   - Prints `<<<PLAN_SHIPPED>>> path=<plan> goals_audited=[id1,id2]` when the plan finishes.
   - Prints `APP_HALT: <reason>` instead of just halting silently on a non-recoverable failure.
 
@@ -196,11 +196,11 @@ or stop after 200 turns.
 
 The trailing turn-bound is a safety cap — at one plan-ship per turn average and 200 turns max, we cover apps with ~50 goals comfortably. Most apps clear in 5–20 turns.
 
-## Halt vs ralph-loop semantics
+## Halt vs self-continuing-autopilot semantics
 
-| What ralph-loop did before | What we do now under `/goal` |
+| Default self-continuing autopilot | What we do now under `/goal` |
 | --- | --- |
-| Wrote `halt_envelope` JSON, exited, ralph re-spawned on next tick | Print `APP_HALT: <reason>` in this turn's stdout; goal evaluator sees it, OR-branch satisfies, child Claude exits clean |
+| Persists `halt_envelope` to the sidecar, surfaces it; the next `/autopilot` resume reads it and continues (transient) or stops for the operator (terminal) | Print `APP_HALT: <reason>` in this turn's stdout; goal evaluator sees it, OR-branch satisfies, child Claude exits clean |
 | Recovered dirty tree on resume | Reconciliation in Step 1 of every turn; if recoverable, fix and continue; if not, halt with sentinel |
 | Anchor file cleared on halt | Same — `anchor-clear` runs in autopilot's existing halt path; no change |
 | Resume across sessions | Sidecar holds all state; `/goal` resumes via `claude --resume`; child Claude reads sidecar and continues from `active_plan` |
@@ -222,7 +222,7 @@ Either way, Step 1's reconciliation picks up where it left off.
 
 ## Backward compatibility
 
-If a user runs the existing `autopilot` skill directly (without app-autopilot wrapping), nothing changes. autopilot detects outer-mode via the presence of `app_state` in the sidecar (or an explicit env var; see `skills/autopilot/SKILL.md`). When outer-mode is OFF, autopilot prints no PLAN_SHIPPED or APP_HALT sentinels and spawns ralph-loop as before.
+If a user runs the existing `autopilot` skill directly (without app-autopilot wrapping), nothing changes. autopilot detects outer-mode via the presence of `app_state` in the sidecar (or an explicit env var; see `skills/autopilot/SKILL.md`). When outer-mode is OFF, autopilot prints no PLAN_SHIPPED or APP_HALT sentinels and runs in its self-continuing default mode (re-run `/autopilot` to resume; no external loop).
 
 ## Troubleshooting setup errors
 

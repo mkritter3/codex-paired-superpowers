@@ -10,7 +10,7 @@ v0.9.0 replaces the single-CLI assumption with a routing-aware dispatch layer th
 - **Role routing** — `role-routing.json` + `role-recommendations.json` preference ladder; `resolveAdapter()` walks the ladder with explicit override/fallback paths; full resolution-audit trail in the sidecar (`resolved_cli`, `resolution_source`, `preference_index`, etc.)
 - **Doctor extension** — availability detection for each configured CLI with 1h TTL cache and smart invalidation on plugin version bump or binary path change
 - **Panel mode** (`lib/codex-bridge/panel/`) — multi-CLI consensus dispatch with deterministic verdict aggregation; hard floor of 2 advisors; `panel_id` recorded in sidecar per turn
-- **Halt envelope** — ralph-loop now halt-aware; terminal halt types enforced; `high_stakes` opt-in flag triggers panel dispatch automatically
+- **Halt envelope** — autopilot resume is halt-aware; terminal halt types enforced; `high_stakes` opt-in flag triggers panel dispatch automatically
 - **TDD-mandatory in `writing-plans`** — writing-plans now requires a `expert-test` panel round before the plan can advance; no-escape-hatch policy
 - **Sidecar schema migration** — `codex_session` → `role_sessions` (keyed by role ID); `role_prompt_version` + `role_prompt_hash` per turn; silent on-load upgrade for v0.8.x sidecars
 - **7-tier test strategy** — Tier 1–3+6 run in default CI (~3m); Tier 4 (installed-smoke, `CPS_INSTALLED_SMOKE=1`) + Tier 5 (replay) opt-in; Tier 7 release gate via `./scripts/v0.9.0-release-gate.sh`
@@ -170,17 +170,24 @@ CODEX_PAIRED_MODEL=gpt-5.5 CODEX_PAIRED_REASONING=high claude
 
 ## Autopilot (v0.3.0+)
 
-Run a double-SHIP'd implementation plan to completion unattended. The autopilot drives four phases per slice (plan-slice + test-list review, implement, review-slice, docs-update), each with its own 7-round Claude↔Codex budget. State persists in the sidecar; `ralph-loop` provides cross-session continuity.
+Run a double-SHIP'd implementation plan to completion unattended. The autopilot drives four phases per slice (plan-slice + test-list review, implement, review-slice, docs-update), each with its own 7-round Claude↔Codex budget. State persists in the sidecar, so autopilot is **self-continuing**: re-running `/autopilot` resumes from where the last session left off — no external loop wrapper.
 
 ### Usage
 
 ```bash
-# One-shot in current session:
-/autopilot docs/superpowers/plans/<plan>.md
+# Start a plan (runs slices until done, a halt, or the session ends):
+/autopilot docs/plans/<plan>.md
 
-# Or wrapped in ralph-loop for cross-session continuity:
-/ralph-loop /autopilot docs/superpowers/plans/<plan>.md --completion-promise "autopilot completed"
+# Resume the in-progress run — handoff-friendly, no plan path needed:
+/autopilot
+
+# Optional: drive it on a timer with the built-in /loop skill:
+/loop /autopilot
 ```
+
+Handing off to a brand-new session is just running `/autopilot` again — it finds the in-progress run
+in the sidecar and resumes. On a real blocker it halts with an actionable hint; fix the cause and
+re-run `/autopilot`.
 
 ### Prerequisites
 - A double-SHIP'd plan (run through `codex-paired-superpowers:writing-plans` first).

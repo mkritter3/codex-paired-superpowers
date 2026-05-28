@@ -1,12 +1,17 @@
 ---
 name: autopilot
-description: Use to run a written, double-SHIP'd implementation plan slice-by-slice unattended. Drives 4 phases per slice (plan-slice + test-list review, implement, review-slice, docs-update), each with own 7-round Claude↔Codex budget. Wraps via ralph-loop for cross-session continuity.
+description: Use to run a written, double-SHIP'd implementation plan slice-by-slice unattended. Drives 4 phases per slice (plan-slice + test-list review, implement, review-slice, docs-update), each with own 7-round Claude↔Codex budget. Self-continuing: all progress lives in the sidecar, so re-running /autopilot resumes from where the last session left off across session boundaries.
 ---
 
 # Autopilot
 
 ## What this is
-Given a plan that's already double-SHIP'd in `writing-plans`, run it slice-by-slice with full Claude↔Codex review at every phase, until all slices ship or the loop halts on a real blocker. Designed to be wrapped by `ralph-loop` so it survives Claude session boundaries.
+Given a plan that's already double-SHIP'd in `writing-plans`, run it slice-by-slice with full Claude↔Codex review at every phase, until all slices ship or the loop halts on a real blocker.
+
+**Self-continuing across sessions.** All progress is persisted to the sidecar after every step, so
+autopilot survives session boundaries WITHOUT an external loop wrapper: re-running `/autopilot` (with
+no argument, or the plan path) reads the sidecar and resumes the exact slice/phase it left off at. The
+`/autopilot` command is itself the resume entry point — there is no `ralph-loop` to spawn.
 
 ## Outer-mode under app-autopilot (v0.11.0)
 
@@ -20,7 +25,7 @@ Either trigger flips on outer-mode. The env var lets app-autopilot signal explic
 
 **Behavior changes when outer-mode is on:**
 
-1. **Do NOT spawn ralph-loop.** Skip the `ralph-loop` wrap entirely on entry and on resume. The `/goal` evaluator is the outer driver; spawning ralph-loop would create a competing continuation loop with race conditions. Operate as a single-pass execution: do the work for one slice (or one phase if mid-slice), surface progress + state, return. The next `/goal` turn will re-enter autopilot via app-autopilot's Step 3.
+1. **Single pass per turn — `/goal` drives re-entry.** In outer-mode the `/goal` evaluator is the outer driver, so do the work for ONE slice (or one phase if mid-slice), surface progress + state, and return immediately — do NOT loop over further slices in this turn (that would race the `/goal` driver). The next `/goal` turn re-enters autopilot via app-autopilot's Step 3. (In default mode, by contrast, autopilot may loop over multiple slices within a session before returning; see "Cross-session continuity" below.)
 
 2. **Print `<<<PLAN_SHIPPED>>>` when the plan finishes.** When the last slice ships and `current_phase = "all_done"`, before returning, emit a single line to stdout:
 
@@ -44,7 +49,7 @@ Either trigger flips on outer-mode. The env var lets app-autopilot signal explic
 
    The existing halt machinery (anchor-clear, halt-envelope, sidecar `autopilot.halt_reason` write) still runs unchanged. The new sentinel line is *additional* output the `/goal` evaluator pattern-matches.
 
-**Backward compatibility.** Outside outer-mode (no env var AND no `app_state` block), the original v0.10.x flow runs unchanged: ralph-loop is spawned, no PLAN_SHIPPED line is printed, halts surface as before.
+**Default (non-outer) mode.** Outside outer-mode (no env var AND no `app_state` block), autopilot is self-continuing: it loops over slices within the session until all ship, a real blocker halts it, or the session ends — then resumes on the next `/autopilot` invocation (see "Cross-session continuity" below). No `PLAN_SHIPPED` line is printed (that sentinel is outer-mode only); halts surface to the user with a resume hint.
 
 ## Honest-reporting activation (v0.8.1, do this first)
 On entry, write the honest-reporting marker so the Stop/PreToolUse hook keeps claims sourced for the autopilot run:
@@ -64,7 +69,7 @@ If any of these are missing, halt with a clear error message. Do NOT try to brai
 
 ## Lifecycle
 
-### On run start (called once per autopilot session, NOT once per ralph tick)
+### On run start (called once per autopilot session, NOT on every resume)
 1. Resolve `<repo-root>` (the directory containing the plan; usually `git rev-parse --show-toplevel`).
 2. Write the active anchor:
    ```bash
@@ -107,7 +112,7 @@ After each phase ships (double-SHIP), advance `current_phase` to the next phase 
 1. Set `autopilot.halt_reason` in the sidecar (atomic).
 2. Print a summary to the user: which slice, which phase, what blocked. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), the summary MUST also include a literal `APP_HALT: <halt_reason>: <plain-English one-liner>` line so the parent `/goal` evaluator picks it up.
 3. **Clear the active anchor** (`anchor-clear --repoRoot <repo>`). This is critical: while halted, the user must be able to make manual recovery commits without the provenance hook blocking them. The sidecar's `autopilot` block (with `halt_reason` set) remains and is the source of truth for resumption.
-4. **Emit the halt envelope** (v0.9.0). Before returning, wrap the halt reason through the halt-envelope module so ralph-loop receives the structured shape:
+4. **Emit the halt envelope** (v0.9.0). Before returning, wrap the halt reason through the halt-envelope module so the resume path (and any `/loop` driver) receives the structured shape:
 
    ```js
    import { wrapAsHaltEnvelope } from '<plugin>/lib/codex-bridge/halt-envelope.js';
@@ -120,18 +125,18 @@ After each phase ships (double-SHIP), advance `current_phase` to the next phase 
    return envelope;
    ```
 
-   `terminal: true` means the operator must act before ralph re-fires. Ralph-loop MUST NOT re-fire on a terminal halt — it should exit and surface the `resume_hint` to the user. `terminal: false` means a transient condition; ralph may retry after a brief delay. Unknown halt reasons always produce `terminal: true` (fail-closed).
+   `terminal: true` means the operator must act before re-running `/autopilot`. Autopilot MUST NOT auto-continue on a terminal halt — it surfaces the `resume_hint` to the user and stops. `terminal: false` means a transient condition; the next `/autopilot` invocation may resume after the cause clears. Unknown halt reasons always produce `terminal: true` (fail-closed).
 
-5. On the next `/autopilot` invocation (manually or via ralph), the autopilot reads the sidecar, sees `halt_reason` set, and either re-writes the anchor and resumes (if the halt cause has been addressed) or exits with the same halt reason. **Under outer-mode**, the "next invocation" is the next `/goal` turn — app-autopilot's per-turn Step 1 reconciliation reads the sidecar and decides whether to retry (clearing `halt_reason` to null on success) or re-print `APP_HALT` (if the blocker persists).
+5. On the next `/autopilot` invocation (re-run manually, or via `/loop`), the autopilot reads the sidecar, sees `halt_reason` set, and either re-writes the anchor and resumes (if the halt cause has been addressed) or exits with the same halt reason. **Under outer-mode**, the "next invocation" is the next `/goal` turn — app-autopilot's per-turn Step 1 reconciliation reads the sidecar and decides whether to retry (clearing `halt_reason` to null on success) or re-print `APP_HALT` (if the blocker persists).
 
-### On ralph tick (cross-session resume or post-halt continuation)
-Ralph re-invokes `/autopilot <plan-path>` on each tick. The plan path is the authoritative entrypoint — autopilot uses it to rediscover the spec and sidecar regardless of whether the active anchor is present.
+### On resume (re-running /autopilot — cross-session or post-halt)
+Each `/autopilot` invocation re-discovers state from the sidecar. When a plan path is given it is the authoritative entrypoint — autopilot uses it to rediscover the spec and sidecar regardless of whether the active anchor is present. With no plan path, autopilot first locates the in-progress run (see the `/autopilot` command), then proceeds identically.
 
 1. Resolve the spec path from the plan's `**Spec:** ...` frontmatter line.
 2. Load the sidecar via the spec path.
 3. Inspect `sidecar.autopilot.halt_reason`:
    - `null` (and anchor present): normal in-session resume — re-write anchor if missing, run cross-session reconciliation (step 5 below), continue current phase.
-   - `"completed"`: exit success. Ralph's completion-promise is now satisfied.
+   - `"completed"`: report success and stop. The run is complete.
    - any other value (a real halt): the user has either resolved the cause and is asking to continue, or the cause persists. Either way, autopilot rewrites the active anchor (so the hook re-engages) and runs cross-session reconciliation. If reconciliation now succeeds (e.g., dirty tree was cleaned), clear `halt_reason` to null and continue. If reconciliation produces a NEW halt reason (e.g., previously halted on `subagent-blocked`, now halts on `dirty-tree-on-phase-retry` because the user left edits behind), write the NEW reason — do NOT preserve the stale one. The current halt reason must always reflect the current blocker.
 4. If `sidecar.autopilot` is null entirely: this is the very first tick. Initialize the autopilot block, write the anchor, start at the first unfinished slice's plan-slice phase.
 5. Cross-session reconciliation (used by step 3 paths above):
@@ -915,7 +920,7 @@ Slice 7b adds a **halt-envelope module** (`lib/codex-bridge/halt-envelope.js`, n
 | `panel-config-invalid`        | B.0.5 / release-gate | PRESERVE | `panel_max_size < panel_min_size` (or below hard floor of 2).                      |
 | `cli-dispatch-failed`         | B.0.5 / B.1.5 / B.5.5 | PRESERVE | `resolveAdapter` returned no available CLI for a required reviewer role.           |
 
-All v0.9.0 halt reasons are **PRESERVE-class** (per spec § 5 fail-closed defaults). The mailbox archival table above MUST be extended in `expert-archive.js` when slice 7b ships the halt-envelope module — until then, an unknown halt-reason throws `ExpertArchiveError` code `unknown-halt-reason`. The skill prose surfaces the new halt codes to the user verbatim; the halt-envelope module formalizes the per-code surface (sidecar field shapes, ralph-loop signaling).
+All v0.9.0 halt reasons are **PRESERVE-class** (per spec § 5 fail-closed defaults). The mailbox archival table above MUST be extended in `expert-archive.js` when slice 7b ships the halt-envelope module — until then, an unknown halt-reason throws `ExpertArchiveError` code `unknown-halt-reason`. The skill prose surfaces the new halt codes to the user verbatim; the halt-envelope module formalizes the per-code surface (sidecar field shapes, resume signaling).
 
 #### Phase B.5 — Reconcile (reconciler is truth)
 
@@ -1434,7 +1439,7 @@ Dispatch on `outcome.status`:
   - "cancel", "postpone", or any negative → write `halt_reason: "live-verification-user-postponed"` to the sidecar via `sidecar-set-autopilot`, clear the active anchor (`anchor-clear`), and halt. Do NOT launch the app.
 - **`'halt'`** → halt with `halt_reason: outcome.haltReason`.
 
-A prior confirmation from a previous Claude Code session does NOT carry over. Every ralph tick that reaches Phase E must re-evaluate the safety gate in that session.
+A prior confirmation from a previous Claude Code session does NOT carry over. Every `/autopilot` resume that reaches Phase E must re-evaluate the safety gate in that session.
 
 #### E.4 — Scenario generation
 
@@ -1661,48 +1666,61 @@ See Spec § "Failure modes" — implement every row of that table. Each halt set
 ## Anti-yes-man discipline
 Same as upstream `codex-paired-superpowers:receiving-code-review`. Never accept a Codex critique without verifying against actual code. Never accept a SHIP without applying the pre-SHIP checklist (which is now in `system-rubric.md` and Codex sees it on every prompt).
 
-## Integration with ralph-loop
-Run autopilot under ralph for cross-session continuity:
+## Cross-session continuity (self-continuing)
+
+Autopilot needs no external loop wrapper. All progress lives in the sidecar's `autopilot` block, so
+**re-running `/autopilot` is the resume mechanism**:
 
 ```
-/ralph-loop /autopilot <plan-path> --completion-promise "all slices in <plan-path> shipped"
+/autopilot                 # resume the in-progress run (locate it from the sidecar)
+/autopilot <plan-path>     # start or resume a specific plan
 ```
 
-Each ralph tick re-invokes `/autopilot <plan-path>`. Autopilot uses the plan path to resolve the spec via the plan's frontmatter and reads the sidecar's `autopilot` block to determine state — the active anchor is the HOOK's discovery mechanism, not the autopilot's. Ralph's completion-promise is met only when `sidecar.autopilot.halt_reason == "completed"`.
+On every entry, autopilot resolves the spec via the plan's frontmatter and reads the sidecar's
+`autopilot` block to determine state (the active anchor is the HOOK's discovery mechanism, not the
+autopilot's). A run is complete when `sidecar.autopilot.halt_reason == "completed"`. Within a session
+(default mode) autopilot loops over slices until completion, a real halt, or the session ends; the
+next `/autopilot` invocation — in this session or a brand-new one — picks up where it left off.
 
-### Halt-aware ralph-loop contract (v0.9.0)
+### Halt-aware resume contract (v0.9.0)
 
-When autopilot halts, it returns a **halt envelope** with shape `{halt, terminal, resume_hint, ...}` (from `lib/codex-bridge/halt-envelope.js`). Ralph-loop MUST inspect this envelope on every tick using `isTerminalHalt(envelope)` (the load-bearing guard — see `lib/codex-bridge/halt-envelope.js`):
+When autopilot halts, it persists a **halt envelope** `{halt, terminal, resume_hint, ...}` (from
+`lib/codex-bridge/halt-envelope.js`) to the sidecar and surfaces it to the user. On the NEXT
+`/autopilot` invocation, autopilot inspects that envelope with `isTerminalHalt(envelope)` (the
+load-bearing guard) BEFORE doing any work, and applies this contract:
 
 ```
-envelope = <result of /autopilot invocation>
+envelope = <persisted halt envelope from the sidecar autopilot block>
 
 if envelope?.halt == "completed":
-    exit success  # completion-promise met
+    report success and stop  # the run is done
 
 # isTerminalHalt fails closed on malformed envelopes: null, undefined,
 # non-object, missing/non-boolean terminal, missing/empty resume_hint, etc.
 # all return true. Only a well-formed { terminal: false, halt, resume_hint }
 # envelope returns false.
 if isTerminalHalt(envelope):
-    # Operator must act — DO NOT re-fire
+    # Operator must act first — do NOT auto-continue.
     hint = envelope?.resume_hint ?? "Autopilot returned a malformed halt envelope — operator triage required."
-    print(hint)
-    exit with non-zero status so the user sees the hint
+    surface(hint)            # tell the user exactly what to fix
+    stop                     # they re-run /autopilot after fixing the cause
 
-# Only here on a well-formed transient envelope — safe to retry
-wait briefly, then re-invoke /autopilot
+# Only here on a well-formed transient envelope — safe to resume:
+clear the transient halt and continue the current phase
 ```
 
-**Key invariants ralph-loop must enforce:**
+**Key invariants (applied by autopilot itself on resume — and by `/loop` or the user if driving it):**
 
-1. **Never re-fire on terminal: true.** The `resume_hint` string tells the operator exactly what to fix. Re-firing would loop indefinitely and mask the real blocker.
-2. **Always surface resume_hint on terminal exit.** This is the human-readable description the operator uses to diagnose and resolve the halt.
-3. **Unknown halt reasons are always terminal** (the envelope module maps them to `terminal: true` with an "operator triage" hint). Ralph must treat absence from the known-set as a hard stop.
-4. **Transient halts get at most one re-fire per ralph tick.** Do not implement exponential retry inside ralph itself — that belongs in the halting code (e.g., `transient-network` is retry-eligible, then escalates).
-5. **Malformed or absent envelopes are terminal (fail-closed).** If `/autopilot` yields nothing (a null/undefined return), throws, yields a non-object, or yields an object missing `terminal`/`resume_hint`/`halt`, ralph-loop MUST treat it as terminal and surface a generic "malformed envelope — operator triage required" hint. Never assume transient on a malformed result. `isTerminalHalt` enforces this directly (per slice-7b Codex round-1 finding #3): the guard yields `true` for nullish values, non-objects, non-boolean `terminal`, and missing/empty `halt` or `resume_hint`.
+1. **Never auto-continue past `terminal: true`.** The `resume_hint` tells the user exactly what to fix; auto-continuing would loop indefinitely and mask the real blocker. The user re-runs `/autopilot` after addressing it.
+2. **Always surface `resume_hint` on a terminal halt.** It's the human-readable description used to diagnose and resolve the blocker.
+3. **Unknown halt reasons are always terminal** (the envelope module maps them to `terminal: true` with an "operator triage" hint). Treat absence from the known set as a hard stop.
+4. **Transient halts resume at most once per invocation.** Don't implement exponential retry in the resume path — that belongs in the halting code (e.g., `transient-network` is retry-eligible, then escalates).
+5. **Malformed or absent envelopes are terminal (fail-closed).** A null/undefined/non-object envelope, or one missing `terminal`/`resume_hint`/`halt`, is treated as terminal with a generic "operator triage required" hint. `isTerminalHalt` enforces this (per slice-7b Codex round-1 finding #3): it returns `true` for nullish values, non-objects, non-boolean `terminal`, and missing/empty `halt` or `resume_hint`.
 
-**Implementation note (prose-only skills):** If ralph-loop is implemented as a Claude Code `/ralph-loop` skill (not a shell script), apply the same contract in the skill's reasoning loop: read the autopilot session result, check `terminal`, and either exit or re-invoke per the rules above.
+**Timer-driven repetition (optional).** If you want autopilot to fire on a schedule without manually
+re-running it, drive it with the built-in `/loop` skill — e.g. `/loop /autopilot`. `/loop` applies the
+same resume contract above: it stops on a terminal halt and surfaces the hint, and continues on a
+transient one. This is optional polish; the default model is one self-resuming command.
 
 ## Phase B implementer-experts branch
 
