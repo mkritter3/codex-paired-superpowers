@@ -1684,13 +1684,19 @@ next `/autopilot` invocation — in this session or a brand-new one — picks up
 
 ### Halt-aware resume contract (v0.9.0)
 
-When autopilot halts, it persists a **halt envelope** `{halt, terminal, resume_hint, ...}` (from
-`lib/codex-bridge/halt-envelope.js`) to the sidecar and surfaces it to the user. On the NEXT
-`/autopilot` invocation, autopilot inspects that envelope with `isTerminalHalt(envelope)` (the
-load-bearing guard) BEFORE doing any work, and applies this contract:
+When autopilot halts, it persists `autopilot.halt_reason` to the sidecar (see § "On halt") and
+surfaces the resume hint to the user. On the NEXT `/autopilot` invocation, BEFORE doing any work,
+autopilot reads that persisted `halt_reason`, derives the envelope from it via
+`wrapAsHaltEnvelope(halt_reason, { sliceId, phase })` (`lib/codex-bridge/halt-envelope.js`) — the same
+module the halt path uses — and applies this contract with `isTerminalHalt(envelope)` (the
+load-bearing guard):
 
 ```
-envelope = <persisted halt envelope from the sidecar autopilot block>
+halt_reason = sidecar.autopilot.halt_reason          # the persisted source of truth
+if halt_reason == "completed":  report success and stop  # the run is done
+if halt_reason == null:         normal in-session resume (no halt to classify)
+
+envelope = wrapAsHaltEnvelope(halt_reason, { sliceId, phase })  # derive, don't store
 
 if envelope?.halt == "completed":
     report success and stop  # the run is done

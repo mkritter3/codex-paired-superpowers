@@ -20,13 +20,16 @@ wrap it in.
 ## How resume works (read this for session handoff)
 
 - **With a plan path:** start that plan, or resume it if its sidecar already has autopilot progress.
-- **With no argument:** locate the in-progress run and resume it. Find it by, in order:
-  1. `node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js app-state-get --specPath <spec>` if an
-     app-autopilot `active_plan` is set, else
-  2. the most recently modified sidecar under `.superpowers-codex-paired/` whose `autopilot` block has
-     `current_phase` ≠ `all_done` and no terminal `halt_reason`.
-  If exactly one in-progress run is found, resume it. If several are found, list them and ask which.
-  If none, say so and point the user at `/autopilot <plan-path>`.
+- **With no argument:** the spec/plan isn't known yet, so locate the in-progress run by scanning
+  sidecars, then resume it:
+  1. Enumerate sidecars under `.superpowers-codex-paired/` (they are `<spec-path>.json`).
+  2. For each, inspect its state: an app-autopilot run has `app_state.active_plan` set
+     (`app-state-get --specPath <that-spec>`); a single-plan run has an `autopilot` block with
+     `current_phase` ≠ `all_done`. Treat either as "in progress" unless it carries a terminal
+     `halt_reason` (those need the user to act first — surface the resume hint).
+  3. If exactly one in-progress run is found, resume it (use its `active_plan`, or the plan the
+     sidecar's spec frontmatter points to). If several, list them and ask which. If none, say so and
+     point the user at `/autopilot <plan-path>`.
 
 Because state is in the sidecar, **handing off to a brand-new session just means running `/autopilot`
 again** — no need to remember the plan path or re-supply any flags.
