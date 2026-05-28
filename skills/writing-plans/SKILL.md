@@ -103,21 +103,16 @@ Build the plan-review prompt and invoke **`mcp__plugin_codex-paired-superpowers_
 
 The response's `content` is Codex's audit log + review + verdict block.
 
-### Recording the audit (required before logging the round)
+### Preparing the audit payload (recorded atomically with the round)
 
-Before invoking `sidecar-append-round`, you MUST extract Codex's `## Audit log` section and persist it as a structured entry. This makes the audit replayable evidence — the honest-reporting Stop-gate (v0.10.1) refuses to record a SHIP verdict from Codex without an audit entry for the same (phase, round, side).
+Extract Codex's `## Audit log` section and build a structured audit object per side claiming SHIP. Do
+NOT persist it separately on the happy path — you pass it to the atomic `sidecar-append-round-with-audits`
+command below. Each audit object has this shape:
 
-```bash
-printf '%s' '{
-  "phase": "plan",
-  "round": 1,
-  "side": "codex",
-  "commands": [
-    {"cmd": "<command Codex reported>", "summary": "<one-line result>", "kind": "inspection"},
-    ...
-  ],
-  "verdict_basis": "<one-line: how the audit informed the verdict>"
-}' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
+```json
+{"phase": "plan", "round": 1, "side": "codex|claude",
+ "commands": [{"cmd": "<command reported / verified>", "summary": "<one-line result>", "kind": "inspection"}],
+ "verdict_basis": "<one-line: how the audit informed the verdict>"}
 ```
 
 Every command requires a `kind` (`inspection` | `verification` | `other`). Plan review is a design
@@ -127,15 +122,7 @@ phase, so inspection evidence suffices; code-bearing phases (`implement:<slice>`
 
 If Codex's response has no `## Audit log` section, **do not log a SHIP verdict** — push back via a round-(N+1) prompt asking Codex to perform the audit. Goal-aligned critique without codebase verification is exactly the failure mode this gate exists to prevent.
 
-Claude's own verdict ALSO records an audit entry (`side: "claude"`) — Claude must verify the same claims independently against the repo. The Stop-gate enforces this symmetrically: a Claude SHIP verdict without a matching audit entry is also blocked.
-
-Verify the audit landed:
-
-```bash
-node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-has-audit \
-  --specPath "<spec-path>" --phase plan --round 1 --side codex
-# expect: true
-```
+Claude's own verdict ALSO needs an audit entry (`side: "claude"`) — Claude must verify the same claims independently against the repo. The gate enforces this symmetrically: a Claude SHIP verdict without a matching audit entry is also blocked.
 
 Subsequent rounds: send the revised plan + both prior critiques + the same `<<<GOALS>>>` block (goals are invariant across rounds unless the user explicitly revises them). Codex re-runs PART A only when the plan changes file paths or proposes new primitives; otherwise PART A is "no change since round N, audit still valid" — and you still record an audit entry referencing the prior round's audit (the (phase, round, side) triple must be present for the Stop-gate to clear). Same anti-yes-man rules as brainstorming. Same sidecar round logging (`phase: "plan"`).
 

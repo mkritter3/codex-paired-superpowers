@@ -124,29 +124,15 @@ For each round N starting at 1:
 
 1. **Form Claude's verdict** on the current Codex draft. Apply the L11 rubric independently. Verify any specific claim against actual code/files before accepting.
 
-2. **Record both sides' audit logs** before the round is logged. Extract the `## Codebase audit` section from Codex's draft + your own audit commands. This is required by the honest-reporting Stop-gate (v0.10.1) for any side claiming SHIP — the gate refuses to log SHIP without a matching audit entry.
+2. **Prepare both sides' audit payloads** (do NOT persist them separately on the happy path — you pass
+   them to the atomic command in step 3). Extract the `## Codebase audit` section from Codex's draft +
+   your own audit commands. An audit entry per side claiming SHIP is required by the honest-reporting
+   gate. Each audit object has this shape:
 
-   ```bash
-   # Codex side — what Codex audited:
-   printf '%s' '{
-     "phase": "spec",
-     "round": N,
-     "side": "codex",
-     "commands": [
-       {"cmd": "<grep / find / git log command>", "summary": "<result>", "kind": "inspection"},
-       ...
-     ],
-     "verdict_basis": "<one-line: how the audit informed the verdict>"
-   }' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
-
-   # Claude side — what YOU verified independently:
-   printf '%s' '{
-     "phase": "spec",
-     "round": N,
-     "side": "claude",
-     "commands": [{"cmd": "...", "summary": "...", "kind": "inspection"}],
-     "verdict_basis": "..."
-   }' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
+   ```json
+   {"phase": "spec", "round": N, "side": "claude|codex",
+    "commands": [{"cmd": "<grep / find / git log command>", "summary": "<result>", "kind": "inspection"}],
+    "verdict_basis": "<one-line: how the audit informed the verdict>"}
    ```
 
    Every command needs a `kind` (`inspection` | `verification` | `other`). For code-bearing phases

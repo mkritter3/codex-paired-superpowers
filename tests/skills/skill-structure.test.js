@@ -641,6 +641,21 @@ test('v0.13.0: brainstorming + writing-plans happy path uses sidecar-append-roun
   }
 });
 
+test('v0.13.0: brainstorming + writing-plans do not persist audits separately on the happy path', () => {
+  // The happy path must persist audits+round atomically via sidecar-append-round-with-audits.
+  // sidecar-append-audit may be NAMED as a manual-recovery fallback, but its piped CLI invocation
+  // (`cli.js sidecar-append-audit`) must NOT appear — that is the old separate-write happy path.
+  for (const skill of ['brainstorming', 'writing-plans']) {
+    const content = readSkill(skill);
+    assert.equal(
+      content.includes('cli.js sidecar-append-audit'),
+      false,
+      `${skill}/SKILL.md must not invoke sidecar-append-audit on the happy path; use the atomic ` +
+        `sidecar-append-round-with-audits (sidecar-append-audit may be named for manual recovery only)`,
+    );
+  }
+});
+
 test('v0.13.0: brainstorming + writing-plans document Codex thread-loss recovery', () => {
   for (const skill of ['brainstorming', 'writing-plans']) {
     const content = readSkill(skill);
