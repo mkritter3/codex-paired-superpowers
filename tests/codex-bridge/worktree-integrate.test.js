@@ -122,8 +122,17 @@ test('single slice: cherry-picks all commits onto integration branch', () => {
     const subjects = git(repoRoot, ['log', '--reverse', '--format=%s', `${startSha}..integration`])
       .trim().split('\n');
     assert.deepEqual(subjects, ['feat(slice:3): add a', 'test(slice:3): cover a']);
-    // Source SHA unchanged (cherry-pick != merge), so HEAD must differ from sliceTip.
-    assert.notEqual(afterHead, sliceTip);
+    // Cherry-pick reproduces the slice's CONTENT onto integration: the integrated tree equals the
+    // slice tip's tree. (We assert tree equivalence, NOT SHA inequality: when integration shares the
+    // slice's base and the cherry-picked commits land within the same 1-second git-timestamp window,
+    // the resulting commit SHA can legitimately equal sliceTip — correct git behavior, not a merge.
+    // The old `notEqual(afterHead, sliceTip)` was a wall-clock-second race and flaked on fast/loaded
+    // machines.)
+    assert.equal(
+      git(repoRoot, ['rev-parse', `${afterHead}^{tree}`]).trim(),
+      git(repoRoot, ['rev-parse', `${sliceTip}^{tree}`]).trim(),
+      'integrated tree must equal the slice tip tree (cherry-pick preserves content)',
+    );
   } finally {
     cleanup(repoRoot);
   }

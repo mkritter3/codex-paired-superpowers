@@ -19,6 +19,7 @@ import {
   hasAuditFor,
   hasExecutedVerificationFor,
   requiresExecutedVerification,
+  listFlakyVerifications,
   loadSidecar,
   sidecarPathFor,
 } from '../../lib/codex-bridge/sidecar.js';
@@ -373,6 +374,42 @@ test('normalizeAuditEntry persists a selection object on a verification command'
   const a = listAudits(spec, { phase: 'implement:s1', round: 1, side: 'claude' })[0];
   assert.equal(a.commands[0].selection.mode, 'all');
   assert.equal(a.commands[0].selection.ran, 110);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── v0.13.0 cross-agent flake handling — honest "passed on retry N" provenance ──
+
+test('a flaky-passed verification (attempts>1) still counts but is surfaced by listFlakyVerifications', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 1, side: 'codex',
+    commands: [{ cmd: 'npm test', summary: 'passed on retry 2', kind: 'verification', exit_code: 0, attempts: 2, flaky: true }],
+  });
+  // It DID pass → still valid executed verification.
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 1, side: 'codex' }), true);
+  // But it is surfaced for review.
+  const flaky = listFlakyVerifications(spec);
+  assert.equal(flaky.length, 1);
+  assert.equal(flaky[0].attempts, 2);
+  assert.equal(flaky[0].flaky, true);
+  assert.equal(flaky[0].side, 'codex');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendAuditLog rejects malformed attempts/flaky', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(() => appendAuditLog(spec, { ...VALID_AUDIT, commands: [{ cmd: 'x', summary: 'y', kind: 'inspection', attempts: 0 }] }), /attempts/);
+  assert.throws(() => appendAuditLog(spec, { ...VALID_AUDIT, commands: [{ cmd: 'x', summary: 'y', kind: 'inspection', flaky: 'yes' }] }), /flaky/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('listFlakyVerifications is empty when all verifications passed first try', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 1, side: 'codex',
+    commands: [{ cmd: 'npm test', summary: 'ok', kind: 'verification', exit_code: 0, attempts: 1 }],
+  });
+  assert.deepEqual(listFlakyVerifications(spec), []);
   rmSync(dir, { recursive: true, force: true });
 });
 

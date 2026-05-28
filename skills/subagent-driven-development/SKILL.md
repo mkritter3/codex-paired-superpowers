@@ -129,6 +129,26 @@ Repeated failed edits waste turns. The orchestrator and every implementing subag
   a byte-identical retry is a procedural error, not a recovery. Recompute from a fresh read.
 - For bulk edits, prefer a structured patch with enough surrounding context captured after the fresh read.
 
+## Flake handling (v0.13.0, Goal: trustworthy verification in an automated loop)
+
+A flaky test poisons the agentic loop: a flaky FAIL stalls the slice, a flaky PASS gives a false SHIP
+through the verification floor. Handle flakes honestly rather than papering over them.
+
+- **Same-SHA retry (mirrors `lib/codex-bridge/flake-retry.js`).** If a verification command fails,
+  re-run it ONCE at the same commit without changing files. If it then passes, it is flaky — it did
+  pass, so it satisfies the floor, but you MUST record the truth on the audit command:
+  `{"cmd": "...", "kind": "verification", "exit_code": 0, "attempts": 2, "flaky": true}`. Never record
+  a clean first-try pass for a result that needed a retry.
+- **Cross-agent disagreement = a flake signal.** Claude and Codex each record their own verification
+  audit. If the same test passes for one side and fails for the other at the same commit, treat it as
+  flaky: do NOT SHIP on it — investigate and root-cause, or quarantine it explicitly.
+- **The quarantine list.** `node ${CLAUDE_PLUGIN_ROOT}/scripts/tia.mjs flaky` lists tests that
+  failed/errored when last mapped in isolation (the TIA `ok:false` set). These always re-run and are
+  known flake candidates; a SHIP resting on one should be challenged.
+- **Codex challenges flaky evidence.** At slice review, Codex SHOULD inspect `listFlakyVerifications`
+  for the round and push back on a SHIP whose verification was flaky rather than clean. Prefer fixing
+  the flake's root cause (e.g. a wall-clock or ordering race) over retrying around it.
+
 ## Per-slice expert review (v0.9.0)
 
 After the implementing subagent reports completion (Step A) and the slice's diff + tests are captured (Step B), but BEFORE Step C's Codex slice review, the orchestrator MUST run **composer-selected experts** on the slice. This mirrors autopilot's Phase B.5.5 pattern but applies to inline (non-autopilot) execution: every slice gets domain-expert review before it's allowed to ship.

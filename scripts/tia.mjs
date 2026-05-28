@@ -273,6 +273,17 @@ function main() {
     return 0;
   }
 
+  if (cmd === 'flaky') {
+    // The quarantine list: test files that failed/errored when last mapped in isolation (ok:false).
+    // These are the cross-agent flake candidates — they always run, and a SHIP resting on them should
+    // be challenged. Emitted as JSON for the workflow to consume.
+    const m = loadMap();
+    if (!m || !m.tests) { process.stdout.write(JSON.stringify({ mapPresent: false, flaky: [] }, null, 2) + '\n'); return 0; }
+    const flaky = Object.entries(m.tests).filter(([, v]) => v.ok === false).map(([t]) => t).sort();
+    process.stdout.write(JSON.stringify({ mapPresent: true, mapBuiltAt: m.builtAt, count: flaky.length, flaky }, null, 2) + '\n');
+    return 0;
+  }
+
   const allTestFiles = listAllTestFiles(false);
   const map = loadMap();
   const { files: changed, gitError } = getChangedFiles(flags.base);
@@ -344,7 +355,7 @@ function main() {
     return 0;
   }
 
-  process.stderr.write('usage: tia.mjs <build|affected|run|refresh> [--base <ref>] [--all]\n');
+  process.stderr.write('usage: tia.mjs <build|affected|run|refresh|flaky> [--base <ref>] [--all]\n');
   return 2;
 }
 
