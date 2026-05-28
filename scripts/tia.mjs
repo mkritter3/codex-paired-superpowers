@@ -330,7 +330,21 @@ function main() {
     return exit;
   }
 
-  process.stderr.write('usage: tia.mjs <build|affected|run> [--base <ref>] [--all]\n');
+  if (cmd === 'refresh') {
+    // Slice-boundary refresh: re-map ONLY the tests impacted by the change set, so the map reflects
+    // dependencies introduced by the slice (a new import a covering test now loads). Prevents drift
+    // from accumulating across a feature without the cost of a full `build`.
+    const toRefresh = decision.mode === 'all' ? allTestFiles : decision.tests;
+    if (toRefresh.length === 0) {
+      process.stderr.write(`[tia] refresh: nothing to re-map (${decision.reason})\n`);
+      return 0;
+    }
+    process.stderr.write(`[tia] refresh: re-mapping ${toRefresh.length} impacted test(s) (${decision.reason})\n`);
+    buildMapFor(toRefresh, loadMap());
+    return 0;
+  }
+
+  process.stderr.write('usage: tia.mjs <build|affected|run|refresh> [--base <ref>] [--all]\n');
   return 2;
 }
 

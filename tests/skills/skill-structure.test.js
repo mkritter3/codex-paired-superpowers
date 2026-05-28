@@ -670,6 +670,13 @@ test('v0.13.0: brainstorming + writing-plans document Codex thread-loss recovery
   }
 });
 
+test('TIA slice-boundary refresh documented in subagent-driven-development + autopilot', () => {
+  for (const skill of ['subagent-driven-development', 'autopilot']) {
+    const content = readSkill(skill);
+    assert.match(content, /tia\.mjs refresh/, `${skill}/SKILL.md must document the slice-boundary TIA map refresh`);
+  }
+});
+
 test('v0.13.0: edit discipline present in subagent-driven-development + autopilot', () => {
   for (const skill of ['subagent-driven-development', 'autopilot']) {
     const content = readSkill(skill);

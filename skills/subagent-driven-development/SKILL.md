@@ -104,6 +104,17 @@ If the slice review produced any `## Deferred` items, show them to the user befo
 ### Step F: proceed to next slice
 Only after slice N is shipped and any user-arbitrated deferreds are decided.
 
+**Refresh the test-impact map at the slice boundary (if using `test:affected`).** A shipped slice may
+have changed which source files its tests load. Re-map only the tests the slice touched so the map
+stays current for later slices (prevents drift without a full rebuild):
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/tia.mjs refresh --base <slice_start_sha>
+```
+
+Use the slice's start SHA (the commit the slice branched from) as `--base` so the diff is exactly this
+slice's changes.
+
 ## Edit discipline (v0.13.0, Goal 5)
 
 Repeated failed edits waste turns. The orchestrator and every implementing subagent MUST follow this:

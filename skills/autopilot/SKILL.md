@@ -1362,6 +1362,14 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
 
 This deferred-commit pattern matters: if Codex finds doc errors across 3 rounds, we end up with ONE clean docs commit, not 3 commit-then-fix-it commits cluttering history.
 
+7. **Refresh the test-impact map (if using `test:affected`).** Once the slice is fully shipped, re-map
+   the tests it touched so the coverage map reflects this slice's changes for later slices — without a
+   full rebuild:
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/tia.mjs refresh --base <slice_start_sha>
+   ```
+   This keeps drift from accumulating across an unattended multi-slice run.
+
 ### Phase E: live-verification
 
 Phase E runs after `docs-update.shipped == true` and before `shipped`. It launches the real app, drives Codex-generated user-visible scenarios through `/computer-use`, captures logs and screenshots, and fixes verified failures. A slice cannot reach `shipped` unless Phase E either ships (double-SHIP'd evidence verdict) or is validly skipped.
