@@ -139,13 +139,35 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-has-audit \
 
 Subsequent rounds: send the revised plan + both prior critiques + the same `<<<GOALS>>>` block (goals are invariant across rounds unless the user explicitly revises them). Codex re-runs PART A only when the plan changes file paths or proposes new primitives; otherwise PART A is "no change since round N, audit still valid" — and you still record an audit entry referencing the prior round's audit (the (phase, round, side) triple must be present for the Stop-gate to clear). Same anti-yes-man rules as brainstorming. Same sidecar round logging (`phase: "plan"`).
 
-After each round, append:
+After each round, record the audits **and** the round in ONE atomic command (v0.13.0). This replaces
+the old two-step `sidecar-append-audit` ×N then `sidecar-append-round`, which could mis-order at
+runtime and trip the audit gate as a hook error. The atomic command validates every audit and the
+round's SHIP-backing under one lock and writes them together (or nothing):
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round \
+node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round-with-audits \
   --specPath "<spec-path>" \
-  --round '{"phase":"plan","round":N,"claude":"...","codex":"..."}'
+  --payload '{
+    "audits": [
+      {"phase":"plan","round":N,"side":"claude","commands":[{"cmd":"rg ...","summary":"...","kind":"inspection"}],"verdict_basis":"..."},
+      {"phase":"plan","round":N,"side":"codex","commands":[{"cmd":"rg ...","summary":"...","kind":"inspection"}],"verdict_basis":"..."}
+    ],
+    "round": {"phase":"plan","round":N,"claude":"...","codex":"..."}
+  }'
 ```
+
+For REVISE rounds the `audits` array may be empty. `sidecar-append-audit` and `sidecar-append-round`
+remain available for manual recovery. Plan review is a design phase, so inspection evidence suffices.
+
+### If the Codex thread is lost mid-review
+
+If a `codex-reply` returns `isError: true` with `Session not found for thread_id:` (the MCP server
+was restarted — threads are process-local), recover instead of halting:
+
+1. Build replay context: `node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"` (includes the goals block, prior rounds, contentions, rotations).
+2. Open a NEW thread with the initial `codex` tool, seeding it with that replay + the pending prompt.
+3. Persist the rotation: `node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old> --newThreadId <new> --reason session-not-found --phase plan --round N`.
+4. Tell the user in one line: "Codex thread was lost; opened a new thread and replayed the sidecar context." Then continue the round. Do not discard prior review history.
 
 ## high_stakes frontmatter (v0.9.0)
 

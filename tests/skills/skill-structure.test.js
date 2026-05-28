@@ -631,6 +631,42 @@ test('no plugin-authored skill passes a per-call model to the codex MCP tool (Go
   );
 });
 
+test('v0.13.0: brainstorming + writing-plans happy path uses sidecar-append-round-with-audits', () => {
+  for (const skill of ['brainstorming', 'writing-plans']) {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('sidecar-append-round-with-audits'),
+      `${skill}/SKILL.md happy path must use the atomic sidecar-append-round-with-audits command`,
+    );
+  }
+});
+
+test('v0.13.0: brainstorming + writing-plans document Codex thread-loss recovery', () => {
+  for (const skill of ['brainstorming', 'writing-plans']) {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('Session not found for thread_id'),
+      `${skill}/SKILL.md must describe detecting the stale-thread response`,
+    );
+    assert.ok(
+      content.includes('sidecar-rotate-thread-id') || content.includes('recoverStaleThread'),
+      `${skill}/SKILL.md must reference the thread-recovery primitive`,
+    );
+  }
+});
+
+test('v0.13.0: edit discipline present in subagent-driven-development + autopilot', () => {
+  for (const skill of ['subagent-driven-development', 'autopilot']) {
+    const content = readSkill(skill);
+    assert.ok(content.includes('File has not been read yet'),
+      `${skill}/SKILL.md edit discipline must name the "File has not been read yet" failure`);
+    assert.ok(content.includes('String to replace not found'),
+      `${skill}/SKILL.md edit discipline must name the "String to replace not found" failure`);
+    assert.ok(/never retry the same/i.test(content),
+      `${skill}/SKILL.md edit discipline must forbid byte-identical retries ("never retry the same")`);
+  }
+});
+
 test('brainstorming + writing-plans audit examples include a kind field (v0.13.0)', () => {
   for (const skill of ['brainstorming', 'writing-plans']) {
     const content = readSkill(skill);

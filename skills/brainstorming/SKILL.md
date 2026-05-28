@@ -156,15 +156,36 @@ For each round N starting at 1:
    (spec / plan) only need inspection evidence. For REVISE verdicts the audit is recommended but not
    required by the gate. For SHIP verdicts on either side, the audit is mandatory.
 
-3. **Append the round to the sidecar** with both verdicts:
+3. **Append the audits and the round in ONE atomic command** (v0.13.0). This replaces logging the
+   round separately after step 2's audits — the atomic command validates every audit and the round's
+   SHIP-backing under one lock and writes them together (or nothing), so the round can never be logged
+   before its audits and the gate cannot trip mid-flow:
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round \
+   node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-round-with-audits \
      --specPath "<spec-path>" \
-     --round '{"phase":"spec","round":N,"claude":"SHIP|REVISE: ...","codex":"SHIP|REVISE: ..."}'
+     --payload '{
+       "audits": [
+         {"phase":"spec","round":N,"side":"claude","commands":[{"cmd":"...","summary":"...","kind":"inspection"}],"verdict_basis":"..."},
+         {"phase":"spec","round":N,"side":"codex","commands":[{"cmd":"...","summary":"...","kind":"inspection"}],"verdict_basis":"..."}
+       ],
+       "round": {"phase":"spec","round":N,"claude":"SHIP|REVISE: ...","codex":"SHIP|REVISE: ..."}
+     }'
    ```
 
-   If this command exits with `Honest-reporting audit gate (v0.10.1)`, an audit is missing — run the missing `sidecar-append-audit` from step 2 then retry. If you genuinely did not perform an audit, emit REVISE in the round instead of fabricating one.
+   For REVISE rounds the `audits` array may be empty. If the command reports missing evidence, it is an
+   expected, actionable step (not a crash): add the missing audit, or — if you genuinely did not audit —
+   emit REVISE instead of fabricating one. `sidecar-append-audit` / `sidecar-append-round` remain for
+   manual recovery.
+
+### If the Codex thread is lost mid-feature
+
+If a `codex-reply` returns `isError: true` with `Session not found for thread_id:` (the MCP server was
+restarted — threads are process-local), recover rather than halt: build replay context with
+`sidecar-replay-context`, open a NEW thread via the initial `codex` tool seeded with that replay + the
+pending prompt, then persist the rotation with `sidecar-rotate-thread-id --reason session-not-found`.
+Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar
+context") and continue. Do not discard prior review history.
 
 4. **If both shipped, exit.** Move to Phase 4.
 

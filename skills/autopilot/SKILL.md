@@ -1289,6 +1289,18 @@ Cleanup-only warnings (not halts): `worktree-cleanup-failed`, `worktree-branch-c
 
 This reconciliation discipline matters because if a Claude session crashes mid-subagent, the subagent may have committed several tasks already. The reconciler-as-truth invariant means the next tick's Phase B.5 call will pick up exactly the commits in the worktree, regardless of what the subagent self-reported. Sidecar dispatch records are append-only so the audit trail survives every retry.
 
+### Edit discipline (v0.13.0, Goal 5)
+
+Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avoid wasted retry turns:
+
+- **Read before editing** when read-state is uncertain (another agent may have touched the file, or
+  your last read predates a failed edit) — re-read in the current turn first.
+- On **`File has not been read yet`**: immediately read the file, then recompute the edit.
+- On **`String to replace not found`**: immediately re-read and inspect the target region; the file
+  changed or the `old_string` is stale.
+- **Never retry the same** `(file, old_string, new_string)` tuple byte-for-byte after it failed —
+  recompute from a fresh read. A byte-identical retry is a procedural error.
+
 ### Phase C: review-slice
 1. Compute the diff: `git diff <slice_start_sha>..HEAD`.
 2. Read Phase A's structured `validation_coverage` from the sidecar:

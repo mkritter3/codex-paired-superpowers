@@ -82,6 +82,20 @@ If the slice review produced any `## Deferred` items, show them to the user befo
 ### Step F: proceed to next slice
 Only after slice N is shipped and any user-arbitrated deferreds are decided.
 
+## Edit discipline (v0.13.0, Goal 5)
+
+Repeated failed edits waste turns. The orchestrator and every implementing subagent MUST follow this:
+
+- **Read before editing** when read-state is uncertain — if another agent may have touched the file,
+  or if your last read predates a failed edit, re-read the file in the current turn first.
+- If an edit fails with **`File has not been read yet`**, immediately read the file and recompute the
+  edit against its current contents.
+- If an edit fails with **`String to replace not found`**, immediately re-read and inspect the target
+  region; the file has changed or your `old_string` is stale.
+- **Never retry the same** `(file, old_string, new_string)` tuple byte-for-byte after it just failed —
+  a byte-identical retry is a procedural error, not a recovery. Recompute from a fresh read.
+- For bulk edits, prefer a structured patch with enough surrounding context captured after the fresh read.
+
 ## Per-slice expert review (v0.9.0)
 
 After the implementing subagent reports completion (Step A) and the slice's diff + tests are captured (Step B), but BEFORE Step C's Codex slice review, the orchestrator MUST run **composer-selected experts** on the slice. This mirrors autopilot's Phase B.5.5 pattern but applies to inline (non-autopilot) execution: every slice gets domain-expert review before it's allowed to ship.

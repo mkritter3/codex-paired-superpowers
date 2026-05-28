@@ -227,13 +227,34 @@ test('gate message manual audit example includes a kind field (v0.13.0)', () => 
   assert.match(r.message, /"kind"/);
 });
 
+test('gate message (v0.13.0) is actionable: new lead + atomic command + per-side reason', () => {
+  const cmd = appendRoundCmd({ phase: 'plan', round: 1, claude: 'SHIP', codex: 'SHIP' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, { hasAuditFor: () => false });
+  assert.equal(r.exit, 2);
+  assert.match(r.message, /Audit evidence required before logging SHIP/);
+  assert.match(r.message, /expected, actionable step — not a crash/);
+  assert.match(r.message, /sidecar-append-round-with-audits/);
+  assert.match(r.message, /no audit entry recorded/); // no-audit reason for design phase
+});
+
+test('gate message for code-bearing phase names the missing verification', () => {
+  const cmd = appendRoundCmd({ phase: 'review-slice:slice-1', round: 1, claude: 'SHIP', codex: 'REVISE: x' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, {
+    hasAuditFor: () => true,
+    hasExecutedVerificationFor: () => false,
+    requiresExecutedVerification: () => true,
+  });
+  assert.equal(r.exit, 2);
+  assert.match(r.message, /no successful kind:"verification" command/);
+});
+
 // ── decidePreToolUse integration ──────────────────────────────────────────
 
 test('integration: decidePreToolUse blocks unaudited SHIP-round-append', () => {
   const cmd = appendRoundCmd({ claude: 'SHIP', codex: 'SHIP' });
   const r = decidePreToolUse('Bash', bashCmd(cmd), [], ACTIVE, { hasAuditFor: () => false });
   assert.equal(r.exit, 2);
-  assert.match(r.message, /audit gate/i);
+  assert.match(r.message, /Audit evidence required before logging SHIP/);
 });
 
 test('integration: decidePreToolUse allows audited SHIP-round-append', () => {
