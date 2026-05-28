@@ -172,7 +172,7 @@ The fix is a slice (even a one-task slice). Run it through `subagent-driven-deve
 ## Sidecar usage
 If this debug session belongs to an in-flight feature, reuse that feature's sidecar (its threadId is the same Codex thread that drafted the spec and approved the plan — Codex remembers all prior context). If the bug is standalone, create a new spec stub at `docs/superpowers/specs/YYYY-MM-DD-debug-<bug-id>.md`, open a fresh Codex thread by invoking `mcp__plugin_codex-paired-superpowers_codex__codex` (with the L11 rubric + verdict-format prompts prepended), and persist the threadId via `sidecar-init`. Either way, all hypothesis rounds get logged in the sidecar.
 
-**MODEL INVARIANT.** When opening a fresh codex thread for a standalone bug, you MUST pass `model: "gpt-5.5"` and `config: { model_reasoning_effort: "high" }` explicitly. The codex MCP tool's schema description shows `gpt-5.2`/`gpt-5.2-codex` as examples — those are stale references from the upstream codex CLI and are NOT the model this plugin runs on. See `skills/brainstorming/codex-pairing.md` for the canonical invocation form.
+**Model handling.** When opening a fresh codex thread for a standalone bug, do NOT pass a per-call `model` — as of v0.13.0 it is pinned to `gpt-5.5` by the MCP server config (`.claude-plugin/plugin.json`). Pass only `config: { model_reasoning_effort: "high" }`. The codex MCP tool's schema description shows `gpt-5.2`/`gpt-5.2-codex` as stale upstream examples; those must NOT be passed (a per-call model overrides the server pin). See `skills/brainstorming/codex-pairing.md` for the canonical invocation form.
 
 ## Troubleshooting setup errors
 

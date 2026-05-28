@@ -11,7 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -571,4 +571,72 @@ test('README.md contains pointer to v0.10.0-ecosystem-notes.md', () => {
     readme.includes('docs/integration/v0.10.0-ecosystem-notes.md'),
     'README.md must contain a link to docs/integration/v0.10.0-ecosystem-notes.md'
   );
+});
+
+// ── v0.13.0 Slice 1 — no plugin-authored per-call model for the codex MCP tool ──
+//
+// Goal 2: the model is pinned to gpt-5.5 by the MCP server config; plugin skills must
+// NOT pass a per-call `model` to the codex / codex-reply MCP tool (a per-call model
+// overrides the server pin and can reintroduce the stale-model 400). Enumerated by glob
+// so a newly added skill that reintroduces a per-call model is caught without editing
+// this test's file list. Excludes implementer-adapter frontmatter (a different `model:`
+// concept) and sidecar bookkeeping (`sidecar-init --model`).
+
+function collectSkillMarkdown(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...collectSkillMarkdown(full));
+    else if (entry.isFile() && entry.name.endsWith('.md')) out.push(full);
+  }
+  return out;
+}
+
+function forbiddenPerCallModelLines(text) {
+  return text.split('\n').reduce((acc, line, i) => {
+    // A line is a violation if it instructs USE of a per-call model for the codex MCP tool.
+    const setsModel =
+      /"model"\s*:\s*"gpt-/.test(line) ||                 // JSON snippet field: "model": "gpt-..."
+      /\bmust pass\b[^.]*\bmodel\b[^.]*gpt-5/i.test(line) || // prose: "you MUST pass `model: gpt-5.5`"
+      /MODEL INVARIANT/.test(line);                       // the old invariant banner itself
+    // Exemptions: explicit prohibitions, implementer-adapter frontmatter, sidecar bookkeeping.
+    // (Hazard mentions of "stale"/"examples" alone do NOT exempt — an instruction can co-mention them.)
+    const isExempt =
+      /\bmust NOT\b|\bdo NOT\b|never pass|don't pass|\bomit\b/i.test(line) ||
+      /sidecar-init/.test(line) ||
+      /adapter:|member_id:|expert-implementer/.test(line);
+    if (setsModel && !isExempt) acc.push({ line: i + 1, text: line.trim() });
+    return acc;
+  }, []);
+}
+
+test('no plugin-authored skill passes a per-call model to the codex MCP tool (Goal 2)', () => {
+  const files = collectSkillMarkdown(join(PLUGIN_ROOT, 'skills'));
+  assert.ok(files.length > 0, 'expected to find skill markdown files');
+  const violations = [];
+  for (const f of files) {
+    const hits = forbiddenPerCallModelLines(readFileSync(f, 'utf8'));
+    for (const h of hits) violations.push(`${f.replace(PLUGIN_ROOT + '/', '')}:${h.line}  ${h.text}`);
+  }
+  assert.deepEqual(
+    violations,
+    [],
+    `Found plugin-authored per-call model directive(s) for the codex MCP tool. The model is ` +
+      `pinned to gpt-5.5 by .claude-plugin/plugin.json; skills must omit per-call model.\n` +
+      violations.join('\n'),
+  );
+});
+
+test('stale gpt-5.2-codex literal appears only in hazard text', () => {
+  const files = collectSkillMarkdown(join(PLUGIN_ROOT, 'skills'));
+  const violations = [];
+  for (const f of files) {
+    readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+      if (/gpt-5\.2-codex/.test(line) && !/must NOT|do NOT|never pass|don't pass|stale|NOT the model/i.test(line)) {
+        violations.push(`${f.replace(PLUGIN_ROOT + '/', '')}:${i + 1}  ${line.trim()}`);
+      }
+    });
+  }
+  assert.deepEqual(violations, [], `gpt-5.2-codex may only appear in hazard text:\n${violations.join('\n')}`);
 });

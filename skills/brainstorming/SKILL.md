@@ -80,17 +80,16 @@ Compose the initial Codex prompt by concatenating, in order:
 
 > **v0.12.0 — codex has workspace-write.** The MCP server is now launched with `-c sandbox_mode=workspace-write`, so Codex can write the spec file itself. Don't ask Codex to return the spec body to Claude and then have Claude write it — that double-handling wasted tokens and lost detail. Instead, instruct Codex (as shown in step 4 above) to write `<spec-path>` directly, then Claude just verifies the file exists.
 
-Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with these EXACT parameters (do NOT substitute schema-description example values like `gpt-5.2-codex` — those are stale references from the upstream codex CLI, NOT what this plugin runs on):
+Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with these EXACT parameters:
 
 ```json
 {
   "prompt": "<the composed prompt>",
-  "model": "gpt-5.5",
   "config": { "model_reasoning_effort": "high" }
 }
 ```
 
-**Critical — model invariant.** The `model` field is load-bearing. If you pass anything other than `"gpt-5.5"`, the thread runs on the wrong model and the entire feature's review loop is invalidated (and `codex-reply` calls inherit the wrong model — you'd need to re-create the thread to recover). The MCP tool's schema docstring mentions `gpt-5.2` and `gpt-5.2-codex` as examples; those are NOT defaults for this plugin. Always pass `"gpt-5.5"` literally. See `codex-pairing.md` for the canonical invocation form.
+**Critical — do NOT pass a per-call `model`.** As of v0.13.0 the model is pinned to `gpt-5.5` by the MCP server config (`.claude-plugin/plugin.json`), so omitting the field is what guarantees the correct model. A per-call `model` overrides that pin: the MCP tool's schema docstring shows `gpt-5.2`/`gpt-5.2-codex` as stale upstream examples and those must NOT be passed (the thread would run on the wrong model and `codex-reply` calls inherit it — you'd need to re-create the thread to recover). `config.model_reasoning_effort` is not the model id and remains allowed. See `codex-pairing.md` for the canonical invocation form.
 
 The response is `{ threadId, content }`. `content` is Codex's reply (which includes the verdict block and the `Wrote spec to <spec-path>` confirmation line). The actual spec body lives on disk at `<spec-path>` — Codex wrote it directly via workspace-write.
 

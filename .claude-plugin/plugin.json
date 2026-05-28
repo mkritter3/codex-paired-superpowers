@@ -8,7 +8,12 @@
   "mcpServers": {
     "codex": {
       "command": "codex",
-      "args": ["mcp-server", "-c", "sandbox_mode=workspace-write"]
+      "args": [
+        "mcp-server",
+        "-c", "sandbox_mode=\"danger-full-access\"",
+        "-c", "approval_policy=\"never\"",
+        "-c", "model=\"gpt-5.5\""
+      ]
     }
   }
 }

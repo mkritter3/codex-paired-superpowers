@@ -9,11 +9,11 @@ This plugin bundles `codex mcp-server` as an MCP server (registered in `plugin.j
 | `mcp__plugin_codex-paired-superpowers_codex__codex` | `{ prompt, model, cwd?, sandbox?, config?, ... }` | `{ threadId, content }` |
 | `mcp__plugin_codex-paired-superpowers_codex__codex-reply` | `{ threadId, prompt }` | `{ threadId, content }` |
 
-### ⚠️ MODEL INVARIANT — read before every `__codex` call
+### ⚠️ Model handling — read before every `__codex` call
 
-**On EVERY initial `mcp__plugin_codex-paired-superpowers_codex__codex` call you MUST pass `model: "gpt-5.5"` explicitly.** The tool schema's description field shows `gpt-5.2` and `gpt-5.2-codex` as *examples*. Those are stale references from the upstream codex CLI's docstring — they are NOT the model this plugin is built for. If you pass either of those, the resulting thread runs on the wrong model and every subsequent `codex-reply` inherits the wrong model. Empirically verified failure mode (2026-05-10): Claude silently used `gpt-5.2-codex` from the schema example, the user noticed via the tool-call card. The thread cannot be model-changed after creation; it has to be re-started.
+**Do NOT pass a per-call `model` to the codex MCP tool.** As of v0.13.0 the model is pinned to `gpt-5.5` by the plugin's MCP server config (`.claude-plugin/plugin.json` launches `codex mcp-server` with `-c model="gpt-5.5"`), and a thread inherits it automatically. The tool schema's description field still shows `gpt-5.2` and `gpt-5.2-codex` as *examples* — those are stale upstream-CLI references and must NOT be passed. A per-call `model` overrides the server pin: empirically (2026-05-10) Claude once silently used `gpt-5.2-codex` from the schema example and the thread ran on the wrong model (the thread cannot be model-changed after creation; it has to be re-started). Omitting the field entirely is what guarantees the pinned `gpt-5.5`.
 
-**For reasoning effort, pass `config: { model_reasoning_effort: "high" }`** for spec / plan / debug phases. For slice review and TDD review, `medium` is acceptable (and faster).
+**For reasoning effort, pass `config: { model_reasoning_effort: "high" }`** for spec / plan / debug phases. For slice review and TDD review, `medium` is acceptable (and faster). Reasoning effort is not the model id and remains a per-call field.
 
 **For `codex-reply` calls there is no model parameter** — the model is locked at thread-creation time and inherited.
 
