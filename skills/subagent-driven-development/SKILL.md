@@ -70,19 +70,26 @@ If the slice's tests were not executed (or did not pass with `exit_code: 0`), th
 SHIP — run the tests and record the result, or emit REVISE.
 
 **Faster verification via test-impact analysis (optional).** Instead of the full suite you MAY run
-`npm run test:affected` (coverage-based selection — see `scripts/tia.mjs`). It prints a `selection`
-record; embed it on the verification command so the audit shows *what was run and why it was enough*:
+`npm run test:affected` (coverage-based selection — see `scripts/tia.mjs`). It writes a review-grade
+record to `.tia-cache/last-run.json`; embed that record as the verification command's `selection` so
+the audit is self-contained — Codex can see exactly what ran, against what change set, and why it was
+sufficient:
 
 ```json
 {"cmd": "npm run test:affected", "summary": "ran 6 of 110 affected tests, exit 0",
  "kind": "verification", "exit_code": 0,
- "selection": {"mode": "selected", "ran": 6, "fullyCovered": true, "uncovered": []}}
+ "selection": {"mode": "selected", "ran": 6, "fullyCovered": true, "uncovered": [],
+               "exit": 0, "base": "HEAD (working tree)", "mapVersion": 2,
+               "tests": ["tests/...test.js", "..."], "changed": ["lib/...js"]}}
 ```
 
-The gate does NOT accept a `selection` that ran zero tests (`"mode": "none"` or `"ran": 0`) as
-verification evidence — running the affected set when it was empty is not a real test of code-bearing
-work. When in doubt (or `mode` is `all`), the full run is always valid. Codex reviewing the SHIP can
-challenge whether a `selected` subset was sufficient. On double-SHIP, mark slice shipped:
+Gate rules the audit enforces on a TIA `selection`:
+- `"ran": 0` or `"mode": "none"` → **not** valid verification (running the empty affected set proves nothing).
+- `"mode": "selected"` counts only when `"fullyCovered": true` and `"uncovered": []` (the subset covered every changed source).
+- `"mode": "all"` with `ran > 0` is always valid (full run is the safe default).
+
+Codex reviewing the SHIP can still challenge whether a `selected` subset was sufficient. On
+double-SHIP, mark slice shipped:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-slice \

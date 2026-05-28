@@ -283,12 +283,9 @@ function main() {
     nodeVersion: process.version,
   });
 
-  // Audit-grade selection record (Codex review (A)): everything needed to judge whether the chosen
-  // subset was sufficient. `selection` is the compact object meant to be embedded in a v0.13.0
-  // verification audit command; the rest is provenance for review.
-  const ranCount = decision.mode === 'all' ? allTestFiles.length : decision.tests.length;
-  const record = {
-    selection: { mode: decision.mode, ran: ranCount, fullyCovered: decision.fullyCovered, uncovered: decision.uncovered || [] },
+  // Shared provenance for review (Codex review (A) item 3): everything needed to judge sufficiency.
+  const wouldRun = decision.mode === 'all' ? allTestFiles.length : decision.tests.length;
+  const provenance = {
     reason: decision.reason,
     base: flags.base || 'HEAD (working tree)',
     changed,
@@ -301,7 +298,12 @@ function main() {
   };
 
   if (cmd === 'affected') {
-    process.stdout.write(JSON.stringify(record, null, 2) + '\n');
+    // DRY RUN — executes nothing. Deliberately NO gate-ready `selection`/`ran` (which would imply
+    // "did run"). `selectedCount` = how many WOULD run; `executed: false` makes that explicit.
+    process.stdout.write(JSON.stringify({
+      mode: decision.mode, executed: false, selectedCount: wouldRun,
+      fullyCovered: decision.fullyCovered, uncovered: decision.uncovered || [], ...provenance,
+    }, null, 2) + '\n');
     return 0;
   }
 
@@ -315,12 +317,16 @@ function main() {
         process.stderr.write(`[tia] map refresh skipped: ${e.message}\n`);
       }
     }
-    // Persist the run record (with exit) so the agent can attach `selection` to the verification audit.
-    record.exit = exit;
-    record.ranAt = new Date().toISOString();
-    try { mkdirSync(CACHE_DIR, { recursive: true }); writeFileSync(join(CACHE_DIR, 'last-run.json'), JSON.stringify(record, null, 2)); } catch { /* best-effort */ }
-    process.stderr.write(`[tia] verification selection → ${JSON.stringify(record.selection)} (exit ${exit})\n`);
-    process.stderr.write('[tia] (embed the "selection" object in your v0.13.0 verification audit command)\n');
+    // The gate-embeddable, review-grade selection record. `ran` here means tests that ACTUALLY ran.
+    const selection = {
+      mode: decision.mode, ran: wouldRun, fullyCovered: decision.fullyCovered,
+      uncovered: decision.uncovered || [], exit, ranAt: new Date().toISOString(),
+      base: provenance.base, mapVersion: provenance.mapVersion, mapBuiltAt: provenance.mapBuiltAt,
+      node: provenance.node, tests: decision.tests, changed,
+    };
+    try { mkdirSync(CACHE_DIR, { recursive: true }); writeFileSync(join(CACHE_DIR, 'last-run.json'), JSON.stringify(selection, null, 2)); } catch { /* best-effort */ }
+    process.stderr.write(`[tia] verification selection → ${JSON.stringify({ mode: selection.mode, ran: selection.ran, fullyCovered: selection.fullyCovered, exit })}\n`);
+    process.stderr.write('[tia] full record at .tia-cache/last-run.json — embed it as the verification command\'s "selection"\n');
     return exit;
   }
 

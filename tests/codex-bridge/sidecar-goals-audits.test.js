@@ -310,6 +310,38 @@ test('hasExecutedVerificationFor: a TIA verification that ran a selected subset 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('selection without integer ran is rejected at append (closes the gate bypass)', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendAuditLog(spec, {
+      ...VALID_AUDIT, phase: 'implement:s1', round: 1, side: 'codex',
+      commands: [{ cmd: 'tia run', summary: 'x', kind: 'verification', exit_code: 0, selection: { mode: 'selected' } }],
+    }),
+    /ran/,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('hasExecutedVerificationFor: selected-but-not-fully-covered does NOT count', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 5, side: 'codex',
+    commands: [{ cmd: 'tia run', summary: 'partial', kind: 'verification', exit_code: 0, selection: { mode: 'selected', ran: 4, fullyCovered: false } }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 5, side: 'codex' }), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('hasExecutedVerificationFor: mode "all" with ran>0 counts', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 6, side: 'codex',
+    commands: [{ cmd: 'tia run', summary: 'full', kind: 'verification', exit_code: 0, selection: { mode: 'all', ran: 110, fullyCovered: false } }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 6, side: 'codex' }), true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('normalizeAuditEntry persists a selection object on a verification command', () => {
   const { dir, spec } = makeSpec();
   appendAuditLog(spec, {
