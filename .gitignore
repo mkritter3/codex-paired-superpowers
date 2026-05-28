@@ -16,3 +16,6 @@ docs/specs/*.codex.json
 
 # v0.7.0 worktree-isolation directory for autopilot subagent dispatch
 .git-worktrees/
+
+# test-impact-analysis coverage map (transient local cache; rebuild with `npm run test:tia-build`)
+.tia-cache/

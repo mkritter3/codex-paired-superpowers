@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test $(node scripts/collect-test-files.mjs)",
+    "test:affected": "node scripts/tia.mjs run",
+    "test:affected:main": "node scripts/tia.mjs run --base main",
+    "test:tia-build": "node scripts/tia.mjs build",
     "test:installed-smoke": "CPS_INSTALLED_SMOKE=1 node --test tests/installed-smoke/codex-real.test.js tests/installed-smoke/ollama-real.test.js",
     "test:replay": "node --test tests/replay/replay-from-sidecar.test.js",
     "test:all": "node --test $(node scripts/collect-test-files.mjs --all)",
