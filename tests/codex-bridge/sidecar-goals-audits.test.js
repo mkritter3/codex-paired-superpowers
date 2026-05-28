@@ -17,7 +17,10 @@ import {
   appendAuditLog,
   listAudits,
   hasAuditFor,
+  hasExecutedVerificationFor,
+  requiresExecutedVerification,
   loadSidecar,
+  sidecarPathFor,
 } from '../../lib/codex-bridge/sidecar.js';
 
 function makeSpec() {
@@ -83,8 +86,8 @@ const VALID_AUDIT = {
   round: 1,
   side: 'codex',
   commands: [
-    { cmd: 'grep -rn dependency-graph lib/', summary: 'exists at lib/codex-bridge/dependency-graph.js:1' },
-    { cmd: 'git log --grep=DAG --oneline', summary: '3 prior commits — capability shipped in v0.7.3' },
+    { cmd: 'grep -rn dependency-graph lib/', summary: 'exists at lib/codex-bridge/dependency-graph.js:1', kind: 'inspection' },
+    { cmd: 'git log --grep=DAG --oneline', summary: '3 prior commits — capability shipped in v0.7.3', kind: 'inspection' },
   ],
   verdict_basis: 'Plan reinvents existing DAG → REVISE',
 };
@@ -109,7 +112,7 @@ test('appendAuditLog accepts caller-supplied ran_at', () => {
   const { dir, spec } = makeSpec();
   const audit = {
     ...VALID_AUDIT,
-    commands: [{ cmd: 'ls', summary: 'ok', ran_at: '2026-05-13T12:00:00.000Z' }],
+    commands: [{ cmd: 'ls', summary: 'ok', kind: 'inspection', ran_at: '2026-05-13T12:00:00.000Z' }],
   };
   appendAuditLog(spec, audit);
   assert.equal(listAudits(spec)[0].commands[0].ran_at, '2026-05-13T12:00:00.000Z');
@@ -220,5 +223,82 @@ test('goals + audits coexist with rounds and other top-level keys', () => {
   assert.equal(sc.audits.length, 1);
   assert.deepEqual(sc.rounds, []);
   assert.deepEqual(sc.open_contentions, []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── v0.13.0 Slice 2 — kind/exit_code schema + verification floor ───────────
+
+test('appendAuditLog requires command kind ∈ inspection|verification|other', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendAuditLog(spec, { ...VALID_AUDIT, commands: [{ cmd: 'ls', summary: 'ok' }] }),
+    /kind/,
+  );
+  assert.throws(
+    () => appendAuditLog(spec, { ...VALID_AUDIT, commands: [{ cmd: 'ls', summary: 'ok', kind: 'bogus' }] }),
+    /kind/,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendAuditLog requires integer exit_code for kind verification', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendAuditLog(spec, { ...VALID_AUDIT, commands: [{ cmd: 'npm test', summary: 'ran', kind: 'verification' }] }),
+    /exit_code/,
+  );
+  assert.throws(
+    () => appendAuditLog(spec, { ...VALID_AUDIT, commands: [{ cmd: 'npm test', summary: 'ran', kind: 'verification', exit_code: 'zero' }] }),
+    /exit_code/,
+  );
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'implement:slice-1', round: 1, side: 'codex',
+    commands: [{ cmd: 'npm test', summary: '42 passed', kind: 'verification', exit_code: 0 }],
+  });
+  const a = listAudits(spec, { phase: 'implement:slice-1', round: 1, side: 'codex' })[0];
+  assert.equal(a.commands[0].kind, 'verification');
+  assert.equal(a.commands[0].exit_code, 0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('requiresExecutedVerification: false for design phases, true for code-bearing', () => {
+  for (const p of ['spec', 'plan', 'plan-slice:slice-1']) {
+    assert.equal(requiresExecutedVerification(p), false, `${p} should be design-only`);
+  }
+  for (const p of ['implement:slice-1', 'review-slice:slice-1', 'live-verification:slice-1', 'post-merge-review:slice-1']) {
+    assert.equal(requiresExecutedVerification(p), true, `${p} should require verification`);
+  }
+  assert.equal(requiresExecutedVerification('unknown-phase'), false, 'unknown phases default to inspection-only');
+});
+
+test('hasExecutedVerificationFor: only verification + exit_code 0 counts', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, { ...VALID_AUDIT, phase: 'review-slice:s1', round: 1, side: 'codex' });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 1, side: 'codex' }), false);
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 2, side: 'codex',
+    commands: [{ cmd: 'npm test', summary: '3 failed', kind: 'verification', exit_code: 1 }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 2, side: 'codex' }), false);
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 3, side: 'codex',
+    commands: [{ cmd: 'npm test', summary: 'all pass', kind: 'verification', exit_code: 0 }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 3, side: 'codex' }), true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('legacy audit (no kind) lists + satisfies hasAuditFor but never hasExecutedVerificationFor', () => {
+  const { dir, spec } = makeSpec();
+  const sc = loadSidecar(spec);
+  sc.audits = [{
+    phase: 'review-slice:s1', round: 1, side: 'codex',
+    commands: [{ cmd: 'npm test', summary: 'ran', ran_at: '2026-05-01T00:00:00.000Z' }],
+    verdict_basis: null, appended_at: '2026-05-01T00:00:00.000Z',
+  }];
+  writeFileSync(sidecarPathFor(spec), JSON.stringify(sc, null, 2));
+  assert.equal(listAudits(spec).length, 1);
+  assert.equal(hasAuditFor(spec, { phase: 'review-slice:s1', round: 1, side: 'codex' }), true);
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 1, side: 'codex' }), false);
   rmSync(dir, { recursive: true, force: true });
 });

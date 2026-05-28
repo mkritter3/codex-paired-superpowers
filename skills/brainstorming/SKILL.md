@@ -133,7 +133,7 @@ For each round N starting at 1:
      "round": N,
      "side": "codex",
      "commands": [
-       {"cmd": "<command from Codex audit log>", "summary": "<result>"},
+       {"cmd": "<grep / find / git log command>", "summary": "<result>", "kind": "inspection"},
        ...
      ],
      "verdict_basis": "<one-line: how the audit informed the verdict>"
@@ -144,12 +144,17 @@ For each round N starting at 1:
      "phase": "spec",
      "round": N,
      "side": "claude",
-     "commands": [...],
+     "commands": [{"cmd": "...", "summary": "...", "kind": "inspection"}],
      "verdict_basis": "..."
    }' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
    ```
 
-   For REVISE verdicts the audit is recommended but not required by the gate. For SHIP verdicts on either side, the audit is mandatory.
+   Every command needs a `kind` (`inspection` | `verification` | `other`). For code-bearing phases
+   (`implement:<slice>`, `review-slice:<slice>`, …) a SHIP additionally requires at least one executed
+   `"kind": "verification"` command with `"exit_code": 0` — for example
+   `{"cmd": "npm test", "summary": "42 passed", "kind": "verification", "exit_code": 0}`. Design phases
+   (spec / plan) only need inspection evidence. For REVISE verdicts the audit is recommended but not
+   required by the gate. For SHIP verdicts on either side, the audit is mandatory.
 
 3. **Append the round to the sidecar** with both verdicts:
 

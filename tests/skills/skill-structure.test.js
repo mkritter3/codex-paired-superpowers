@@ -628,6 +628,20 @@ test('no plugin-authored skill passes a per-call model to the codex MCP tool (Go
   );
 });
 
+test('brainstorming + writing-plans audit examples include a kind field (v0.13.0)', () => {
+  for (const skill of ['brainstorming', 'writing-plans']) {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('sidecar-append-audit'),
+      `${skill}/SKILL.md must still document sidecar-append-audit`,
+    );
+    assert.ok(
+      content.includes('"kind"'),
+      `${skill}/SKILL.md audit payload examples must include a "kind" field (v0.13.0 required schema)`,
+    );
+  }
+});
+
 test('stale gpt-5.2-codex literal appears only in hazard text', () => {
   const files = collectSkillMarkdown(join(PLUGIN_ROOT, 'skills'));
   const violations = [];

@@ -113,12 +113,17 @@ printf '%s' '{
   "round": 1,
   "side": "codex",
   "commands": [
-    {"cmd": "<command Codex reported>", "summary": "<one-line result>"},
+    {"cmd": "<command Codex reported>", "summary": "<one-line result>", "kind": "inspection"},
     ...
   ],
   "verdict_basis": "<one-line: how the audit informed the verdict>"
 }' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
 ```
+
+Every command requires a `kind` (`inspection` | `verification` | `other`). Plan review is a design
+phase, so inspection evidence suffices; code-bearing phases (`implement:<slice>`,
+`review-slice:<slice>`, …) additionally need an executed `"kind": "verification"` command with
+`"exit_code": 0` before a SHIP can be logged.
 
 If Codex's response has no `## Audit log` section, **do not log a SHIP verdict** — push back via a round-(N+1) prompt asking Codex to perform the audit. Goal-aligned critique without codebase verification is exactly the failure mode this gate exists to prevent.
 

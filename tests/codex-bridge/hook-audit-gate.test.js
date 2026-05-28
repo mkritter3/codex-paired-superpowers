@@ -175,6 +175,55 @@ test('gate: queries hasAuditFor with exact (specPath, phase, round, side) tuple'
   ]);
 });
 
+// ── v0.13.0 code-bearing verification gate ─────────────────────────────────
+
+test('gate: code-bearing SHIP with inspection audit but no verification → exit 2', () => {
+  const cmd = appendRoundCmd({ phase: 'review-slice:slice-1', round: 1, claude: 'SHIP', codex: 'SHIP' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, {
+    hasAuditFor: () => true,                 // inspection audit exists
+    hasExecutedVerificationFor: () => false, // but no executed verification
+    requiresExecutedVerification: () => true,
+  });
+  assert.equal(r.exit, 2);
+  assert.match(r.message, /claude, codex/);
+});
+
+test('gate: code-bearing SHIP with executed verification → exit 0', () => {
+  const cmd = appendRoundCmd({ phase: 'implement:slice-1', round: 2, claude: 'SHIP', codex: 'SHIP' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, {
+    hasAuditFor: () => false,
+    hasExecutedVerificationFor: () => true,
+    requiresExecutedVerification: () => true,
+  });
+  assert.equal(r.exit, 0);
+});
+
+test('gate: design-phase SHIP backed by inspection audit only → exit 0 (no verification required)', () => {
+  const cmd = appendRoundCmd({ phase: 'plan', round: 1, claude: 'SHIP', codex: 'SHIP' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, {
+    hasAuditFor: () => true,
+    hasExecutedVerificationFor: () => false, // never consulted for design phases
+    requiresExecutedVerification: () => false,
+  });
+  assert.equal(r.exit, 0);
+});
+
+test('gate: plan-slice phase is design-only (inspection audit suffices)', () => {
+  const cmd = appendRoundCmd({ phase: 'plan-slice:slice-1', round: 1, claude: 'SHIP', codex: 'REVISE: x' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, {
+    hasAuditFor: (sp, { side }) => side === 'claude',
+    hasExecutedVerificationFor: () => false,
+  });
+  assert.equal(r.exit, 0);
+});
+
+test('gate message manual audit example includes a kind field (v0.13.0)', () => {
+  const cmd = appendRoundCmd({ phase: 'plan', round: 1, claude: 'SHIP', codex: 'SHIP' });
+  const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, { hasAuditFor: () => false });
+  assert.equal(r.exit, 2);
+  assert.match(r.message, /"kind"/);
+});
+
 // ── decidePreToolUse integration ──────────────────────────────────────────
 
 test('integration: decidePreToolUse blocks unaudited SHIP-round-append', () => {
