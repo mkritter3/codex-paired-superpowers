@@ -47,7 +47,10 @@ test('cli-clients/claude-cli.json is present and parseable', () => {
   }, 'claude-cli.json must exist and be valid JSON');
   assert.equal(parsed.name, 'claude-cli', 'name must be "claude-cli"');
   assert.equal(parsed.command, 'claude', 'command must be "claude"');
-  assert.equal(parsed.runtime_kind, 'claude-cli', 'runtime_kind must be "claude-cli"');
+  // claude-cli dispatches via the cli-harness (adapters/claude-cli.js), so its runtime_kind is
+  // "cli-harness" — NOT "claude-cli" (the adapter name). The earlier "claude-cli" value was an
+  // invalid runtime_kind the config loader rejected; see fix in cli-clients/claude-cli.json.
+  assert.equal(parsed.runtime_kind, 'cli-harness', 'runtime_kind must be "cli-harness"');
 });
 
 test('getAdapterConfig("claude-cli") returns the expected config fields', () => {
@@ -55,7 +58,7 @@ test('getAdapterConfig("claude-cli") returns the expected config fields', () => 
   const config = getAdapterConfig('claude-cli');
   assert.equal(config.name, 'claude-cli');
   assert.equal(config.command, 'claude');
-  assert.equal(config.runtime_kind, 'claude-cli');
+  assert.equal(config.runtime_kind, 'cli-harness');
 });
 
 // ── JSON loaded before .js (existing registry pattern) ───────────────────────
