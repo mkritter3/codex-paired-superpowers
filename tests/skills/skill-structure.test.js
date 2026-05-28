@@ -93,6 +93,9 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
     ],
     required_commands: [
       'post-implementation-review',
+      // v0.13.0: slice review uses the code-bearing `review-slice:<id>` phase (was `slice:<id>`),
+      // which the verification gate enforces. Pin the canonical phase name so it can't regress.
+      'review-slice:<slice-id>',
     ],
     forbidden_legacy: [],
   },

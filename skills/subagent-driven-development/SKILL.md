@@ -45,7 +45,29 @@ Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ thr
 For slice-review specifically, you may pass `config: { model_reasoning_effort: "medium" }` to speed up small-diff reviews; reserve `high` for slices that touch core architecture.
 
 ### Step D: 7-round loop
-Same as brainstorming. Both must SHIP. Sidecar phase is `slice:<slice-id>` (e.g., `slice:2`). On double-SHIP, mark slice shipped:
+Same as brainstorming. Both must SHIP. Sidecar phase is `review-slice:<slice-id>` (e.g.,
+`review-slice:slice-2`) — the spec-canonical code-bearing phase name as of v0.13.0 (replacing the
+legacy `slice:<id>`).
+
+**Code-bearing verification floor (v0.13.0, Goal 1).** Because `review-slice:<slice-id>` is a
+code-bearing phase, a SHIP for either side is gated on an EXECUTED verification command, not just an
+inspection audit. Record the slice's test/build run (captured in Step B) as a `verification` audit
+entry before logging a SHIP round, e.g.:
+
+```bash
+printf '%s' '{
+  "phase": "review-slice:<slice-id>",
+  "round": N,
+  "side": "<claude|codex>",
+  "commands": [
+    {"cmd": "npm test", "summary": "42 passed", "kind": "verification", "exit_code": 0}
+  ],
+  "verdict_basis": "<one-line: tests pass + review judgement>"
+}' | node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-append-audit --specPath "<spec-path>"
+```
+
+If the slice's tests were not executed (or did not pass with `exit_code: 0`), the gate refuses the
+SHIP — run the tests and record the result, or emit REVISE. On double-SHIP, mark slice shipped:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-slice \

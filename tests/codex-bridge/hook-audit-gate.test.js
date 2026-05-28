@@ -94,7 +94,10 @@ test('gate: Bash command unrelated to append-round → exit 0', () => {
   assert.equal(r.exit, 0);
 });
 
-test('gate: phase=slice:7 → exit 0 (slice review out of scope for this gate)', () => {
+test('gate: legacy phase=slice:7 → exit 0 (pre-v0.13.0 phase name; superseded by review-slice:<id>)', () => {
+  // v0.13.0 migrated slice review to the code-bearing `review-slice:<id>` phase (which IS gated —
+  // see the verification-floor tests below). The legacy `slice:<id>` form is left ungated for
+  // back-compat with old sidecars; the active workflow no longer emits it.
   const cmd = appendRoundCmd({ phase: 'slice:7', round: 1, claude: 'SHIP', codex: 'SHIP' });
   const r = decideAuditGate('Bash', bashCmd(cmd), ACTIVE, { hasAuditFor: () => false });
   assert.equal(r.exit, 0);
