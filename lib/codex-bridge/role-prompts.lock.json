@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-12T15:29:28.941Z",
+  "generated_at": "2026-05-28T20:40:03.723Z",
   "prompts": {
     "expert-ai-harness": {
       "path": "lib/codex-bridge/prompts/expert-ai-harness.md",
@@ -35,7 +35,7 @@
     },
     "paired-reviewer": {
       "path": "lib/codex-bridge/prompts/system-rubric.md",
-      "sha256": "8b461672f47a6ca6c09ea21ce18f6edf3276db28c546f993386be44a4d04cadd"
+      "sha256": "3425bd95978f64b39b60b4434576a64f5fa4c5e3d7f1cbdafbeb916d2fd46953"
     }
   }
 }

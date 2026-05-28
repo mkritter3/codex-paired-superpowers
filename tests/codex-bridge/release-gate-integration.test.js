@@ -21,6 +21,15 @@ const HARNESS = join(REPO_ROOT, 'scripts', 'populate-gate-sidecar.mjs');
 const GATE = join(REPO_ROOT, 'scripts', 'v0.9.0-release-gate.sh');
 const GATE_DOC = join(REPO_ROOT, 'docs', 'verification', 'v0.9.0-release-gate.md');
 
+// The gate runner uses bash-4 associative arrays (`declare -A`); macOS default /bin/bash is 3.2.
+// When no bash 4+ is on PATH the gate guard exits 3 (an environment gap, not a defect), so skip the
+// runner test cleanly rather than report a false failure — mirrors the installed-smoke skip pattern.
+const BASH4_AVAILABLE = (() => {
+  const r = spawnSync('bash', ['-c', 'echo "${BASH_VERSINFO:-0}"'], { encoding: 'utf8' });
+  return r.status === 0 && Number(String(r.stdout).trim()) >= 4;
+})();
+const SKIP_GATE_RUNNER = BASH4_AVAILABLE ? false : 'release gate requires bash 4+ (macOS default bash is 3.2); skipping runner test';
+
 // v0.9.1 Codex critique: the gate runner rewrites `docs/verification/
 // v0.9.0-release-gate.md` (a tracked file) on every run. Tests must NOT
 // leave dirty working-tree changes. Snapshot the file before any test
@@ -107,6 +116,7 @@ test('populate-gate-sidecar.mjs runs to completion and emits a parseable sidecar
 
 test('release-gate runner exits 0 against a harness-produced sidecar (ALL PASS)', {
   timeout: TEST_TIMEOUT_MS,
+  skip: SKIP_GATE_RUNNER,
 }, () => {
   // 1. Run harness, capture sidecar path.
   const harnessResult = spawnSync('node', [HARNESS], {

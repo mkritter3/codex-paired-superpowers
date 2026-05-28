@@ -23,6 +23,15 @@
 
 set -euo pipefail
 
+# This gate uses associative arrays (`declare -A`), which require bash 4+. macOS ships bash 3.2 as
+# /bin/bash, so fail with an actionable message instead of the cryptic `declare: -A: invalid option`.
+if [ "${BASH_VERSINFO:-0}" -lt 4 ]; then
+  echo "v0.9.0-release-gate: requires bash 4+ (found ${BASH_VERSION:-unknown})." >&2
+  echo "  macOS default /bin/bash is 3.2 — install a newer bash, e.g. 'brew install bash'," >&2
+  echo "  then run with that bash (e.g. /opt/homebrew/bin/bash scripts/v0.9.0-release-gate.sh)." >&2
+  exit 3
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATE_DOC="${REPO_ROOT}/docs/verification/v0.9.0-release-gate.md"
 REPLAY_TEST="${REPO_ROOT}/tests/replay/replay-from-sidecar.test.js"

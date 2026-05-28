@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   initSidecar,
   loadSidecar,
@@ -340,7 +341,9 @@ test('edge.boundary global event_seq: preseed with a different slice → next ev
         },
       },
     });
-    const ZERO_HASH = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
+    // payload_hash must equal sha256(JSON.stringify(payload)) — appendImplementerEventLocked enforces
+    // this integrity invariant, so compute the real hash per payload (a placeholder is rejected).
+    const payloadHash = (p) => 'sha256:' + createHash('sha256').update(JSON.stringify(p)).digest('hex');
     for (let i = 0; i < 3; i++) {
       await appendImplementerEventLocked(spec, {
         event_type: 'checkpoint',
@@ -349,7 +352,7 @@ test('edge.boundary global event_seq: preseed with a different slice → next ev
         member_id: DEFAULT_MEMBER_ID,
         runtime_kind: 'claude-cli',
         worktree_id: DEFAULT_WORKTREE_ID,
-        payload_hash: ZERO_HASH,
+        payload_hash: payloadHash({ i }),
         payload: { i },
       });
     }
