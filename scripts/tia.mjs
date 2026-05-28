@@ -36,7 +36,9 @@ import { tmpdir } from 'node:os';
 const REPO_ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..'));
 const CACHE_DIR = join(REPO_ROOT, '.tia-cache');
 const MAP_PATH = join(CACHE_DIR, 'map.json');
-const MAP_VERSION = 1;
+// v2: entries carry an `ok` trust bit (v1 maps had none, so a v1 entry from a failed run would be
+// wrongly trusted). Bumping the version rejects pre-v2 maps → forces a clean rebuild.
+const MAP_VERSION = 2;
 
 // Changing any of these invalidates ALL selection assumptions → run the full suite.
 // (Tracked source under lib/ and bin/ is handled per-test via coverage; these are the shared roots.)
@@ -82,7 +84,7 @@ export function isTrackedSource(relPath) {
  * @returns {{mode:'all'|'selected'|'none', tests:string[], reason:string}}
  */
 export function selectTests({ changed, map, allTestFiles, hashOf, nodeVersion }) {
-  const full = (reason) => ({ mode: 'all', tests: allTestFiles, reason, fullyCovered: false, uncovered: [] });
+  const full = (reason, uncovered = []) => ({ mode: 'all', tests: allTestFiles, reason, fullyCovered: false, uncovered });
 
   if (!map || !map.tests || map.version !== MAP_VERSION) {
     return full('no-map (run `tia build` to enable selection)');
@@ -117,7 +119,7 @@ export function selectTests({ changed, map, allTestFiles, hashOf, nodeVersion })
   }
   const uncovered = changed.filter((c) => isTrackedSource(c) && !coveredDeps.has(c));
   if (uncovered.length > 0) {
-    return full(`changed source not covered by trusted map: ${uncovered.join(', ')}`);
+    return full(`changed source not covered by trusted map: ${uncovered.join(', ')}`, uncovered);
   }
 
   const impacted = new Set();

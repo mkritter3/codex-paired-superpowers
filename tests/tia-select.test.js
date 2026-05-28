@@ -10,9 +10,11 @@ const NODE = 'v26.0.0';
 const ALL = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js'];
 
 // A map where: a depends on lib/x.js, b depends on lib/y.js, c depends on bin/z.js
+const MAP_VERSION = 2;
+
 function baseMap(overrides = {}) {
   return {
-    version: 1,
+    version: MAP_VERSION,
     node: NODE,
     tests: {
       'tests/a.test.js': { hash: 'ha', deps: ['lib/x.js'] },
@@ -34,6 +36,19 @@ test('no map → run all', () => {
   const d = selectTests({ changed: ['lib/x.js'], map: null, allTestFiles: ALL, hashOf: hashOfMatching, nodeVersion: NODE });
   assert.equal(d.mode, 'all');
   assert.match(d.reason, /no-map/);
+});
+
+test('old-schema map (pre-v2, no ok trust bit) is rejected → run all', () => {
+  const oldMap = { ...baseMap(), version: 1 };
+  const d = selectTests({ changed: ['lib/x.js'], map: oldMap, allTestFiles: ALL, hashOf: hashOfMatching, nodeVersion: NODE });
+  assert.equal(d.mode, 'all');
+  assert.match(d.reason, /no-map/);
+});
+
+test('uncovered-source full fallback reports the uncovered files (audit groundwork)', () => {
+  const d = run(['lib/brand-new-module.js']);
+  assert.equal(d.mode, 'all');
+  assert.deepEqual(d.uncovered, ['lib/brand-new-module.js']);
 });
 
 test('node version mismatch → run all', () => {
