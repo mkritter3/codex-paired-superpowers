@@ -76,10 +76,10 @@ test('new test file (absent from map) is always selected', () => {
   assert.ok(d.tests.includes('tests/new.test.js'));
 });
 
-test('changed source NOT covered by any test → conservative full run', () => {
+test('changed source NOT covered by any trusted test → conservative full run', () => {
   const d = run(['lib/brand-new-module.js']);
   assert.equal(d.mode, 'all');
-  assert.match(d.reason, /not covered by map/);
+  assert.match(d.reason, /not covered by trusted map/);
 });
 
 test('clean working tree (no changes) → run nothing', () => {
@@ -87,9 +87,42 @@ test('clean working tree (no changes) → run nothing', () => {
   assert.equal(d.mode, 'none');
 });
 
-test('non-source change (e.g. README) with no test deps → run nothing', () => {
-  const d = run(['README.md']);
-  assert.equal(d.mode, 'none');
+// Codex review fix #1: coverage cannot attribute file-READ deps (skills/docs/README/json/hooks),
+// so any non-module change must force a full run — those files ARE validated by tests
+// (e.g. skill-structure.test.js reads skills/ and README.md).
+test('non-module change (skill/doc/README/config) → conservative full run', () => {
+  for (const f of ['skills/autopilot/SKILL.md', 'docs/integration/future-grep-policy.md', 'README.md', 'agents/dispatchers.json', 'hooks/hooks.json', 'commands/autopilot.md']) {
+    const d = run([f]);
+    assert.equal(d.mode, 'all', `${f} must force full run (not coverage-attributable)`);
+    assert.match(d.reason, /global-trigger|non-module/);
+  }
+});
+
+// Codex review fix #2: an untrusted entry (last mapping run failed → possibly partial deps) must
+// always run until a passing run refreshes it, even when nothing it knows about changed.
+test('untrusted map entry (ok:false) is always selected', () => {
+  const map = baseMap({ 'tests/a.test.js': { hash: 'ha', deps: ['lib/x.js'], ok: false } });
+  const d = selectTests({ changed: ['lib/y.js'], map, allTestFiles: ALL, hashOf: hashOfMatching, nodeVersion: NODE });
+  assert.equal(d.mode, 'selected');
+  assert.ok(d.tests.includes('tests/a.test.js'), 'untrusted test a must run regardless of change set');
+});
+
+// Codex review fix #3: a deleted test's stale map entry must not count as coverage — a change to a
+// file only that dead entry covered must fall back to full, not be silently treated as covered.
+test('stale deleted-test entry does not mask the uncovered-source fallback', () => {
+  const map = baseMap({ 'tests/deleted.test.js': { hash: 'hd', deps: ['lib/only-stale.js'], ok: true } });
+  // allTestFiles does NOT include tests/deleted.test.js (it was removed)
+  const d = selectTests({ changed: ['lib/only-stale.js'], map, allTestFiles: ALL, hashOf: hashOfMatching, nodeVersion: NODE });
+  assert.equal(d.mode, 'all');
+  assert.match(d.reason, /not covered by trusted map/);
+});
+
+// A file covered only by an untrusted (failed) entry is NOT trusted-covered → full run.
+test('source covered only by an untrusted entry → conservative full run', () => {
+  const map = baseMap({ 'tests/a.test.js': { hash: 'ha', deps: ['lib/x.js'], ok: false } });
+  const d = selectTests({ changed: ['lib/x.js'], map, allTestFiles: ALL, hashOf: hashOfMatching, nodeVersion: NODE });
+  assert.equal(d.mode, 'all');
+  assert.match(d.reason, /not covered by trusted map/);
 });
 
 test('isGlobalTrigger / isTrackedSource classifiers', () => {

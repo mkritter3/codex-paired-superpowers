@@ -82,41 +82,58 @@ export function isTrackedSource(relPath) {
  * @returns {{mode:'all'|'selected'|'none', tests:string[], reason:string}}
  */
 export function selectTests({ changed, map, allTestFiles, hashOf, nodeVersion }) {
+  const full = (reason) => ({ mode: 'all', tests: allTestFiles, reason, fullyCovered: false, uncovered: [] });
+
   if (!map || !map.tests || map.version !== MAP_VERSION) {
-    return { mode: 'all', tests: allTestFiles, reason: 'no-map (run `tia build` to enable selection)' };
+    return full('no-map (run `tia build` to enable selection)');
   }
   if (map.node && nodeVersion && map.node !== nodeVersion) {
-    return { mode: 'all', tests: allTestFiles, reason: `node-version-changed (${map.node} → ${nodeVersion})` };
+    return full(`node-version-changed (${map.node} → ${nodeVersion})`);
   }
+
+  // Named shared inputs get a clear reason; everything else non-module is caught below.
   const globalHit = changed.find((c) => isGlobalTrigger(c));
-  if (globalHit) {
-    return { mode: 'all', tests: allTestFiles, reason: `global-trigger changed: ${globalHit}` };
+  if (globalHit) return full(`global-trigger changed: ${globalHit}`);
+
+  // CARDINAL RULE: coverage only attributes *module* dependencies (lib/, bin/). Any changed file that
+  // is neither a test file nor a tracked module source — skills/, docs/, hooks/, agents/, commands/,
+  // *.json config, vendored node_modules/, etc. — is read/consumed in ways V8 coverage cannot record,
+  // so a change there could affect any test. Force a full run rather than risk under-selection.
+  const unselectable = changed.filter((c) => !isTestFile(c) && !isTrackedSource(c));
+  if (unselectable.length > 0) {
+    return full(`non-module change(s) not coverage-attributable: ${unselectable.join(', ')}`);
   }
 
+  const allSet = new Set(allTestFiles);
   const changedSet = new Set(changed);
-  const impacted = new Set();
 
-  // 1) test files that are new or whose content changed
-  for (const t of allTestFiles) {
-    if (!map.tests[t]) { impacted.add(t); continue; }            // new test → run it (refreshes map)
-    if (changedSet.has(t) && map.tests[t].hash !== hashOf(t)) impacted.add(t);
-  }
-  // 2) test files whose recorded deps intersect the change set
-  for (const [t, entry] of Object.entries(map.tests)) {
-    if (!allTestFiles.includes(t)) continue;                     // deleted/renamed test, skip
-    if ((entry.deps || []).some((d) => changedSet.has(d))) impacted.add(t);
-  }
-  // 3) ROBUSTNESS: a changed tracked-source file that NO test is known to cover might be
-  //    dynamically loaded (or newly added) — fall back to full rather than risk skipping.
+  // Trusted coverage = entries for CURRENT test files whose last mapping run PASSED. Deleted/renamed
+  // test entries (not in allSet) and untrusted entries (ok === false) do NOT contribute coverage —
+  // otherwise a stale or incomplete entry could mask the uncovered-source fallback.
   const coveredDeps = new Set();
-  for (const entry of Object.values(map.tests)) for (const d of entry.deps || []) coveredDeps.add(d);
-  const uncovered = changed.filter((c) => isTrackedSource(c) && !coveredDeps.has(c) && !isTestFile(c));
+  for (const [t, entry] of Object.entries(map.tests)) {
+    if (!allSet.has(t) || entry.ok === false) continue;
+    for (const d of entry.deps || []) coveredDeps.add(d);
+  }
+  const uncovered = changed.filter((c) => isTrackedSource(c) && !coveredDeps.has(c));
   if (uncovered.length > 0) {
-    return { mode: 'all', tests: allTestFiles, reason: `changed source not covered by map: ${uncovered.join(', ')}` };
+    return full(`changed source not covered by trusted map: ${uncovered.join(', ')}`);
   }
 
-  if (impacted.size === 0) return { mode: 'none', tests: [], reason: 'no affected tests' };
-  return { mode: 'selected', tests: [...impacted].sort(), reason: `${impacted.size} affected test file(s)` };
+  const impacted = new Set();
+  for (const t of allTestFiles) {
+    const e = map.tests[t];
+    if (!e) { impacted.add(t); continue; }                       // new test → run (refreshes map)
+    if (e.ok === false) { impacted.add(t); continue; }           // untrusted last run → always run
+    if (changedSet.has(t) && e.hash !== hashOf(t)) impacted.add(t); // test content changed
+  }
+  for (const [t, entry] of Object.entries(map.tests)) {
+    if (!allSet.has(t)) continue;                                // skip deleted/renamed tests
+    if ((entry.deps || []).some((d) => changedSet.has(d))) impacted.add(t); // dep intersects change
+  }
+
+  if (impacted.size === 0) return { mode: 'none', tests: [], reason: 'no affected tests', fullyCovered: true, uncovered: [] };
+  return { mode: 'selected', tests: [...impacted].sort(), reason: `${impacted.size} affected test file(s)`, fullyCovered: true, uncovered: [] };
 }
 
 // ── git + fs (impure) ──────────────────────────────────────────────────────
@@ -128,13 +145,15 @@ function git(args) {
 export function getChangedFiles(base) {
   const out = new Set();
   const add = (s) => s.split('\n').map((x) => x.trim()).filter(Boolean).forEach((f) => out.add(f));
+  // --no-renames so a rename surfaces as delete(old)+add(new) — both paths enter the change set.
+  // Without it, `git diff` reports only the new path and a test mapped to the old path could be skipped.
   try {
     if (base) {
       // commits since <base> (merge-base ... HEAD) plus working tree
-      add(git(['diff', '--name-only', `${base}...HEAD`]));
+      add(git(['diff', '--name-only', '--no-renames', `${base}...HEAD`]));
     }
-    add(git(['diff', '--name-only', 'HEAD']));               // staged + unstaged vs HEAD
-    add(git(['ls-files', '--others', '--exclude-standard'])); // untracked
+    add(git(['diff', '--name-only', '--no-renames', 'HEAD'])); // staged + unstaged vs HEAD
+    add(git(['ls-files', '--others', '--exclude-standard']));  // untracked
   } catch (e) {
     // If git fails (e.g. bad base ref), be conservative: signal "unknown" via a global trigger path.
     return { files: ['package.json'], gitError: e.message };
@@ -166,6 +185,7 @@ function saveMap(map) {
 // it loaded (including those loaded by spawned child `node` processes that inherit NODE_V8_COVERAGE).
 function depsForTest(testFile) {
   const covDir = mkdtempSync(join(tmpdir(), 'tia-cov-'));
+  let ok = true;
   try {
     try {
       execFileSync('node', ['--test', testFile], {
@@ -175,7 +195,11 @@ function depsForTest(testFile) {
         timeout: 180_000,
       });
     } catch {
-      // A failing/flaky test still produces coverage; we record its deps regardless of pass/fail.
+      // A failing/flaky test may produce only PARTIAL coverage (it can error before loading some of
+      // its real deps). We still collect what we got, but mark the entry untrusted (ok:false) so
+      // selectTests always re-runs it and never counts its deps as "covered". A later passing run
+      // refreshes it to ok:true.
+      ok = false;
     }
     const deps = new Set();
     for (const f of readdirSync(covDir)) {
@@ -192,7 +216,7 @@ function depsForTest(testFile) {
         if (isTrackedSource(rel)) deps.add(rel); // loaded a tracked source file → dependency
       }
     }
-    return [...deps].sort();
+    return { deps: [...deps].sort(), ok };
   } finally {
     rmSync(covDir, { recursive: true, force: true });
   }
@@ -207,7 +231,8 @@ function buildMapFor(testFiles, existing) {
   for (const t of testFiles) {
     i += 1;
     process.stderr.write(`[tia] mapping (${i}/${testFiles.length}) ${t}\n`);
-    map.tests[t] = { hash: fileHash(join(REPO_ROOT, t)), deps: depsForTest(t) };
+    const { deps, ok } = depsForTest(t);
+    map.tests[t] = { hash: fileHash(join(REPO_ROOT, t)), deps, ok };
   }
   map.builtAt = new Date().toISOString();
   saveMap(map);
