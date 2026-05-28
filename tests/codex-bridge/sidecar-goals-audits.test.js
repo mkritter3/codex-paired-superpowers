@@ -304,9 +304,31 @@ test('hasExecutedVerificationFor: a TIA verification that ran a selected subset 
   const { dir, spec } = makeSpec();
   appendAuditLog(spec, {
     ...VALID_AUDIT, phase: 'review-slice:s1', round: 2, side: 'codex',
-    commands: [{ cmd: 'tia run', summary: 'ran 4 tests', kind: 'verification', exit_code: 0, selection: { mode: 'selected', ran: 4, fullyCovered: true } }],
+    commands: [{ cmd: 'tia run', summary: 'ran 4 tests', kind: 'verification', exit_code: 0, selection: { mode: 'selected', ran: 4, fullyCovered: true, uncovered: [] } }],
   });
   assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 2, side: 'codex' }), true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('selected selection without an explicit empty uncovered array does NOT count', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 7, side: 'codex',
+    commands: [{ cmd: 'tia run', summary: 'x', kind: 'verification', exit_code: 0, selection: { mode: 'selected', ran: 4, fullyCovered: true } }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 7, side: 'codex' }), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('contradictory selection.exit vs exit_code is rejected at append', () => {
+  const { dir, spec } = makeSpec();
+  assert.throws(
+    () => appendAuditLog(spec, {
+      ...VALID_AUDIT, phase: 'implement:s1', round: 2, side: 'codex',
+      commands: [{ cmd: 'tia run', summary: 'x', kind: 'verification', exit_code: 0, selection: { mode: 'all', ran: 5, exit: 1 } }],
+    }),
+    /contradicts exit_code/,
+  );
   rmSync(dir, { recursive: true, force: true });
 });
 
