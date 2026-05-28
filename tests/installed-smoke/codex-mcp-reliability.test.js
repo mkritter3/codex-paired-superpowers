@@ -96,8 +96,29 @@ class McpStdioClient {
     this.notify('notifications/initialized', {});
   }
   sessionModel() {
-    const n = this.notifications.find((m) => m.params && m.params.model && /session/i.test(m.method || ''));
-    return n ? n.params.model : undefined;
+    // Codex emits async events as method "codex/event" with the payload under params.msg.
+    // session_configured carries the resolved model.
+    const n = this.notifications.find(
+      (m) => m.method === 'codex/event' && m.params && m.params.msg && m.params.msg.type === 'session_configured',
+    );
+    return n ? n.params.msg.model : undefined;
+  }
+  // Codex returns the thread id in the tool result's structuredContent; notifications also carry it.
+  threadIdFrom(result) {
+    if (result && result.structuredContent && result.structuredContent.threadId) return result.structuredContent.threadId;
+    const n = this.notifications.find(
+      (m) => m.params && ((m.params._meta && m.params._meta.threadId) || (m.params.msg && m.params.msg.thread_id)),
+    );
+    if (n) return (n.params._meta && n.params._meta.threadId) || (n.params.msg && n.params.msg.thread_id);
+    return undefined;
+  }
+  // Did Codex surface an approval/permission/elicitation request? All async events use the
+  // "codex/event" method, so the signal is in params.msg.type, not the JSON-RPC method name.
+  approvalRequested() {
+    return this.notifications.some(
+      (m) => m.method === 'codex/event' && m.params && m.params.msg &&
+        /approval|permission|elicit|exec_approval|apply_patch_approval/i.test(m.params.msg.type || ''),
+    );
   }
   close() { try { this.proc.kill('SIGKILL'); } catch { /* noop */ } }
 }
@@ -144,9 +165,8 @@ test('Goal 1: review sandbox writes outside the workspace + runs a project comma
         },
       }, 110_000);
       const text = JSON.stringify(res);
-      // danger-full-access + approval_policy=never means no approval-request notification should appear.
-      const approvalAsked = client.notifications.some((n) => /approval|elicit|permission/i.test(n.method || ''));
-      assert.equal(approvalAsked, false, 'no approval prompt should be raised under danger-full-access/never');
+      // danger-full-access + approval_policy=never means no approval-request event should appear.
+      assert.equal(client.approvalRequested(), false, 'no approval prompt should be raised under danger-full-access/never');
       assert.match(text, /v\d+\./, 'node --version output should be present in the tool result');
     } finally { client.close(); }
   },
@@ -161,9 +181,7 @@ test('Goal 3: a thread id from a restarted server yields "Session not found for 
     try {
       await c1.initialize();
       const r = await c1.request('tools/call', { name: 'codex', arguments: { prompt: 'Say ok.' } }, 80_000);
-      // Codex returns the thread id in the result/notifications; capture from notifications.
-      const tn = c1.notifications.find((n) => n.params && (n.params.threadId || n.params.thread_id));
-      threadId = tn ? (tn.params.threadId || tn.params.thread_id) : (r && (r.threadId || r.thread_id));
+      threadId = c1.threadIdFrom(r); // result.structuredContent.threadId (or notification _meta/msg)
       assert.ok(threadId, 'expected a threadId from the first codex call');
     } finally { c1.close(); }
 
