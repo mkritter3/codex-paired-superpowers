@@ -274,29 +274,54 @@ function main() {
   }
 
   const allTestFiles = listAllTestFiles(false);
+  const map = loadMap();
   const { files: changed, gitError } = getChangedFiles(flags.base);
   if (gitError) process.stderr.write(`[tia] git diff failed (${gitError}); falling back to full run\n`);
   const decision = selectTests({
-    changed, map: loadMap(), allTestFiles,
+    changed, map, allTestFiles,
     hashOf: (rel) => fileHash(join(REPO_ROOT, rel)),
     nodeVersion: process.version,
   });
 
+  // Audit-grade selection record (Codex review (A)): everything needed to judge whether the chosen
+  // subset was sufficient. `selection` is the compact object meant to be embedded in a v0.13.0
+  // verification audit command; the rest is provenance for review.
+  const ranCount = decision.mode === 'all' ? allTestFiles.length : decision.tests.length;
+  const record = {
+    selection: { mode: decision.mode, ran: ranCount, fullyCovered: decision.fullyCovered, uncovered: decision.uncovered || [] },
+    reason: decision.reason,
+    base: flags.base || 'HEAD (working tree)',
+    changed,
+    allTestCount: allTestFiles.length,
+    tests: decision.tests,
+    mapVersion: map ? map.version : null,
+    mapBuiltAt: map ? map.builtAt : null,
+    node: process.version,
+    gitError,
+  };
+
   if (cmd === 'affected') {
-    process.stdout.write(JSON.stringify({ ...decision, changed }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(record, null, 2) + '\n');
     return 0;
   }
 
   if (cmd === 'run') {
     process.stderr.write(`[tia] ${decision.mode}: ${decision.reason}\n`);
-    if (decision.mode === 'none') return 0;
-    if (decision.mode === 'all') return runTests(allTestFiles);
-    // selected: run the subset, then refresh those entries so the map stays warm
-    const status = runTests(decision.tests);
-    try { buildMapFor(decision.tests, loadMap()); } catch (e) {
-      process.stderr.write(`[tia] map refresh skipped: ${e.message}\n`);
+    let exit = 0;
+    if (decision.mode === 'all') exit = runTests(allTestFiles);
+    else if (decision.mode === 'selected') {
+      exit = runTests(decision.tests);
+      try { buildMapFor(decision.tests, loadMap()); } catch (e) {
+        process.stderr.write(`[tia] map refresh skipped: ${e.message}\n`);
+      }
     }
-    return status;
+    // Persist the run record (with exit) so the agent can attach `selection` to the verification audit.
+    record.exit = exit;
+    record.ranAt = new Date().toISOString();
+    try { mkdirSync(CACHE_DIR, { recursive: true }); writeFileSync(join(CACHE_DIR, 'last-run.json'), JSON.stringify(record, null, 2)); } catch { /* best-effort */ }
+    process.stderr.write(`[tia] verification selection → ${JSON.stringify(record.selection)} (exit ${exit})\n`);
+    process.stderr.write('[tia] (embed the "selection" object in your v0.13.0 verification audit command)\n');
+    return exit;
   }
 
   process.stderr.write('usage: tia.mjs <build|affected|run> [--base <ref>] [--all]\n');

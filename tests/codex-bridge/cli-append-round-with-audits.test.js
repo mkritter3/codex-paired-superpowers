@@ -92,6 +92,22 @@ test('appendRoundWithAudits requires executed verification for a code-bearing SH
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('appendRoundWithAudits rejects a code-bearing SHIP backed only by a zero-test TIA run', async () => {
+  const { dir, spec } = makeSpec();
+  await assert.rejects(
+    () => appendRoundWithAudits(spec, {
+      audits: [{
+        phase: 'review-slice:s1', round: 1, side: 'claude',
+        commands: [{ cmd: 'tia run', summary: 'ran 0', kind: 'verification', exit_code: 0, selection: { mode: 'none', ran: 0 } }],
+      }],
+      round: { phase: 'review-slice:s1', round: 1, claude: 'SHIP', codex: 'REVISE: x' },
+    }),
+    /verification/i,
+  );
+  assert.deepEqual((loadSidecar(spec).rounds ?? []), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('appendRoundWithAudits allows REVISE rounds with no audits', async () => {
   const { dir, spec } = makeSpec();
   await appendRoundWithAudits(spec, {

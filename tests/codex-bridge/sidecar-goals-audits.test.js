@@ -288,6 +288,40 @@ test('hasExecutedVerificationFor: only verification + exit_code 0 counts', () =>
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ── v0.13.0 audited TIA selection — a verification that ran ZERO tests is not evidence ──
+
+test('hasExecutedVerificationFor: a TIA verification with selection.mode "none" does NOT count', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 1, side: 'codex',
+    commands: [{ cmd: 'tia run', summary: 'ran 0 tests', kind: 'verification', exit_code: 0, selection: { mode: 'none', ran: 0, fullyCovered: true } }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 1, side: 'codex' }), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('hasExecutedVerificationFor: a TIA verification that ran a selected subset DOES count', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'review-slice:s1', round: 2, side: 'codex',
+    commands: [{ cmd: 'tia run', summary: 'ran 4 tests', kind: 'verification', exit_code: 0, selection: { mode: 'selected', ran: 4, fullyCovered: true } }],
+  });
+  assert.equal(hasExecutedVerificationFor(spec, { phase: 'review-slice:s1', round: 2, side: 'codex' }), true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('normalizeAuditEntry persists a selection object on a verification command', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, {
+    ...VALID_AUDIT, phase: 'implement:s1', round: 1, side: 'claude',
+    commands: [{ cmd: 'npm run test:affected', summary: 'ok', kind: 'verification', exit_code: 0, selection: { mode: 'all', ran: 110, fullyCovered: false } }],
+  });
+  const a = listAudits(spec, { phase: 'implement:s1', round: 1, side: 'claude' })[0];
+  assert.equal(a.commands[0].selection.mode, 'all');
+  assert.equal(a.commands[0].selection.ran, 110);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('legacy audit (no kind) lists + satisfies hasAuditFor but never hasExecutedVerificationFor', () => {
   const { dir, spec } = makeSpec();
   const sc = loadSidecar(spec);

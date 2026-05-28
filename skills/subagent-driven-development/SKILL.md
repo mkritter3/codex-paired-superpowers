@@ -67,7 +67,22 @@ printf '%s' '{
 ```
 
 If the slice's tests were not executed (or did not pass with `exit_code: 0`), the gate refuses the
-SHIP — run the tests and record the result, or emit REVISE. On double-SHIP, mark slice shipped:
+SHIP — run the tests and record the result, or emit REVISE.
+
+**Faster verification via test-impact analysis (optional).** Instead of the full suite you MAY run
+`npm run test:affected` (coverage-based selection — see `scripts/tia.mjs`). It prints a `selection`
+record; embed it on the verification command so the audit shows *what was run and why it was enough*:
+
+```json
+{"cmd": "npm run test:affected", "summary": "ran 6 of 110 affected tests, exit 0",
+ "kind": "verification", "exit_code": 0,
+ "selection": {"mode": "selected", "ran": 6, "fullyCovered": true, "uncovered": []}}
+```
+
+The gate does NOT accept a `selection` that ran zero tests (`"mode": "none"` or `"ran": 0`) as
+verification evidence — running the affected set when it was empty is not a real test of code-bearing
+work. When in doubt (or `mode` is `all`), the full run is always valid. Codex reviewing the SHIP can
+challenge whether a `selected` subset was sufficient. On double-SHIP, mark slice shipped:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-set-slice \
