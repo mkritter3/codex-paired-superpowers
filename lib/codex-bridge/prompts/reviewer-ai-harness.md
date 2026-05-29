@@ -1,6 +1,6 @@
 ---
 version: v0.9.0-r1
-role_id: expert-ai-harness
+role_id: reviewer-ai-harness
 ---
 # Expert: AI Harness
 

@@ -1,37 +1,37 @@
 {
-  "generated_at": "2026-05-28T20:40:03.723Z",
+  "generated_at": "2026-05-29T17:34:22.312Z",
   "prompts": {
-    "expert-ai-harness": {
-      "path": "lib/codex-bridge/prompts/expert-ai-harness.md",
-      "sha256": "28cac8df2e667fe53ba2bc5cf90a7f5a9522522ca718bf5ab0a6e4e9e3832d0f"
-    },
-    "expert-architecture": {
-      "path": "lib/codex-bridge/prompts/expert-architecture.md",
-      "sha256": "9cbcf7e49fabc9fd1a75b38b37a918455883bbe3f35395a6371c5173a09aba6e"
-    },
-    "expert-backend": {
-      "path": "lib/codex-bridge/prompts/expert-backend.md",
-      "sha256": "7acbd5e513d2960f4cebdeb15960c2051a42b7a9cab7a9ea30ec6e25cddb9861"
-    },
-    "expert-security": {
-      "path": "lib/codex-bridge/prompts/expert-security.md",
-      "sha256": "003ef9b066fcaea5cf36512237b04f92c958ab25ad24a8e5e5baea75ebcfbba2"
-    },
     "expert-template": {
       "path": "lib/codex-bridge/prompts/expert-template.md",
       "sha256": "20499d9cdcaf422ecf610f37477e39cfe6bcba5a158ca5cef29b0d841029e638"
     },
-    "expert-test": {
-      "path": "lib/codex-bridge/prompts/expert-test.md",
-      "sha256": "991d1e037539f73c9b888cdd223d3f2103ba5c041ae5c64a0d6fa3359c224bb8"
+    "reviewer-ai-harness": {
+      "path": "lib/codex-bridge/prompts/reviewer-ai-harness.md",
+      "sha256": "b1057b0072cd989ea0ab1aa6e25a5fd0c0288780873be162c08876ce681feb7a"
     },
-    "expert-ui": {
-      "path": "lib/codex-bridge/prompts/expert-ui.md",
-      "sha256": "8d118f0e993ea27a545b52dbcbce77094022dc293add96608725e0836da88a3c"
+    "reviewer-architecture": {
+      "path": "lib/codex-bridge/prompts/reviewer-architecture.md",
+      "sha256": "8b43b9ec5be71a1fbd96037ff14169fa72d928e4e42d02229973e20f46f6291d"
     },
-    "expert-ux": {
-      "path": "lib/codex-bridge/prompts/expert-ux.md",
-      "sha256": "9b4db3e478916d1959786284195646dd3412e39cc624ef5029671831ce6408f9"
+    "reviewer-backend": {
+      "path": "lib/codex-bridge/prompts/reviewer-backend.md",
+      "sha256": "c9279871532a6abce36213696960234052554cb0690eccb902ed7b294671e19e"
+    },
+    "reviewer-security": {
+      "path": "lib/codex-bridge/prompts/reviewer-security.md",
+      "sha256": "8677fe1dfc5122d6a1d0896c75bb6a6bce00963cb109d3c0dd018a68386282f4"
+    },
+    "reviewer-test": {
+      "path": "lib/codex-bridge/prompts/reviewer-test.md",
+      "sha256": "31b3db19ff171529fd69804b3620ea7e45b67cbff783d8c81ee3f169b1aafbcc"
+    },
+    "reviewer-ui": {
+      "path": "lib/codex-bridge/prompts/reviewer-ui.md",
+      "sha256": "92aeb834f0decb67b6b730bbc026f41629505dd11b21107106819ef4a676e5bb"
+    },
+    "reviewer-ux": {
+      "path": "lib/codex-bridge/prompts/reviewer-ux.md",
+      "sha256": "801e52702088114eb1307a5a693387bc1df14c650822bb0ee50ae911883c25d4"
     },
     "paired-reviewer": {
       "path": "lib/codex-bridge/prompts/system-rubric.md",
