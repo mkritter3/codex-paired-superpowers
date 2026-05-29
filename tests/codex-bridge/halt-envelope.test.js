@@ -160,6 +160,19 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'codex-cli-blocked',
     'codex-needs-context',
     'expert-blocker',
+    // slice-4 hybrid halt reasons (sorted)
+    'hybrid-codex-backend-failed',
+    'hybrid-codex-background-lost',
+    'hybrid-codex-background-timeout',
+    'hybrid-contract-not-consumed',
+    'hybrid-contract-not-published',
+    'hybrid-contract-realization-mismatch',
+    'hybrid-contract-stale-at-completion',
+    'hybrid-dispatcher-invalid',
+    'hybrid-owner-files-overlap',
+    'hybrid-owner-files-unclaimed',
+    'hybrid-ownership-malformed',
+    'hybrid-preflight-dirty',
     'implementer-cap-exceeded',
     'implementer-claimed-file-violation',
     'implementer-claimed-files-missing',
@@ -272,6 +285,74 @@ test('slice-9: post-merge-review-config-invalid is terminal with non-empty resum
   const env = wrapAsHaltEnvelope('post-merge-review-config-invalid');
   assert.equal(env.terminal, true);
   assert.ok(typeof env.resume_hint === 'string' && env.resume_hint.length > 0);
+  assert.equal(isTerminalHalt(env), true);
+});
+
+// ── Slice 4 (hybrid dev mode): hybrid halt reasons ──────────────────────────
+//
+// Spec authority: docs/specs/2026-05-28-hybrid-dev-mode-design.md §6, §7, §10.
+// Every hybrid-* halt reason is TERMINAL with a non-empty actionable resume_hint.
+// hybrid-contract-changed is deliberately NOT registered — it is an in-progress
+// sidecar/mailbox resync state (spec §10), never a halt; the only terminal
+// contract-change outcome is hybrid-contract-stale-at-completion.
+
+const HYBRID_TERMINAL_REASONS = [
+  'hybrid-ownership-malformed',
+  'hybrid-owner-files-overlap',
+  'hybrid-owner-files-unclaimed',
+  'hybrid-preflight-dirty',
+  'hybrid-dispatcher-invalid',
+  'hybrid-contract-not-published',
+  'hybrid-contract-not-consumed',
+  'hybrid-contract-stale-at-completion',
+  'hybrid-codex-backend-failed',
+  'hybrid-codex-background-lost',
+  'hybrid-codex-background-timeout',
+  'hybrid-contract-realization-mismatch',
+];
+
+test('slice-4: every hybrid halt reason is registered and classified terminal', () => {
+  for (const reason of HYBRID_TERMINAL_REASONS) {
+    assert.ok(HALT_MAP.has(reason), `${reason} must be registered in HALT_MAP`);
+    const env = wrapAsHaltEnvelope(reason);
+    assert.equal(env.halt, reason);
+    assert.equal(env.terminal, true, `${reason} must be terminal`);
+    assert.equal(isTerminalHalt(env), true, `${reason} must NOT be retry-eligible`);
+  }
+});
+
+test('slice-4: every hybrid halt reason carries a non-empty, non-generic resume_hint', () => {
+  for (const reason of HYBRID_TERMINAL_REASONS) {
+    const entry = HALT_MAP.get(reason);
+    assert.ok(entry, `${reason} must be registered`);
+    assert.ok(
+      typeof entry.resume_hint === 'string' && entry.resume_hint.length > 0,
+      `${reason} must have a non-empty resume_hint`
+    );
+    // It must be a real registered hint, not the fail-closed "operator triage" fallback.
+    assert.ok(
+      !entry.resume_hint.includes('operator triage'),
+      `${reason} must have a specific resume_hint, not the unknown-reason fallback`
+    );
+  }
+});
+
+test('slice-4: hybrid-contract-changed is NOT registered as a halt reason', () => {
+  // Spec §10: hybrid-contract-changed is in-progress resync state, never a halt.
+  // It must be absent from the registry so autopilot can never treat a normal
+  // mid-run contract update as a (retryable or terminal) halt.
+  assert.equal(HALT_MAP.has('hybrid-contract-changed'), false);
+  // If a caller ever wraps it, fail-closed handling makes it a generic unknown
+  // terminal halt (operator triage) — never a transient retry.
+  const env = wrapAsHaltEnvelope('hybrid-contract-changed');
+  assert.equal(env.terminal, true);
+  assert.equal(isTerminalHalt(env), true);
+  assert.ok(env.resume_hint.includes('operator triage'));
+});
+
+test('slice-4: unknown hybrid-* reasons still fail closed to terminal', () => {
+  const env = wrapAsHaltEnvelope('hybrid-some-future-reason');
+  assert.equal(env.terminal, true);
   assert.equal(isTerminalHalt(env), true);
 });
 
@@ -567,8 +648,8 @@ test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transie
   // NOTE: This test was the original slice-1 count snapshot.
   // After slice-7 adds 11 more codes, slice-8 adds 10 more, slice-9 adds 7 more, total = 65.
   // The original 37 = 16 legacy terminal + 3 transient + 18 v0.10.0 new.
-  // Slice 7 adds 11 more, slice 8 adds 10 more, slice-9 adds 7 more, so total = 65.
-  assert.equal(HALT_MAP.size, 65, 'HALT_MAP must have exactly 65 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 + 7 slice-9 additions)');
+  // Slice 7 adds 11 more, slice 8 adds 10 more, slice-9 adds 7 more, slice-4 hybrid adds 12 more, so total = 77.
+  assert.equal(HALT_MAP.size, 77, 'HALT_MAP must have exactly 77 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 + 7 slice-9 + 12 hybrid-slice-4 additions)');
 });
 
 // ── v0.10.0 slice-7: 11 new halt codes (8 merge + 3 retroactive worktree) ───
@@ -652,8 +733,8 @@ test('slice-8: wrapAsHaltEnvelope returns correct shape for all 10 new merger co
   }
 });
 
-test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new + 7 slice-9 = 65)', () => {
-  assert.equal(HALT_MAP.size, 65, 'HALT_MAP must have exactly 65 entries after slice-8 + slice-9 additions');
+test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new + 7 slice-9 + 12 hybrid = 77)', () => {
+  assert.equal(HALT_MAP.size, 77, 'HALT_MAP must have exactly 77 entries after slice-8 + slice-9 + hybrid-slice-4 additions');
 });
 
 test('slice-7: all 11 new halt codes are present in HALT_MAP', () => {
@@ -694,8 +775,8 @@ test('slice-7: isTerminalHalt returns true for all 11 new halt codes', () => {
 
 test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48, but slice-8 adds 10 more = 58, slice-9 adds 7 more = 65)', () => {
   // Snapshot the total count so additions are always explicit.
-  // After slice-8: 48 + 10 = 58. After slice-9: 58 + 7 = 65.
-  assert.equal(HALT_MAP.size, 65, 'HALT_MAP must have exactly 65 entries after slice-7 + slice-8 + slice-9 additions');
+  // After slice-8: 48 + 10 = 58. After slice-9: 58 + 7 = 65. After hybrid slice-4: 65 + 12 = 77.
+  assert.equal(HALT_MAP.size, 77, 'HALT_MAP must have exactly 77 entries after slice-7 + slice-8 + slice-9 + hybrid-slice-4 additions');
 });
 
 test('slice-7: snapshot terminal vs transient classification includes new codes', () => {
@@ -730,6 +811,19 @@ test('slice-7: snapshot terminal vs transient classification includes new codes'
     'codex-cli-blocked',
     'codex-needs-context',
     'expert-blocker',
+    // slice-4 hybrid halt reasons (sorted)
+    'hybrid-codex-backend-failed',
+    'hybrid-codex-background-lost',
+    'hybrid-codex-background-timeout',
+    'hybrid-contract-not-consumed',
+    'hybrid-contract-not-published',
+    'hybrid-contract-realization-mismatch',
+    'hybrid-contract-stale-at-completion',
+    'hybrid-dispatcher-invalid',
+    'hybrid-owner-files-overlap',
+    'hybrid-owner-files-unclaimed',
+    'hybrid-ownership-malformed',
+    'hybrid-preflight-dirty',
     'implementer-cap-exceeded',
     'implementer-claimed-file-violation',
     'implementer-claimed-files-missing',
