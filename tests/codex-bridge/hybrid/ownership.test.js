@@ -139,6 +139,30 @@ test('validateHybridOwnership: optional owner (required:false) → hybrid-owners
   );
 });
 
+// ── Case 2b: adapter/owner pairing (spec §5/§6) — Codex slice-review finding ─────
+
+test('validateHybridOwnership: swapped owner adapters → hybrid-ownership-malformed', () => {
+  // claude-ui declaring the backend adapter, and codex-backend declaring the UI adapter.
+  const uiWrong = { ...UI_MEMBER, adapter: 'codex-background-bash' };
+  const backendWrong = { ...BACKEND_MEMBER, adapter: 'claude-ui' };
+  const slice = buildSlice({ sliceFiles: HAPPY_FILES, members: [uiWrong, backendWrong] });
+  const implementers = parseHybridOwners(PLAN, slice);
+  assert.throws(
+    () => validateHybridOwnership({ sliceFiles: HAPPY_FILES, implementers }),
+    (e) => e.code === 'hybrid-ownership-malformed'
+  );
+});
+
+test('validateHybridOwnership: unsupported adapter for an owner → hybrid-ownership-malformed', () => {
+  const uiBadAdapter = { ...UI_MEMBER, adapter: 'codex-cli' };
+  const slice = buildSlice({ sliceFiles: HAPPY_FILES, members: [uiBadAdapter, BACKEND_MEMBER] });
+  const implementers = parseHybridOwners(PLAN, slice);
+  assert.throws(
+    () => validateHybridOwnership({ sliceFiles: HAPPY_FILES, implementers }),
+    (e) => e.code === 'hybrid-ownership-malformed'
+  );
+});
+
 // ── Case 3: slice/owner file mismatch → hybrid-owner-files-unclaimed ────────────
 
 test('validateHybridOwnership: slice **Files:** entry claimed by neither owner → hybrid-owner-files-unclaimed', () => {
