@@ -365,6 +365,57 @@ test('slice-2 case 2: two-disjoint routes to deps.dispatchImplementers with thre
   assert.equal(arg.implementers.length, 2);
 });
 
+test('slice-2 case 2b: two-disjoint passes RUNTIME-shaped implementers (memberId + non-empty claimedFiles), not parser shape', async () => {
+  // Regression for the Codex slice-review round-1 finding: runSplit used to pass
+  // parser-shaped entries ({member_id, files}) straight to dispatchImplementers,
+  // which reads {memberId, claimedFiles} — keying the run by undefined and
+  // dispatching with empty claimed files. This test fails on the old code.
+  const sliceSection = slice(`**Split:** two-disjoint\n\n${twoImplementers()}`);
+  const dispatchImplementers = spy({ success: [] });
+  await runSplit({
+    driver: 'autopilot',
+    planPath: 'p.md',
+    specPath: 's.md',
+    workItem: workItemFor(sliceSection),
+    repoRoot: '/repo',
+    deps: { dispatchImplementers },
+  });
+  const { implementers } = dispatchImplementers.calls[0][0];
+  for (const impl of implementers) {
+    assert.ok(impl.memberId, 'memberId must be defined and non-empty');
+    assert.ok(Array.isArray(impl.claimedFiles) && impl.claimedFiles.length > 0, 'claimedFiles must be non-empty');
+    // No parser-shaped keys leak through.
+    assert.equal('member_id' in impl, false, 'parser key member_id must not leak');
+    assert.equal('files' in impl, false, 'parser key files must not leak');
+  }
+  assert.equal(implementers[0].memberId, 'expert-implementer@claude:kimi-k2.6:cloud#0');
+  assert.deepEqual(implementers[0].claimedFiles, ['lib/a.js']);
+  assert.equal(implementers[1].memberId, 'expert-implementer@codex:gpt-5.5#0');
+  assert.deepEqual(implementers[1].claimedFiles, ['lib/b.js']);
+});
+
+test('slice-2 case 2c: per-member worktrees map threads worktreePath/branchName into runtime shape', async () => {
+  const sliceSection = slice(`**Split:** two-disjoint\n\n${twoImplementers()}`);
+  const dispatchImplementers = spy({ success: [] });
+  const worktrees = {
+    'expert-implementer@claude:kimi-k2.6:cloud#0': { worktreePath: '/wt/a', branchName: 'slice/a' },
+    'expert-implementer@codex:gpt-5.5#0': { worktreePath: '/wt/b', branchName: 'slice/b' },
+  };
+  await runSplit({
+    driver: 'autopilot',
+    planPath: 'p.md',
+    specPath: 's.md',
+    workItem: workItemFor(sliceSection, { worktrees }),
+    repoRoot: '/repo',
+    deps: { dispatchImplementers },
+  });
+  const { implementers } = dispatchImplementers.calls[0][0];
+  assert.equal(implementers[0].worktreePath, '/wt/a');
+  assert.equal(implementers[0].branchName, 'slice/a');
+  assert.equal(implementers[1].worktreePath, '/wt/b');
+  assert.equal(implementers[1].branchName, 'slice/b');
+});
+
 test('slice-2 case 3: hybrid-ui-backend routes to deps.runHybridSlice once', async () => {
   const body = `**Split:** hybrid-ui-backend\n\n${filesBlock(['ui/app.js', 'lib/api.js'])}\n\n${hybridOwners()}`;
   const sliceSection = slice(body);
