@@ -99,5 +99,19 @@ rules 3-4).
 
 ## Driver: autopilot
 
-(Wired in a later step.) Normalizes the plan's split directive and runs the plan unattended,
-delegating to `autopilot`.
+Delegate to the `codex-paired-superpowers:autopilot` skill unchanged. The only thing this driver adds
+is reading the canonical `**Split:**` directive at autopilot's existing Phase B decision point — the
+point where Phase B already chooses among single, implementer-experts, and hybrid — via
+`normalizeSplit`.
+
+- For a `single` work item, the router returns the `dispatch-single` directive (the Plan 1 split
+  router), and autopilot runs its **existing single-implementer phase** on that directive. Autopilot —
+  not the router — still owns that dispatch. Do not bypass the router and call the single-implementer
+  phase directly; always go through `dispatch-single` so the split decision stays in one place.
+- For `two-disjoint`, autopilot's existing implementer-experts branch runs (`dispatchImplementers`).
+- For `hybrid-ui-backend`, autopilot's existing hybrid branch runs
+  (`runHybridSlice({ mode: 'autopilot', ... })`).
+
+Everything else stays owned by `autopilot`: resume discovery, sidecar state, the halt envelope,
+outer-mode behavior, and self-continuation across sessions. This driver introduces no new resume path,
+no new flags, and no new prompts.

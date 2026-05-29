@@ -650,3 +650,37 @@ test('execution interactive dirty-checkout halt is surfaced in plain English (no
     'dirty-checkout message must tell the user to re-run after committing/stashing',
   );
 });
+
+// ── Plan 2 Slice 5 — autopilot split-normalization decision point ──
+
+test('execution autopilot driver delegates to autopilot, only adds split normalization at Phase B', () => {
+  const section = sectionByHeader(readSkillFile('execution'), '## Driver: autopilot');
+  assert.match(section, /delegat/i, 'autopilot section must state it delegates to the autopilot flow');
+  assert.match(section, /\bautopilot\b/, 'autopilot section must name the autopilot skill/flow');
+  assert.match(section, /normaliz/i, 'autopilot section must state the only addition is split normalization');
+  assert.match(section, /Phase B/, 'autopilot section must locate normalization at the Phase B decision point');
+  // single → dispatch-single → autopilot's existing single-implementer phase must be explicit so a
+  // maintainer cannot bypass the Plan 1 router (plan-review round-1 caution).
+  assert.match(section, /dispatch-single/, 'autopilot section must make single → dispatch-single explicit');
+  // Residual-risk guard: the delegating front door must not redefine resume discovery or add flags.
+  assert.ok(
+    !/Enumerate sidecars/i.test(section),
+    'autopilot section must not redefine resume discovery (owned by the autopilot skill)',
+  );
+  const flags = section.match(/(?<![A-Za-z0-9])--[A-Za-z][\w-]*/g) || [];
+  assert.deepEqual(flags, [], `autopilot section must not introduce CLI flags; found: ${flags.join(', ')}`);
+});
+
+test('autopilot Phase B reads **Split:** via normalizeSplit and preserves legacy inference', () => {
+  const section = sectionByHeader(readSkillFile('autopilot'), '## Phase B implementer-experts branch');
+  assert.match(section, /normalizeSplit/, 'Phase B must name normalizeSplit as the canonical split reader');
+  assert.match(section, /\*\*Split:\*\*/, 'Phase B must name the canonical **Split:** directive');
+  // The three legacy routings must be re-stated as still valid (Goal 5 compatibility).
+  assert.match(section, /\bsingle\b/, 'Phase B must keep: no directive → single');
+  assert.match(section, /dispatchImplementers/, 'Phase B must keep: **Implementers:** → dispatchImplementers');
+  assert.match(
+    section,
+    /\*\*Orchestration:\*\* hybrid|runHybridSlice/,
+    'Phase B must keep: **Orchestration:** hybrid → runHybridSlice',
+  );
+});

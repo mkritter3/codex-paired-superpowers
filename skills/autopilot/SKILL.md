@@ -1740,6 +1740,18 @@ transient one. This is optional polish; the default model is one self-resuming c
 
 ## Phase B implementer-experts branch
 
+**Canonical split reader.** The Phase B decision point reads the canonical `**Split:**` directive via
+`normalizeSplit` (Plan 1's `lib/codex-bridge/execution/split-dispatcher.js`). When a `**Split:**`
+directive is absent, the existing legacy inference is unchanged and still authoritative:
+
+- no `**Split:**` and no implementer/orchestration block → **single** (the single-implementer path);
+- legacy `**Implementers:**` block (including N>2 sets under the existing parser's cost and cap rules)
+  → **two-disjoint** via `dispatchImplementers`;
+- legacy `**Orchestration:** hybrid` → **hybrid** via `runHybridSlice` (autopilot mode).
+
+Reading `**Split:**` does not change any of these routing targets or the N>2 cap behavior; it only
+makes the directive canonical when present.
+
 If the slice's plan frontmatter contains an `**Implementers:**` block (parsed by
 slice-1's `parseImplementersBlock`), dispatch via `dispatchImplementers` from
 `lib/codex-bridge/implementer/orchestrator.js` instead of the single-implementer
@@ -1756,6 +1768,10 @@ After all implementers complete:
 - `runPostMergeReview` (slice 9) runs the final post-merge-review paired review
 
 ## Phase B hybrid branch (v0.14.0)
+
+As noted in the implementer-experts branch, the canonical split reader is `**Split:**` via
+`normalizeSplit`; absent a `**Split:**` directive, a legacy `**Orchestration:** hybrid` block still
+routes here unchanged.
 
 Some slices declare `**Orchestration:** hybrid` with exactly two owners — a `claude-ui` half and a `codex-backend` half (see writing-plans for the syntax). These do **not** go through the symmetric `dispatchImplementers` path above. That path treats every member the same way; a hybrid slice is asymmetric — one half builds the UI and the other builds the backend and publishes a contract the UI depends on. So when a slice carries `**Orchestration:** hybrid`, route it to `runHybridSlice` from `lib/codex-bridge/hybrid/runner.js` instead, in autopilot mode.
 
