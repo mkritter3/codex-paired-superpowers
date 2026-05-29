@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { runTurnWithDeps } from '../../lib/codex-bridge/expert-turn.js';
-import { initSidecar, loadSidecar, appendExpertTurn, storeResponse, computeInputsHash } from '../../lib/codex-bridge/sidecar.js';
+import { initSidecar, loadSidecar, appendExpertTurn, storeResponse, computeInputsHash, getTeammatesBlock, sidecarPathFor } from '../../lib/codex-bridge/sidecar.js';
 import { replayTurn } from '../../lib/codex-bridge/replay.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -144,10 +144,13 @@ test('replay-from-sidecar: inputs_hash matches after real runTurnWithDeps dispat
     }
   }
 
-  // Fall back to expert_teammates.turns (canonical write path per sidecar.js
-  // `appendExpertTurn`; it's a flat array, not a per-role object).
-  if (!recordedTurn && sidecar.expert_teammates && Array.isArray(sidecar.expert_teammates.turns)) {
-    for (const t of sidecar.expert_teammates.turns) {
+  // Fall back to the teammates block (canonical write path per sidecar.js
+  // `appendReviewerTurn`; it's a flat array, not a per-role object). Dual-read
+  // via getTeammatesBlock so both reviewer_teammates (new) and legacy
+  // expert_teammates sidecars resolve.
+  const teammates = getTeammatesBlock(sidecar);
+  if (!recordedTurn && teammates && Array.isArray(teammates.turns)) {
+    for (const t of teammates.turns) {
       if ((t.requested_role || t.role_id || t.expert_id) === 'expert-architecture') {
         recordedTurn = t;
         break;
@@ -414,6 +417,90 @@ test('replay-from-sidecar: inputs_hash mismatch detected when role prompt is tam
   assert.ok(
     result.warnings.some((w) => w.includes('role_prompt_hash mismatch')),
     `Expected 'role_prompt_hash mismatch' warning; got: ${JSON.stringify(result.warnings)}`,
+  );
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── Test 5: legacy sidecar (only expert_teammates) → migrate-on-load + replay ─
+
+test('replay-from-sidecar: old expert_teammates-only sidecar reconstructs reviewer turns and emits one migration record', () => {
+  const dir = makeTmp();
+  const { body: rolePromptBody } = makeIdentityFile(dir);
+  const specSnippet = 'Legacy migration spec snippet.';
+  const rolePromptHash = sha256Hex(rolePromptBody);
+
+  // Bootstrap a normal sidecar, then rewrite it to the LEGACY shape: a turn
+  // stored under expert_teammates with NO reviewer_teammates block. This is
+  // exactly what a pre-migration sidecar on disk looks like.
+  const specPath = makeSpec(dir);
+  const stored = storeResponse(dir, 'legacy-response', {});
+  const legacyTurn = {
+    requested_role: 'expert-architecture',
+    role_prompt_version: 'v0.9.0-r1',
+    role_prompt_hash: `sha256:${rolePromptHash}`,
+    spec_path: specPath,
+    spec_snippet_hash: `sha256:${sha256Hex(specSnippet)}`,
+    mailbox_message_ids: [],
+    phase: 'spec-review',
+    task: 'Legacy replay test.',
+    adapter: 'codex',
+    inputs_hash: computeInputsHash({
+      rolePromptHash,
+      specSnippetHash: sha256Hex(specSnippet),
+      mailboxMessageIds: [],
+      phase: 'spec-review',
+      task: 'Legacy replay test.',
+      roleId: 'expert-architecture',
+    }),
+    ...stored,
+  };
+
+  const sidecarPath = sidecarPathFor(specPath);
+  const raw = JSON.parse(readFileSync(sidecarPath, 'utf8'));
+  delete raw.reviewer_teammates;
+  raw.expert_teammates = { selected: [], turns: [legacyTurn], fan_out_rationales: [] };
+  writeFileSync(sidecarPath, JSON.stringify(raw, null, 2));
+
+  // loadSidecar runs migrateIfNeeded → should populate reviewer_teammates and
+  // append exactly one migration record.
+  const migrated = loadSidecar(specPath);
+
+  assert.ok(migrated.reviewer_teammates, 'reviewer_teammates must be populated on load');
+  assert.deepEqual(
+    migrated.reviewer_teammates.turns,
+    [legacyTurn],
+    'reviewer_teammates.turns must be a deep copy of the legacy expert_teammates.turns',
+  );
+
+  const teammateMigrations = (migrated.migrations || []).filter(
+    (m) => m.from_schema === 'expert_teammates' && m.to_schema === 'reviewer_teammates',
+  );
+  assert.equal(
+    teammateMigrations.length,
+    1,
+    `Expected exactly one expert_teammates→reviewer_teammates migration record; got: ${JSON.stringify(migrated.migrations)}`,
+  );
+
+  // getTeammatesBlock resolves the migrated block; replay reconstructs the turn.
+  const teammates = getTeammatesBlock(migrated);
+  const recordedTurn = teammates.turns.find(
+    (t) => (t.requested_role || t.role_id || t.expert_id) === 'expert-architecture',
+  );
+  assert.ok(recordedTurn, 'Reviewer turn must be reachable via getTeammatesBlock after migration');
+
+  const deps = {
+    loadRolePrompt: () => ({ content: rolePromptBody, hash: rolePromptHash, version: 'v0.9.0-r1' }),
+    readMailboxMessages: () => [],
+    readSpecSnippet: () => specSnippet,
+    repoRoot: dir,
+    adapter: 'codex',
+  };
+  const replayResult = replayTurn(recordedTurn, deps);
+  assert.equal(
+    replayResult.inputsHashMatches,
+    true,
+    `Replay of migrated reviewer turn must match inputs_hash; warnings: ${JSON.stringify(replayResult.warnings)}`,
   );
 
   rmSync(dir, { recursive: true, force: true });

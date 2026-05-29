@@ -168,7 +168,7 @@ test('real mailbox round-trip: sender DM lands in recipient inbox; receiver read
     // ── Verify sidecar: receiver turn shows mailbox_message_ids[] referencing
     // the actual DM id from the sender's enqueued message.
     const sc = loadSidecar(specPath);
-    const turns = sc.expert_teammates.turns;
+    const turns = sc.reviewer_teammates.turns;
     assert.equal(turns.length, 2, `expected 2 turns; got ${turns.length}`);
     const senderTurn = turns.find((t) => t.expert_id === 'expert-architecture');
     const receiverTurn = turns.find((t) => t.expert_id === 'expert-ui');

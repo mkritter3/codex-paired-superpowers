@@ -145,7 +145,7 @@ test('brainstorming: single-mode runTurnWithDeps records spec-review phase + ada
   assert.equal(result.ok, true);
   assert.equal(result.result.status, 'SHIP');
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   assert.equal(turn.phase, 'spec-review');
   assert.equal(turn.expert_id, role);
   assert.equal(turn.adapter, 'claude-task');
@@ -181,8 +181,8 @@ test('writing-plans TDD-mandatory: dispatchPanel for expert-test with [codex, cl
   assert.equal(result.member_results.length, 2);
   // Sidecar must have one turn per panelist with panel_id propagated.
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns.length, 2);
-  for (const turn of sc.expert_teammates.turns) {
+  assert.equal(sc.reviewer_teammates.turns.length, 2);
+  for (const turn of sc.reviewer_teammates.turns) {
     assert.equal(turn.expert_id, role);
     assert.equal(turn.panel_id, result.panel_id);
     assert.equal(turn.panel_size, 2);
@@ -279,7 +279,7 @@ test('test-driven-development: panel-quorum-unavailable halts BEFORE dispatch wh
   // expert turns ever appended, `expert_teammates` may be absent on the
   // sidecar — that's also a valid "no turns" state.
   const sc = loadSidecar(spec);
-  const turns = (sc.expert_teammates && sc.expert_teammates.turns) || [];
+  const turns = (sc.reviewer_teammates && sc.reviewer_teammates.turns) || [];
   assert.equal(turns.length, 0,
     'panel-quorum-unavailable must halt before any dispatch');
   rmSync(dir, { recursive: true, force: true });
@@ -311,7 +311,7 @@ test('test-driven-development --single override: runTurnWithDeps single dispatch
   );
   assert.equal(result.ok, true);
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   assert.equal(turn.phase, 'tdd-review');
   // No panel metadata when running single.
   assert.equal(turn.panel_id ?? null, null);
@@ -365,7 +365,7 @@ test('subagent-driven-development: composeExperts(phase=post-implementation-revi
   );
   assert.equal(result.ok, true);
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   assert.equal(turn.phase, 'post-implementation-review');
   assert.equal(turn.slice_id, 'slice-3');
   assert.equal(turn.expert_id, expert.id);
@@ -408,7 +408,7 @@ test('subagent-driven-development: blocking finding from expert is preserved in 
   assert.equal(result.result.blocking_findings[0].id, 'arch-bf-1');
   // Sidecar turn must record the verdict so autopilot/sub can halt on it.
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   assert.equal(turn.verdict, 'REVISE');
   rmSync(dir, { recursive: true, force: true });
 });
@@ -513,7 +513,7 @@ test('autopilot: paired-reviewer release-gate panel records panel metadata per m
   assert.equal(result.outcome, 'panel-SHIP');
   const sc = loadSidecar(spec);
   // Each panelist gets its own turn with panel_member_index distinct.
-  const indices = sc.expert_teammates.turns
+  const indices = sc.reviewer_teammates.turns
     .filter((t) => t.expert_id === role)
     .map((t) => t.panel_member_index);
   assert.equal(indices.length, 2);

@@ -36,6 +36,7 @@ const {
   appendExpertSelection,
   appendRound,
   loadSidecar,
+  getTeammatesBlock,
 } = await import(join(REPO, 'lib/codex-bridge/sidecar.js'));
 const { composeExperts } = await import(join(REPO, 'lib/codex-bridge/role-composer.js'));
 const { resolveAdapter } = await import(join(REPO, 'lib/codex-bridge/role-routing/resolver.js'));
@@ -205,7 +206,7 @@ async function main() {
   // ── 4. Dispatch turn 2: receiver consumes the DM ──────────────────────────
   // Read the message ID the sender's turn enqueued from the sidecar.
   const sc = loadSidecar(specPath);
-  const senderTurn = sc.expert_teammates.turns[0];
+  const senderTurn = getTeammatesBlock(sc).turns[0];
   const enqueued = senderTurn.peer_messages_enqueued || [];
   const dmToReceiver = enqueued.find((e) => e.to === receiver.id);
   if (!dmToReceiver) {
@@ -250,7 +251,7 @@ async function main() {
 
   // ── 6. Report the sidecar path for the gate runner ────────────────────────
   const finalSc = loadSidecar(specPath);
-  const turns = finalSc.expert_teammates.turns;
+  const turns = getTeammatesBlock(finalSc).turns;
   console.log(`harness: wrote ${turns.length} turns to sidecar.`);
 
   // Find the sidecar JSON path on disk (the sidecar layout lives under

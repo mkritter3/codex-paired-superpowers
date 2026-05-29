@@ -168,7 +168,7 @@ test('dispatchPanel: N=2 both SHIP → panel-SHIP; parsed_result.expert_id match
 
   // Sidecar persistence (via runTurnWithDeps, NOT the dispatcher).
   const sc = loadSidecar(spec);
-  const turns = sc.expert_teammates.turns;
+  const turns = sc.reviewer_teammates.turns;
   assert.equal(turns.length, 2);
   for (const turn of turns) {
     // Turn's expert_id is the ROLE (because runTurnWithDeps uses identity.id).
@@ -398,7 +398,7 @@ test('dispatchPanel: sidecar turns persisted by runTurnWithDeps include slice-5b
   await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
 
   const sc = loadSidecar(spec);
-  const turns = sc.expert_teammates.turns;
+  const turns = sc.reviewer_teammates.turns;
   assert.equal(turns.length, 2);
   for (const turn of turns) {
     assert.ok(typeof turn.response_hash === 'string' && turn.response_hash.startsWith('sha256:'),
@@ -461,9 +461,9 @@ test('dispatchPanel: sidecar persistence preserves each panelist findings verbat
   const result = await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
   assert.equal(result.outcome, 'panel-REVISE');
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns.length, 2);
+  assert.equal(sc.reviewer_teammates.turns.length, 2);
   // Find turns by panel_member_index since parallel dispatch order isn't fixed.
-  const byIdx = new Map(sc.expert_teammates.turns.map((t) => [t.panel_member_index, t]));
+  const byIdx = new Map(sc.reviewer_teammates.turns.map((t) => [t.panel_member_index, t]));
   assert.deepEqual(byIdx.get(0).blocking_findings, aBlocking);
   assert.deepEqual(byIdx.get(0).nonblocking_findings, aNonblocking);
   assert.deepEqual(byIdx.get(1).blocking_findings, bBlocking);
@@ -840,7 +840,7 @@ test('dispatchPanel: adapter set by dispatch_fn (binding adapter into the reques
   ]);
   await dispatchPanel(ROLE, baseRequest(spec, dir), dispatchFns);
   const sc = loadSidecar(spec);
-  const byIdx = new Map(sc.expert_teammates.turns.map((t) => [t.panel_member_index, t]));
+  const byIdx = new Map(sc.reviewer_teammates.turns.map((t) => [t.panel_member_index, t]));
   assert.equal(byIdx.get(0).adapter, 'claude-task');
   assert.equal(byIdx.get(1).adapter, 'cli-harness:codex');
   rmSync(dir, { recursive: true, force: true });

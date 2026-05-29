@@ -40,13 +40,13 @@ test('appendExpertSelection: valid input round-trips into expert_teammates.selec
     selectionReason: 'UI signals from spec',
   });
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.selected.length, 1);
-  assert.equal(sc.expert_teammates.selected[0].id, 'expert-ui');
-  assert.equal(sc.expert_teammates.selected[0].role, 'ui');
-  assert.equal(sc.expert_teammates.selected[0].source, 'builtin');
-  assert.equal(sc.expert_teammates.selected[0].selected_at_phase, 'spec-review');
-  assert.equal(sc.expert_teammates.selected[0].selection_reason, 'UI signals from spec');
-  assert.equal(sc.expert_teammates.selected[0].status, 'active');
+  assert.equal(sc.reviewer_teammates.selected.length, 1);
+  assert.equal(sc.reviewer_teammates.selected[0].id, 'expert-ui');
+  assert.equal(sc.reviewer_teammates.selected[0].role, 'ui');
+  assert.equal(sc.reviewer_teammates.selected[0].source, 'builtin');
+  assert.equal(sc.reviewer_teammates.selected[0].selected_at_phase, 'spec-review');
+  assert.equal(sc.reviewer_teammates.selected[0].selection_reason, 'UI signals from spec');
+  assert.equal(sc.reviewer_teammates.selected[0].status, 'active');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -78,7 +78,7 @@ test('appendExpertSelection: accepts source "repo-override"', () => {
   const { dir, spec } = makeSpec();
   appendExpertSelection(spec, { id: 'expert-ui', role: 'ui', source: 'repo-override', phase: 'spec-review', selectionReason: 'r' });
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.selected[0].source, 'repo-override');
+  assert.equal(sc.reviewer_teammates.selected[0].source, 'repo-override');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -88,8 +88,8 @@ test('appendExpertSelection: back-compat — loading sidecar without expert_team
   assert.equal('expert_teammates' in before, false);
   appendExpertSelection(spec, { id: 'expert-ui', role: 'ui', source: 'builtin', phase: 'spec-review', selectionReason: 'r' });
   const after = loadSidecar(spec);
-  assert.ok(after.expert_teammates);
-  assert.ok(Array.isArray(after.expert_teammates.selected));
+  assert.ok(after.reviewer_teammates);
+  assert.ok(Array.isArray(after.reviewer_teammates.selected));
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -113,11 +113,11 @@ test('appendExpertTurn: valid turn round-trips', () => {
   const { dir, spec } = makeSpec();
   appendExpertTurn(spec, validTurn());
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns.length, 1);
-  assert.equal(sc.expert_teammates.turns[0].expert_id, 'expert-ui');
-  assert.equal(sc.expert_teammates.turns[0].verdict, 'SHIP');
-  assert.equal(sc.expert_teammates.turns[0].failure_reason, null);
-  assert.equal(sc.expert_teammates.turns[0].slice_id, null);
+  assert.equal(sc.reviewer_teammates.turns.length, 1);
+  assert.equal(sc.reviewer_teammates.turns[0].expert_id, 'expert-ui');
+  assert.equal(sc.reviewer_teammates.turns[0].verdict, 'SHIP');
+  assert.equal(sc.reviewer_teammates.turns[0].failure_reason, null);
+  assert.equal(sc.reviewer_teammates.turns[0].slice_id, null);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -149,8 +149,8 @@ test('appendExpertTurn: accepts verdict REVISE', () => {
   const { dir, spec } = makeSpec();
   appendExpertTurn(spec, validTurn({ verdict: 'REVISE', failure_reason: 'unparseable-output' }));
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns[0].verdict, 'REVISE');
-  assert.equal(sc.expert_teammates.turns[0].failure_reason, 'unparseable-output');
+  assert.equal(sc.reviewer_teammates.turns[0].verdict, 'REVISE');
+  assert.equal(sc.reviewer_teammates.turns[0].failure_reason, 'unparseable-output');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -165,7 +165,7 @@ test('appendExpertTurn: slice_id "slice-3" round-trips', () => {
   const { dir, spec } = makeSpec();
   appendExpertTurn(spec, validTurn({ slice_id: 'slice-3' }));
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns[0].slice_id, 'slice-3');
+  assert.equal(sc.reviewer_teammates.turns[0].slice_id, 'slice-3');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -173,7 +173,7 @@ test('appendExpertTurn: slice_id absent persists as null', () => {
   const { dir, spec } = makeSpec();
   appendExpertTurn(spec, validTurn()); // no slice_id key
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns[0].slice_id, null);
+  assert.equal(sc.reviewer_teammates.turns[0].slice_id, null);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -190,8 +190,8 @@ test('appendExpertTurn: back-compat — first append creates expert_teammates fi
   assert.equal('expert_teammates' in before, false);
   appendExpertTurn(spec, validTurn());
   const after = loadSidecar(spec);
-  assert.ok(after.expert_teammates);
-  assert.equal(after.expert_teammates.turns.length, 1);
+  assert.ok(after.reviewer_teammates);
+  assert.equal(after.reviewer_teammates.turns.length, 1);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -202,7 +202,7 @@ test('updateExpertStatus: valid transition mutates correctly', () => {
   appendExpertSelection(spec, { id: 'expert-ui', role: 'ui', source: 'builtin', phase: 'spec-review', selectionReason: 'r' });
   updateExpertStatus(spec, 'expert-ui', 'done');
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.selected[0].status, 'done');
+  assert.equal(sc.reviewer_teammates.selected[0].status, 'done');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -226,7 +226,7 @@ test('updateExpertStatus: accepts all valid statuses', () => {
   for (const s of ['active', 'waiting', 'done', 'failed', 'archived']) {
     updateExpertStatus(spec, 'expert-ui', s);
     const sc = loadSidecar(spec);
-    assert.equal(sc.expert_teammates.selected[0].status, s);
+    assert.equal(sc.reviewer_teammates.selected[0].status, s);
   }
   rmSync(dir, { recursive: true, force: true });
 });
@@ -247,9 +247,9 @@ test('appendFanOutRationale: accepts selected_count >= 6', () => {
   const { dir, spec } = makeSpec();
   appendFanOutRationale(spec, { phase: 'spec-review', selected_count: 6, rationale: 'broad context' });
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.fan_out_rationales.length, 1);
-  assert.equal(sc.expert_teammates.fan_out_rationales[0].selected_count, 6);
-  assert.equal(sc.expert_teammates.fan_out_rationales[0].rationale, 'broad context');
+  assert.equal(sc.reviewer_teammates.fan_out_rationales.length, 1);
+  assert.equal(sc.reviewer_teammates.fan_out_rationales[0].selected_count, 6);
+  assert.equal(sc.reviewer_teammates.fan_out_rationales[0].rationale, 'broad context');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -265,8 +265,8 @@ test('appendFanOutRationale: back-compat — creates expert_teammates on first c
   const { dir, spec } = makeSpec();
   appendFanOutRationale(spec, { phase: 'spec-review', selected_count: 6, rationale: 'wide' });
   const sc = loadSidecar(spec);
-  assert.ok(sc.expert_teammates);
-  assert.ok(Array.isArray(sc.expert_teammates.fan_out_rationales));
+  assert.ok(sc.reviewer_teammates);
+  assert.ok(Array.isArray(sc.reviewer_teammates.fan_out_rationales));
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -625,7 +625,7 @@ test('appendExpertTurn v0.8.1: accepts peer_messages_enqueued + peer_messages_fa
     ],
   }));
   const sc = loadSidecar(spec);
-  const t = sc.expert_teammates.turns[0];
+  const t = sc.reviewer_teammates.turns[0];
   assert.equal(t.peer_messages_enqueued.length, 2);
   assert.equal(t.peer_messages_enqueued[0].to, 'expert-ux');
   assert.equal(t.peer_messages_enqueued[0].message_id, 'msg-1');
@@ -639,7 +639,7 @@ test('appendExpertTurn v0.8.1: peer fields absent (back-compat with pre-0.8.1)',
   const { dir, spec } = makeSpec();
   appendExpertTurn(spec, validTurn()); // no peer_messages_* fields
   const sc = loadSidecar(spec);
-  const t = sc.expert_teammates.turns[0];
+  const t = sc.reviewer_teammates.turns[0];
   assert.equal('peer_messages_enqueued' in t, false);
   assert.equal('peer_messages_failed' in t, false);
   rmSync(dir, { recursive: true, force: true });
@@ -689,7 +689,7 @@ test('appendExpertTurn v0.8.1.1: accepts count-cap-exceeded entry with overflow 
     ],
   }));
   const sc = loadSidecar(spec);
-  const failed = sc.expert_teammates.turns[0].peer_messages_failed[0];
+  const failed = sc.reviewer_teammates.turns[0].peer_messages_failed[0];
   assert.equal(failed.overflow_count, 97);
   assert.equal(failed.max_allowed, 3);
   assert.deepEqual(failed.sample_to, ['expert-ux', 'expert-architecture', 'expert-backend']);
@@ -750,7 +750,7 @@ test('appendExpertTurn v0.8.1.1: regular per-item failure (no overflow fields) s
     ],
   }));
   const sc = loadSidecar(spec);
-  const failed = sc.expert_teammates.turns[0].peer_messages_failed[0];
+  const failed = sc.reviewer_teammates.turns[0].peer_messages_failed[0];
   assert.equal(failed.reason, 'invalid-recipient');
   assert.equal('overflow_count' in failed, false);
   rmSync(dir, { recursive: true, force: true });
@@ -782,7 +782,7 @@ test('appendExpertTurn → loadSidecar: inline response preserved + readResponse
     response_hash: responseHash,
   }));
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   assert.equal(turn.response_text_inline, responseText);
   assert.equal(turn.response_hash, responseHash);
   assert.equal(readResponse(dir, turn), responseText);
@@ -800,7 +800,7 @@ test('appendExpertTurn → loadSidecar: overflow response_ref preserved + readRe
     response_hash: stored.response_hash,
   }));
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   assert.equal(turn.response_ref, stored.response_ref);
   assert.equal(turn.response_hash, stored.response_hash);
   assert.equal(turn.response_text_inline, undefined);
@@ -848,7 +848,7 @@ test('appendExpertTurn → loadSidecar → replayTurn: full replay reconstructio
   }));
 
   const sc = loadSidecar(spec);
-  const turn = sc.expert_teammates.turns[0];
+  const turn = sc.reviewer_teammates.turns[0];
   // All replay fields preserved.
   assert.equal(turn.role_prompt_hash, `sha256:${rolePromptHashHex}`);
   assert.equal(turn.role_prompt_version, 'v0.9.0-r1');
@@ -974,7 +974,7 @@ test('appendExpertTurn: validates mailbox_message_ids when present (array of non
   // valid round-trip
   appendExpertTurn(spec, validTurn({ mailbox_message_ids: ['m-a', 'm-b'] }));
   const sc = loadSidecar(spec);
-  assert.deepEqual(sc.expert_teammates.turns[0].mailbox_message_ids, ['m-a', 'm-b']);
+  assert.deepEqual(sc.reviewer_teammates.turns[0].mailbox_message_ids, ['m-a', 'm-b']);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -990,7 +990,7 @@ test('appendExpertTurn: persists full resolution-audit block when present', () =
     unavailable_candidates: [],
     fallback_reason: null,
   }));
-  const t = loadSidecar(spec).expert_teammates.turns[0];
+  const t = loadSidecar(spec).reviewer_teammates.turns[0];
   assert.equal(t.resolved_cli, 'codex');
   assert.equal(t.resolution_source, 'recommendation');
   assert.equal(t.preference_index, 0);
@@ -1013,7 +1013,7 @@ test('appendExpertTurn: preference_index accepts -1 (override path)', () => {
     unavailable_candidates: [],
     fallback_reason: null,
   }));
-  const t = loadSidecar(spec).expert_teammates.turns[0];
+  const t = loadSidecar(spec).reviewer_teammates.turns[0];
   assert.equal(t.preference_index, -1);
   assert.equal(t.resolution_source, 'override');
   rmSync(dir, { recursive: true, force: true });
@@ -1029,7 +1029,7 @@ test('appendExpertTurn: fallback_reason as non-empty string round-trips', () => 
     unavailable_candidates: ['codex'],
     fallback_reason: 'Preferred codex unavailable; fell back to claude.',
   }));
-  const t = loadSidecar(spec).expert_teammates.turns[0];
+  const t = loadSidecar(spec).reviewer_teammates.turns[0];
   assert.equal(t.fallback_reason, 'Preferred codex unavailable; fell back to claude.');
   assert.deepEqual(t.unavailable_candidates, ['codex']);
   rmSync(dir, { recursive: true, force: true });
@@ -1069,7 +1069,7 @@ test('appendExpertTurn: rejects fallback_reason as empty string', () => {
 test('appendExpertTurn: resolution-audit fields are optional (omit → not persisted)', () => {
   const { dir, spec } = makeSpec();
   appendExpertTurn(spec, validTurn());  // no resolution fields
-  const t = loadSidecar(spec).expert_teammates.turns[0];
+  const t = loadSidecar(spec).reviewer_teammates.turns[0];
   assert.ok(!('resolved_cli' in t));
   assert.ok(!('resolution_source' in t));
   assert.ok(!('preference_index' in t));

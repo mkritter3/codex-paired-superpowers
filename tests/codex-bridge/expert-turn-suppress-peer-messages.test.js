@@ -227,7 +227,7 @@ test('appendExpertTurn validator accepts panel_peer_messages_suppressed with val
     })
   );
   const sc = loadSidecar(spec);
-  const last = sc.expert_teammates.turns[sc.expert_teammates.turns.length - 1];
+  const last = sc.reviewer_teammates.turns[sc.reviewer_teammates.turns.length - 1];
   assert.equal(last.panel_peer_messages_suppressed.length, 2);
   assert.equal(last.panel_peer_messages_suppressed[1].to, null);
 

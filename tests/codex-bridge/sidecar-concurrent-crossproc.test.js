@@ -125,8 +125,8 @@ test('cross-process: N node subprocesses appending to one sidecar — JSON stays
     const onDisk = sidecarPathFor(spec);
     const raw = readFileSync(onDisk, 'utf8');
     const reparsed = JSON.parse(raw); // would throw if corrupt
-    assert.ok(reparsed.expert_teammates, 'expert_teammates block must exist');
-    const turns = reparsed.expert_teammates.turns;
+    assert.ok(reparsed.reviewer_teammates, 'expert_teammates block must exist');
+    const turns = reparsed.reviewer_teammates.turns;
     assert.ok(Array.isArray(turns), 'turns must be an array');
 
     // ── v0.9.1 strict contract: ALL N appends must survive.

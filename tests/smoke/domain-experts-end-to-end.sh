@@ -104,7 +104,7 @@ const stillUnread = await readUnreadMessages(REPO_ROOT, identity.id);
 if (stillUnread.length !== 0) { console.error('FAIL: unread after runTurn=' + stillUnread.length); process.exit(1); }
 
 const sc = loadSidecar(SPEC_PATH);
-const turns = sc.expert_teammates?.turns || [];
+const turns = (sc.reviewer_teammates ?? sc.expert_teammates)?.turns || [];
 if (turns.length !== 1) { console.error('FAIL: turns=' + turns.length); process.exit(1); }
 const turn = turns[0];
 if (turn.expert_id !== 'expert-ui') { console.error('FAIL: expert_id=' + turn.expert_id); process.exit(1); }

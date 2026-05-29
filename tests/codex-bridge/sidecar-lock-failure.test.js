@@ -52,8 +52,8 @@ test('appendExpertTurnLocked: reclaims stale sidecar lock and appends turn', asy
     });
 
     const sidecar = loadSidecar(spec);
-    assert.equal(sidecar.expert_teammates.turns.length, 1);
-    assert.equal(sidecar.expert_teammates.turns[0].expert_id, 'expert-test');
+    assert.equal(sidecar.reviewer_teammates.turns.length, 1);
+    assert.equal(sidecar.reviewer_teammates.turns[0].expert_id, 'expert-test');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

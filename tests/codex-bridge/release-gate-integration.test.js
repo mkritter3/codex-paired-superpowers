@@ -77,11 +77,11 @@ test('populate-gate-sidecar.mjs runs to completion and emits a parseable sidecar
   const sidecar = JSON.parse(readFileSync(sidecarPath, 'utf8'));
 
   // expert_teammates.turns[] holds the two harness turns
-  assert.ok(sidecar.expert_teammates, 'sidecar missing expert_teammates block');
+  assert.ok(sidecar.reviewer_teammates, 'sidecar missing expert_teammates block');
   assert.equal(
-    sidecar.expert_teammates.turns.length,
+    sidecar.reviewer_teammates.turns.length,
     2,
-    `harness should write exactly 2 turns; got ${sidecar.expert_teammates.turns.length}`
+    `harness should write exactly 2 turns; got ${sidecar.reviewer_teammates.turns.length}`
   );
 
   // Each turn has the full resolution-audit block per spec § 7 Tier 1.
@@ -90,15 +90,15 @@ test('populate-gate-sidecar.mjs runs to completion and emits a parseable sidecar
     'resolved_cli', 'resolution_source', 'preference_index',
     'preference_ladder', 'unavailable_candidates', 'fallback_reason',
   ];
-  for (let i = 0; i < sidecar.expert_teammates.turns.length; i++) {
-    const t = sidecar.expert_teammates.turns[i];
+  for (let i = 0; i < sidecar.reviewer_teammates.turns.length; i++) {
+    const t = sidecar.reviewer_teammates.turns[i];
     for (const f of REQ) {
       assert.ok(f in t, `turn[${i}] missing required audit field "${f}"`);
     }
   }
 
   // The two turns must have DIFFERENT adapters (cross-CLI guarantee).
-  const adapters = new Set(sidecar.expert_teammates.turns.map((t) => t.adapter));
+  const adapters = new Set(sidecar.reviewer_teammates.turns.map((t) => t.adapter));
   assert.equal(
     adapters.size,
     2,

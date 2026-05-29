@@ -67,17 +67,17 @@ test('appendExpertTurn: 20 parallel appends all land exactly once, JSON stays va
 
   // Reload + verify: every turn must be present exactly once, JSON valid.
   const sc = loadSidecar(spec);
-  assert.ok(sc.expert_teammates, 'sidecar missing expert_teammates block');
+  assert.ok(sc.reviewer_teammates, 'sidecar missing expert_teammates block');
   assert.equal(
-    sc.expert_teammates.turns.length,
+    sc.reviewer_teammates.turns.length,
     N,
-    `expected ${N} turns; got ${sc.expert_teammates.turns.length} (lost writes indicate lock failure)`
+    `expected ${N} turns; got ${sc.reviewer_teammates.turns.length} (lost writes indicate lock failure)`
   );
 
   // Each turn's mailbox_message_ids_injected[0] is a unique sentinel; the
   // set must match {msg-0, msg-1, ..., msg-(N-1)} exactly.
   const sentinels = new Set(
-    sc.expert_teammates.turns.map((t) => t.mailbox_message_ids_injected[0])
+    sc.reviewer_teammates.turns.map((t) => t.mailbox_message_ids_injected[0])
   );
   assert.equal(sentinels.size, N, 'duplicate or missing turn sentinels');
   for (let i = 0; i < N; i++) {
@@ -89,7 +89,7 @@ test('appendExpertTurn: 20 parallel appends all land exactly once, JSON stays va
   const onDisk = sidecarPathFor(spec);
   const raw = readFileSync(onDisk, 'utf8');
   const reparsed = JSON.parse(raw); // would throw if corrupt
-  assert.equal(reparsed.expert_teammates.turns.length, N);
+  assert.equal(reparsed.reviewer_teammates.turns.length, N);
 
   rmSync(dir, { recursive: true, force: true });
 });
@@ -118,9 +118,9 @@ test('appendExpertTurn: parallel appends from different experts all serialize', 
   await Promise.all(calls);
 
   const sc = loadSidecar(spec);
-  assert.equal(sc.expert_teammates.turns.length, total, 'lost writes during multi-expert race');
+  assert.equal(sc.reviewer_teammates.turns.length, total, 'lost writes during multi-expert race');
   for (const ex of experts) {
-    const fromExpert = sc.expert_teammates.turns.filter((t) => t.expert_id === ex);
+    const fromExpert = sc.reviewer_teammates.turns.filter((t) => t.expert_id === ex);
     assert.equal(fromExpert.length, turnsPerExpert, `wrong count for ${ex}`);
   }
   rmSync(dir, { recursive: true, force: true });
