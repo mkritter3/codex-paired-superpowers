@@ -718,3 +718,93 @@ test('stale gpt-5.2-codex literal appears only in hazard text', () => {
   }
   assert.deepEqual(violations, [], `gpt-5.2-codex may only appear in hazard text:\n${violations.join('\n')}`);
 });
+
+// ── v0.14.0 Slice 7 — hybrid orchestration documented in writing-plans + autopilot ──
+
+// Slice out a single `## ` section by its header so an assertion can't be satisfied by prose
+// living elsewhere in the skill (round-1 critique: a whole-file /contract/i match was vacuous —
+// the term appears many times outside the hybrid branch).
+function sectionByHeader(content, header) {
+  const lines = content.split('\n');
+  const start = lines.findIndex((l) => l.trimEnd() === header);
+  assert.ok(start !== -1, `expected to find section header ${JSON.stringify(header)}`);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^## /.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+test('v0.14.0: writing-plans documents the hybrid plan syntax', () => {
+  // Spec §5: a hybrid slice declares `**Orchestration:** hybrid` and exactly two REQUIRED owners —
+  // a `claude-ui` half (logical adapter claude-ui) and a contract-producing `codex-backend` half
+  // (adapter codex-background-bash), with a UI shim under __hybrid_contracts__, the no-overlap
+  // file partition, and the slice `**Files:**`/claimed-file correspondence.
+  const section = sectionByHeader(readSkill('writing-plans'), '## When to use hybrid orchestration (v0.14.0)');
+  for (const required of [
+    '**Orchestration:** hybrid',
+    'owner: claude-ui',
+    'owner: codex-backend',
+    'adapter: claude-ui',
+    'adapter: codex-background-bash',
+    'required: true',
+    '__hybrid_contracts__',
+  ]) {
+    assert.ok(
+      section.includes(required),
+      `writing-plans hybrid section missing required string: ${JSON.stringify(required)}`,
+    );
+  }
+  // The exactly-two-required-owners rule and the **Files:**/claimed-file partition rule.
+  assert.match(section, /[Ee]xactly two owners/, 'hybrid section must state the exactly-two-owners rule');
+  assert.match(
+    section,
+    /no file (appears|touched) (under both|by both)|claimed by exactly one owner/,
+    'hybrid section must state the no-overlap / single-owner file partition rule',
+  );
+  assert.match(
+    section,
+    /\*\*Files:\*\*/,
+    'hybrid section must tie owner claimed files back to the slice **Files:** block',
+  );
+});
+
+test('v0.14.0: autopilot documents the Phase B hybrid branch', () => {
+  // Spec §9: hybrid slices route away from the symmetric implementer-experts branch into
+  // runHybridSlice (UI subagent + background Codex), wait on the contract, resync on a
+  // contract change, recover a lost background Codex run, and verify claimed files.
+  // Scope every assertion to the hybrid section so it cannot pass on unrelated prose.
+  const section = sectionByHeader(readSkill('autopilot'), '## Phase B hybrid branch (v0.14.0)');
+  for (const required of [
+    'runHybridSlice',
+    'hybrid/runner.js',
+    'claude-subagent',
+    'codex-background-bash',
+    'hybrid-codex-background-lost',
+    'hybrid-contract-stale-at-completion',
+  ]) {
+    assert.ok(
+      section.includes(required),
+      `autopilot hybrid section missing required string: ${JSON.stringify(required)}`,
+    );
+  }
+  // The branch must explicitly route hybrid slices away from the symmetric dispatch path.
+  assert.ok(
+    section.includes('**Orchestration:** hybrid') && section.includes('dispatchImplementers'),
+    'autopilot hybrid section must contrast `**Orchestration:** hybrid` with the dispatchImplementers (symmetric) path',
+  );
+  // Contract wait + contract-change resync + claimed-file verification prose, scoped to the section.
+  assert.match(section, /contract/i, 'autopilot hybrid section must describe the contract wait');
+  assert.match(section, /resync/i, 'autopilot hybrid section must describe contract-change resync');
+  assert.match(section, /claimed[- ]file/i, 'autopilot hybrid section must describe claimed-file verification');
+});
+
+test('v0.14.0: hybrid orchestration type named consistently across both skills', () => {
+  for (const skill of ['writing-plans', 'autopilot']) {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('**Orchestration:** hybrid'),
+      `${skill}/SKILL.md must name the hybrid orchestration type as "**Orchestration:** hybrid"`,
+    );
+  }
+});

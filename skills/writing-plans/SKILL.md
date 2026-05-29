@@ -314,6 +314,48 @@ Frontmatter example:
     - tests/foo.test.js
 ```
 
+## When to use hybrid orchestration (v0.14.0)
+
+Some slices split cleanly into a user-facing half and a server half joined by a single agreed interface — for example, a settings screen that calls a new backend route, where the route's request/response shape is the contract between them. For those, you can have Claude build the UI while a background Codex run builds the backend at the same time, instead of doing them one after the other.
+
+Recommend hybrid orchestration when **all** of these hold:
+- There is a clear split between front-end work and back-end work, with no file touched by both halves.
+- The two halves meet at exactly one interface (a route, a type, a request/response shape) that you can write down as a contract.
+- The backend half is the one that defines (publishes) that contract; the UI half consumes it.
+
+Skip it when the work is mostly on one side, when the front-end and back-end changes are tangled across the same files, or when there is no clean contract boundary — a normal single-implementer slice is simpler.
+
+To turn it on, add `**Orchestration:** hybrid` to the slice and declare exactly two owners: a `claude-ui` half and a `codex-backend` half. The UI half lists only front-end files; the backend half (which writes and publishes the contract) lists only server files. So the UI can compile before the backend lands, the UI half also claims a small local stand-in for the backend types under a `__hybrid_contracts__/` folder — the runner swaps this stand-in for the real backend contract once both halves are integrated.
+
+```yaml
+**Orchestration:** hybrid
+
+**Implementers:**
+- member_id: hybrid-ui@claude:sonnet#0
+  owner: claude-ui
+  adapter: claude-ui
+  model: sonnet
+  required: true
+  files:
+    - app/settings/SettingsScreen.tsx
+    - app/settings/__hybrid_contracts__/account-preferences.ts
+- member_id: hybrid-backend@codex:gpt-5.5#0
+  owner: codex-backend
+  adapter: codex-background-bash
+  model: gpt-5.5
+  required: true
+  files:
+    - lib/server/routes/account-preferences.ts
+    - lib/server/contracts/account-preferences.ts
+```
+
+Rules to follow when writing the slice:
+- Exactly two owners, both `required: true` — one `owner: claude-ui` and one `owner: codex-backend`. No more, no fewer.
+- The UI owner uses the logical `adapter: claude-ui`; the runner picks the real runtime for you (foreground Claude when you run it yourself, a Claude subagent under autopilot). The backend owner must use `adapter: codex-background-bash`.
+- Each owner lists at least one file, and no file appears under both owners. (If both genuinely must touch the same file, add an `overlap_rationale` saying why — otherwise overlap is rejected.)
+- Every file in the slice `**Files:**` block must be claimed by exactly one owner, and every claimed file must appear in `**Files:**`.
+- The `codex-backend` owner is the one that produces the contract; the UI owner consumes it through the `__hybrid_contracts__` stand-in.
+
 ## Troubleshooting setup errors
 
 If you see errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. Resume after green.

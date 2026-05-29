@@ -1755,6 +1755,22 @@ After all implementers complete:
 - On `merge-conflict`: `runMergerAgent` (slice 8) resolves with double-SHIP gate
 - `runPostMergeReview` (slice 9) runs the final post-merge-review paired review
 
+## Phase B hybrid branch (v0.14.0)
+
+Some slices declare `**Orchestration:** hybrid` with exactly two owners — a `claude-ui` half and a `codex-backend` half (see writing-plans for the syntax). These do **not** go through the symmetric `dispatchImplementers` path above. That path treats every member the same way; a hybrid slice is asymmetric — one half builds the UI and the other builds the backend and publishes a contract the UI depends on. So when a slice carries `**Orchestration:** hybrid`, route it to `runHybridSlice` from `lib/codex-bridge/hybrid/runner.js` instead, in autopilot mode.
+
+What `runHybridSlice` does, in order:
+
+1. **Preflight + worktrees.** Validates the two-owner block (ownership and claimed-file partition), confirms the registry offers both transports, and creates a worktree per owner from the slice-start SHA. In autopilot both halves run in their own worktrees (unlike interactive, where the UI half edits the foreground checkout).
+2. **Concurrent dispatch.** Starts both owners at the same time: the UI half as a Claude subagent (runtime kind `claude-subagent`) and the backend half as a background Codex run (transport `codex-background-bash`). They run in parallel, not one after the other.
+3. **Contract wait.** The UI half builds against its local `__hybrid_contracts__` stand-in while the backend half writes the real route/types and **publishes the contract**. The runner waits for the backend to publish; if the backend exits without publishing, it halts (`hybrid-contract-not-published`).
+4. **Contract-change resync.** If the backend publishes a newer contract hash after the UI half already consumed an earlier one, the runner marks the UI owner `needs-contract-resync`, surfaces the changed-contract state (sidecar + mailbox), and refuses to let the UI half complete or integrate until it consumes the latest hash. This is the in-progress `hybrid-contract-changed` state — not terminal while the UI owner is still working. It only becomes terminal if the UI half completes while still stale: `hybrid-contract-stale-at-completion` (consumed an older hash) or `hybrid-contract-not-consumed` (never consumed the latest).
+5. **Background-Codex recovery.** The background run is monitored by its status file. A lost or vanished run surfaces as `hybrid-codex-background-lost` (and a stalled one as `hybrid-codex-background-timeout`); these route through the existing halt-envelope path and the per-phase Codex thread-loss recovery already documented for Phase B (detect the stale-thread response, replay, rotate the thread id).
+6. **Claimed-file verification.** Before integrating, each owner's diff is checked against its claimed files. A change outside an owner's claim halts (`implementer-claimed-file-violation`), unless the plan rationalized the overlap.
+7. **Integrate + realize the contract.** Both owner branches are integrated through the existing ordered cherry-pick path, the UI stand-in is swapped for the real backend contract, and a final typecheck runs. A real backend export that does not match the consumed stand-in hash halts (`hybrid-contract-realization-mismatch`).
+
+Every halt above flows through the same halt-envelope surface as the rest of Phase B, so resume/skip behavior is unchanged.
+
 ## Troubleshooting setup errors
 
 If autopilot fails to start, or any phase fails with errors mentioning `Cannot find module`, `proper-lockfile`, `codex: command not found`, `codex not authenticated`, `ENOENT`, or any module-load / binary-not-found pattern, invoke `/codex-paired-superpowers:doctor` first. The doctor diagnoses the install and prints the exact commands to fix each issue. Resume autopilot after the doctor reports all checks green.
