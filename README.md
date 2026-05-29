@@ -34,12 +34,16 @@ The operating rules:
 |---|---|
 | `brainstorming` | Codex drafts the spec; Claude routes product questions to user, technical to Codex; 7-round revision loop |
 | `writing-plans` | Codex reviews the plan structure on the same session |
-| `subagent-driven-development` | Per-slice Codex review scoped to that slice's tasks; out-of-slice issues go to a Deferred list |
+| `execution` | Stable entry point for running a reviewed plan. Pick a `driver` (`interactive` or `autopilot`) and a per-slice split. See [docs/execution-model.md](docs/execution-model.md) |
+| `subagent-driven-development` | Interactive driver implementation under `execution`: per-slice Codex review scoped to that slice's tasks; out-of-slice issues go to a Deferred list |
 | `receiving-code-review` | Anti-rubber-stamp discipline for Codex verdicts |
 | `systematic-debugging` | Codex reviews the root-cause hypothesis before the fix |
 | `test-driven-development` | Codex reviews the test list before red-green-refactor |
-| `autopilot` (v0.3.0+) | Runs a double-SHIP'd plan slice-by-slice unattended; 4 phases × 7-round budgets each |
+| `autopilot` (v0.3.0+) | Autopilot driver implementation under `execution`: runs a double-SHIP'd plan slice-by-slice unattended; 4 phases × 7-round budgets each. `/autopilot` remains a compatibility alias for `execution` with `driver: autopilot` |
 | `doctor` (v0.7.3.1+) | Preflight diagnostic — verifies Node, codex CLI, git, vendored deps, hooks, and writeable state dir |
+
+For the one-page mental model of drivers, splits, and review, see
+**[docs/execution-model.md](docs/execution-model.md)**.
 
 ## Prerequisites
 

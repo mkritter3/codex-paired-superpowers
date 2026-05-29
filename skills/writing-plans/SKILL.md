@@ -73,6 +73,24 @@ The downstream driver reads this as `sliceFrontmatter.reviewers` and passes it t
 
 The older **Experts:** directive is **deprecated** but still accepted on read for one migration window: legacy plans that declare `**Experts:**` continue to work (the driver falls back to `sliceFrontmatter.experts`). When emitting a new plan, always write `**Reviewers:**`, never `**Experts:**`. If a slice declares both, **Reviewers:** wins and the composer surfaces a deprecation warning.
 
+### Per-slice split directive (optional)
+A slice MAY declare how its work item is written via the canonical **Split:** directive. The downstream `execution` skill normalizes it before dispatch:
+
+```markdown
+## Slice 3: Auth token refresh
+**Split:** two-disjoint
+**Validation:** critical
+
+[task list...]
+```
+
+Allowed values:
+- **single** (default) — one implementer writes the slice. Omit `**Split:**` for this.
+- **two-disjoint** — two implementers write in parallel on disjoint files, then merge. Declare the two implementers' files in the slice; exactly two are allowed under the canonical directive.
+- **hybrid-ui-backend** — Claude builds the UI half while Codex builds the backend half, joined by a published contract (see the hybrid orchestration section below).
+
+The legacy forms `**Implementers:**` (→ two-disjoint) and `**Orchestration:** hybrid` (→ hybrid-ui-backend) are still accepted on read, but new plans should prefer `**Split:**`. See [docs/execution-model.md](../../docs/execution-model.md) for how driver and split combine.
+
 ## Phase 2 — Codex plan review (counted, max 7 rounds)
 
 Look up the existing threadId from the sidecar:

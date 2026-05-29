@@ -372,7 +372,7 @@ Show the user the final spec path. Quote the goal + open contentions if any. Wai
 ## Phase 5 — Hand off
 
 **Default path (both feature-scoped and app-scoped specs):**
-Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. From there the user chooses subagent-driven execution, inline execution, or `autopilot` (self-continuing: re-running `/autopilot` resumes from the sidecar across sessions, with built-in loop-prevention).
+Invoke `codex-paired-superpowers:writing-plans`. Pass the spec path. The plan-writing skill resumes the same Codex session via the sidecar. Once the plan is double-SHIP'd, the user runs it through the single stable entry point — the `execution` skill — by choosing a `driver`: `interactive` (step-by-step, with the user in the loop) or `autopilot` (unattended; self-continuing — re-running `/autopilot` resumes from the sidecar across sessions, with built-in loop-prevention). `/autopilot` remains a compatibility alias for `execution` with `driver: autopilot`. See [docs/execution-model.md](../../docs/execution-model.md) for the driver/split/review mental model.
 
 For **app-scoped specs**, mention to the user — in plain English — that the spec covers multiple goals and the work will likely span several plans. After the first plan ships through autopilot, the user can come back and run `writing-plans` again for the next chunk of work, using the same spec. Each round of `writing-plans` sees the prior plans + current repo state via the sidecar and can target the remaining goals.
 

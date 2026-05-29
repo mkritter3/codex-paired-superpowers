@@ -11,6 +11,10 @@ execution skill; both ways of running a plan — with you in the loop, or unatte
 a single `driver` choice. This skill is intentionally thin: it picks the driver, normalizes the plan's
 split directive, and hands off to the existing flow that does the real work.
 
+For the one-page mental model of the three independent choices (driver, split, review), see the
+canonical [docs/execution-model.md](../../docs/execution-model.md). This skill is the selection layer
+over the engines described there; do not restate the matrix here.
+
 ## Inputs
 
 ```

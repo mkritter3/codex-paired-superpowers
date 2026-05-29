@@ -1078,3 +1078,98 @@ test('/autopilot alias introduces no new -- flags', () => {
     `/autopilot must not introduce new CLI flags; found: ${flags.join(', ')}`,
   );
 });
+
+// ── Plan 4 — canonical execution-model doc + cross-links + duplicate-matrix guard ──
+//
+// Goal 6: one short canonical three-choice mental model. `docs/execution-model.md` is
+// the single driver/split/review doc; README + skills link to it instead of copying the
+// matrix; a grep guard forbids a second full matrix from drifting out of sync.
+
+const EXECUTION_MODEL_DOC_REL = 'docs/execution-model.md';
+// The canonical driver/split table header. Any file other than the canonical doc that
+// reproduces this exact header is a duplicated matrix and must point back to the doc.
+const MATRIX_HEADER = '| Driver | single | two-disjoint | hybrid-ui-backend |';
+
+function readExecutionModelDoc() {
+  return readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
+}
+
+test('Plan 4: docs/execution-model.md exists and contains the driver/split matrix', () => {
+  const doc = readExecutionModelDoc();
+  assert.ok(doc.includes(MATRIX_HEADER), `execution-model.md must contain the matrix header: ${MATRIX_HEADER}`);
+  assert.match(doc, /^\|\s*interactive\s*\|/m, 'execution-model.md matrix must have an `interactive` row');
+  assert.match(doc, /^\|\s*autopilot\s*\|/m, 'execution-model.md matrix must have an `autopilot` row');
+});
+
+test('Plan 4: docs/execution-model.md marks the app driver as outside v1', () => {
+  const doc = readExecutionModelDoc();
+  assert.match(
+    doc,
+    /app[\s-]?autopilot|multi-plan app driver/i,
+    'execution-model.md must mention the experimental multi-plan app driver',
+  );
+  assert.match(
+    doc,
+    /outside (this table|v1)|experimental|not (in|part of) v1/i,
+    'execution-model.md must mark the app driver as outside v1 / experimental',
+  );
+});
+
+test('Plan 4: README links to the canonical doc and names execution as the stable entry', () => {
+  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8');
+  assert.ok(readme.includes(EXECUTION_MODEL_DOC_REL), `README must link to ${EXECUTION_MODEL_DOC_REL}`);
+  assert.ok(readme.includes('`execution`'), 'README must list the `execution` skill as the stable entry point');
+  assert.match(
+    readme,
+    /\/autopilot[^\n]*\b(alias|compatibilit)/i,
+    'README must document /autopilot as a compatibility alias',
+  );
+});
+
+test('Plan 4: execution skill links to the canonical doc', () => {
+  const skill = readSkill('execution');
+  assert.ok(
+    skill.includes(EXECUTION_MODEL_DOC_REL),
+    `skills/execution/SKILL.md must link to ${EXECUTION_MODEL_DOC_REL}`,
+  );
+});
+
+test('Plan 4: writing-plans documents **Split:** and **Reviewers:** canonical directives', () => {
+  const skill = readSkill('writing-plans');
+  assert.ok(skill.includes('**Split:**'), 'writing-plans must document the canonical **Split:** directive');
+  assert.ok(skill.includes('**Reviewers:**'), 'writing-plans must document the canonical **Reviewers:** directive');
+});
+
+test('Plan 4: brainstorming handoff offers execution with driver choices', () => {
+  const section = sectionByHeader(readSkill('brainstorming'), '## Phase 5 — Hand off');
+  assert.ok(section.includes('execution'), 'brainstorming Phase 5 handoff must offer the execution skill');
+  assert.ok(
+    section.includes('interactive') && section.includes('autopilot'),
+    'brainstorming Phase 5 handoff must name the interactive/autopilot driver choices',
+  );
+});
+
+test('Plan 4: no duplicate full matrix outside the canonical doc (grep guard)', () => {
+  const candidates = [
+    join(PLUGIN_ROOT, 'README.md'),
+    ...collectSkillMarkdown(join(PLUGIN_ROOT, 'docs')),
+    ...collectSkillMarkdown(join(PLUGIN_ROOT, 'skills')),
+  ];
+  const canonicalAbs = join(PLUGIN_ROOT, 'docs', 'execution-model.md');
+  const violations = [];
+  for (const f of candidates) {
+    if (f === canonicalAbs) continue;
+    const content = readFileSync(f, 'utf8');
+    if (!content.includes(MATRIX_HEADER)) continue;
+    // A duplicated matrix is allowed only if the file points back to the canonical doc.
+    if (!content.includes(EXECUTION_MODEL_DOC_REL)) {
+      violations.push(f.replace(PLUGIN_ROOT + '/', ''));
+    }
+  }
+  assert.deepEqual(
+    violations,
+    [],
+    `Found a full driver/split matrix outside ${EXECUTION_MODEL_DOC_REL} without a link back to it: ` +
+      `${violations.join(', ')}. Link to the canonical doc instead of copying the matrix.`,
+  );
+});
