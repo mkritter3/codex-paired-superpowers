@@ -1,4 +1,4 @@
-// Tests for v0.8.0 role-composer — deterministic expert-selection from
+// Tests for v0.8.0 role-composer — deterministic reviewer-selection from
 // phase, signals, and repo overrides.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { composeExperts } from '../../lib/codex-bridge/role-composer.js';
+import { composeReviewers } from '../../lib/codex-bridge/reviewer-composer.js';
 
 function makeRepo() {
   return mkdtempSync(join(tmpdir(), 'cps-role-composer-test-'));
@@ -24,7 +25,7 @@ function ids(result) {
   return result.selected.map((e) => e.id);
 }
 
-test('UI signals select expert-ui and expert-ux plus default architecture+test', () => {
+test('UI signals select reviewer-ui and reviewer-ux plus default architecture+test', () => {
   const root = makeRepo();
   try {
     const result = composeExperts({
@@ -33,22 +34,22 @@ test('UI signals select expert-ui and expert-ux plus default architecture+test',
       repoRoot: root,
     });
     const selected = ids(result);
-    assert.ok(selected.includes('expert-ui'), `missing expert-ui: ${selected}`);
-    assert.ok(selected.includes('expert-ux'), `missing expert-ux: ${selected}`);
+    assert.ok(selected.includes('reviewer-ui'), `missing reviewer-ui: ${selected}`);
+    assert.ok(selected.includes('reviewer-ux'), `missing reviewer-ux: ${selected}`);
     assert.ok(
-      selected.includes('expert-architecture'),
-      `missing expert-architecture: ${selected}`
+      selected.includes('reviewer-architecture'),
+      `missing reviewer-architecture: ${selected}`
     );
     assert.ok(
-      selected.includes('expert-test'),
-      `missing expert-test: ${selected}`
+      selected.includes('reviewer-test'),
+      `missing reviewer-test: ${selected}`
     );
   } finally {
     cleanup(root);
   }
 });
 
-test('AI/provider signals select expert-ai-harness', () => {
+test('AI/provider signals select reviewer-ai-harness', () => {
   const root = makeRepo();
   try {
     const result = composeExperts({
@@ -57,15 +58,15 @@ test('AI/provider signals select expert-ai-harness', () => {
       repoRoot: root,
     });
     assert.ok(
-      ids(result).includes('expert-ai-harness'),
-      `missing expert-ai-harness: ${ids(result)}`
+      ids(result).includes('reviewer-ai-harness'),
+      `missing reviewer-ai-harness: ${ids(result)}`
     );
   } finally {
     cleanup(root);
   }
 });
 
-test('Security/credential signals select expert-security', () => {
+test('Security/credential signals select reviewer-security', () => {
   const root = makeRepo();
   try {
     const result = composeExperts({
@@ -74,8 +75,8 @@ test('Security/credential signals select expert-security', () => {
       repoRoot: root,
     });
     assert.ok(
-      ids(result).includes('expert-security'),
-      `missing expert-security: ${ids(result)}`
+      ids(result).includes('reviewer-security'),
+      `missing reviewer-security: ${ids(result)}`
     );
   } finally {
     cleanup(root);
@@ -90,7 +91,7 @@ test('No strong signal falls back to architecture+test only', () => {
       signals: {},
       repoRoot: root,
     });
-    assert.deepEqual(ids(result).sort(), ['expert-architecture', 'expert-test']);
+    assert.deepEqual(ids(result).sort(), ['reviewer-architecture', 'reviewer-test']);
   } finally {
     cleanup(root);
   }
@@ -109,15 +110,15 @@ test('**Experts:** directive merges with inferred signals', () => {
     });
     const selected = ids(result);
     // ui from directive (and inferred), ux inferred, architecture from directive (and default), test default
-    assert.ok(selected.includes('expert-ui'), `missing expert-ui: ${selected}`);
-    assert.ok(selected.includes('expert-ux'), `missing expert-ux: ${selected}`);
+    assert.ok(selected.includes('reviewer-ui'), `missing reviewer-ui: ${selected}`);
+    assert.ok(selected.includes('reviewer-ux'), `missing reviewer-ux: ${selected}`);
     assert.ok(
-      selected.includes('expert-architecture'),
-      `missing expert-architecture: ${selected}`
+      selected.includes('reviewer-architecture'),
+      `missing reviewer-architecture: ${selected}`
     );
     assert.ok(
-      selected.includes('expert-test'),
-      `missing expert-test: ${selected}`
+      selected.includes('reviewer-test'),
+      `missing reviewer-test: ${selected}`
     );
   } finally {
     cleanup(root);
@@ -218,13 +219,13 @@ test('composer filters out roles whose resolveIdentity throws (defensive)', () =
       repoRoot: root,
     });
     const selected = ids(result);
-    assert.ok(selected.includes('expert-ui'), `missing expert-ui: ${selected}`);
+    assert.ok(selected.includes('reviewer-ui'), `missing reviewer-ui: ${selected}`);
     assert.ok(
-      !selected.includes('expert-totally-nonexistent'),
+      !selected.includes('reviewer-totally-nonexistent'),
       `unresolvable role should be filtered: ${selected}`
     );
     assert.ok(
-      !('expert-totally-nonexistent' in result.selectionReasons),
+      !('reviewer-totally-nonexistent' in result.selectionReasons),
       'unresolvable selectionReason should be dropped'
     );
   } finally {
@@ -245,15 +246,31 @@ test('composer filters malformed directive roles (path-traversal / invalid ident
     });
     const selected = ids(result);
     // Valid directive roles + phase defaults survive.
-    assert.ok(selected.includes('expert-ui'));
-    assert.ok(selected.includes('expert-architecture'));
-    assert.ok(selected.includes('expert-test')); // phase default
+    assert.ok(selected.includes('reviewer-ui'));
+    assert.ok(selected.includes('reviewer-architecture'));
+    assert.ok(selected.includes('reviewer-test')); // phase default
     // Malformed roles are filtered.
     assert.ok(!selected.some(id => id.includes('..')), `traversal leaked: ${selected}`);
     assert.ok(!selected.some(id => /[A-Z_]/.test(id)), `bad-char leaked: ${selected}`);
     for (const id of selected) {
-      assert.match(id, /^expert-[a-z][a-z0-9-]{0,47}$/, `bad identity: ${id}`);
+      assert.match(id, /^reviewer-[a-z][a-z0-9-]{0,47}$/, `bad identity: ${id}`);
     }
+  } finally {
+    cleanup(root);
+  }
+});
+
+// ── Plan 3: composeExperts is a faithful wrapper of composeReviewers ─────────
+
+test('composeExperts(args) returns deep-equal output to composeReviewers(args)', () => {
+  const root = makeRepo();
+  try {
+    const args = {
+      phase: 'spec-review',
+      signals: { specHas: ['UI', 'visual panel'], explicitDirective: 'ui, architecture' },
+      repoRoot: root,
+    };
+    assert.deepEqual(composeExperts(args), composeReviewers(args));
   } finally {
     cleanup(root);
   }
