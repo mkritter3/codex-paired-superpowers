@@ -215,3 +215,40 @@ test('project cli-client replacing bundled overrides command path', () => {
     cleanup(repo);
   }
 });
+
+// ── Plan 3 (reviewer naming migration): reviewer-* override keys load ────────
+//
+// The recommendation set stays keyed expert-*; a reviewer-* override key in
+// .codex-paired/role-routing.json canonicalizes to its expert-* twin for the
+// "references unknown role" check so reviewer override keys are accepted.
+
+test('userRouting with a reviewer-* override key loads (canonicalized to expert-* twin)', () => {
+  const repo = makeRepo();
+  try {
+    writeJson(join(repo, '.codex-paired', 'role-routing.json'), {
+      'reviewer-test': { cli: 'claude' },
+    });
+    const cfg = loadProjectConfig(repo);
+    assert.equal(cfg.userRouting.size, 1);
+    assert.deepEqual(cfg.userRouting.get('reviewer-test'), { cli: 'claude' });
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('userRouting with a genuinely-unknown reviewer-* role still throws at LOAD time', () => {
+  const repo = makeRepo();
+  try {
+    writeJson(join(repo, '.codex-paired', 'role-routing.json'), {
+      'reviewer-nope': { cli: 'codex' },
+    });
+    assert.throws(
+      () => loadProjectConfig(repo),
+      (err) =>
+        err instanceof RoleRoutingError &&
+        err.code === 'USER_ROUTING_UNKNOWN_ROLE',
+    );
+  } finally {
+    cleanup(repo);
+  }
+});

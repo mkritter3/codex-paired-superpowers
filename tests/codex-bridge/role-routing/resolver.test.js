@@ -205,3 +205,94 @@ test('all hard-halt errors are RoleRoutingError with .code set', () => {
     assert.equal(err.code, 'no-supported-cli-for-role');
   }
 });
+
+// ── Plan 3 (reviewer naming migration): reviewer-* ids resolve ──────────────
+//
+// composeReviewers (Slice 4) returns reviewer-* identities; orchestrator code
+// passes identity.id to resolveAdapter. The recommendation set stays keyed
+// expert-*, so reviewer-* ids canonicalize to their expert-* twin for lookup.
+// Legacy expert-* ids still resolve unchanged (one-window contract).
+
+import { isReviewerRole } from '../../../lib/codex-bridge/role-routing/resolver.js';
+
+test('reviewer-* id resolves to the same ladder as its expert-* twin (recommendation)', () => {
+  const avail = new Set(['codex', 'claude']);
+  const reviewer = resolveAdapter('reviewer-architecture', avail, new Map());
+  const expert = resolveAdapter('expert-architecture', avail, new Map());
+  assert.deepEqual(reviewer, expert);
+});
+
+test('reviewer-test resolves (does not throw UNKNOWN_ROLE)', () => {
+  const result = resolveAdapter('reviewer-test', new Set(['codex', 'claude']), new Map());
+  assert.equal(result.resolution_source, 'recommendation');
+  assert.ok(typeof result.cli === 'string' && result.cli.length > 0);
+});
+
+test('legacy expert-test still resolves unchanged (regression guard)', () => {
+  const result = resolveAdapter('expert-test', new Set(['codex', 'claude']), new Map());
+  assert.equal(result.resolution_source, 'recommendation');
+});
+
+test('override aliasing: legacy expert-test override applies to a requested reviewer-test', () => {
+  const result = resolveAdapter(
+    'reviewer-test',
+    new Set(['claude']),
+    new Map([['expert-test', { cli: 'claude' }]]),
+  );
+  assert.equal(result.cli, 'claude');
+  assert.equal(result.resolution_source, 'override');
+});
+
+test('override aliasing: a reviewer-test override key applies to a reviewer-test call', () => {
+  const result = resolveAdapter(
+    'reviewer-test',
+    new Set(['claude']),
+    new Map([['reviewer-test', { cli: 'claude' }]]),
+  );
+  assert.equal(result.cli, 'claude');
+  assert.equal(result.resolution_source, 'override');
+});
+
+test('isReviewerRole accepts both reviewer-* and expert-* prefixes', () => {
+  assert.equal(isReviewerRole('reviewer-ui'), true);
+  assert.equal(isReviewerRole('expert-ui'), true);
+  assert.equal(isReviewerRole('paired-reviewer'), true);
+  assert.equal(isReviewerRole('implementer'), false);
+});
+
+test('unknown reviewer id still throws UNKNOWN_ROLE with the requested role in details', () => {
+  try {
+    resolveAdapter('reviewer-nope', new Set(['claude']), new Map());
+    assert.fail('expected throw');
+  } catch (err) {
+    assert.ok(err instanceof RoleRoutingError);
+    assert.equal(err.code, 'UNKNOWN_ROLE');
+    assert.equal(err.details.role, 'reviewer-nope');
+  }
+});
+
+test('reviewer-class audit warning fires for reviewer-* id routed write-allowed', () => {
+  const result = resolveAdapter(
+    'reviewer-test',
+    new Set(['claude']),
+    new Map([['reviewer-test', { cli: 'claude', permissions: 'write-allowed' }]]),
+  );
+  assert.equal(result.permissions, 'write-allowed');
+  assert.ok(
+    result.audit_warnings.some((w) => w.startsWith('reviewer-role-write-allowed')),
+    `expected reviewer-role-write-allowed warning, got: ${JSON.stringify(result.audit_warnings)}`,
+  );
+});
+
+test('legacy expert-test write-allowed override applied to a reviewer-test call still emits the reviewer-class warning', () => {
+  const result = resolveAdapter(
+    'reviewer-test',
+    new Set(['claude']),
+    new Map([['expert-test', { cli: 'claude', permissions: 'write-allowed' }]]),
+  );
+  assert.equal(result.permissions, 'write-allowed');
+  assert.ok(
+    result.audit_warnings.some((w) => w.startsWith('reviewer-role-write-allowed')),
+    `expected reviewer-role-write-allowed warning, got: ${JSON.stringify(result.audit_warnings)}`,
+  );
+});
