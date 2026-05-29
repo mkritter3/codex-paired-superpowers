@@ -527,20 +527,69 @@ test('slice-2 case 8: unknown driver throws split-unknown-driver before normaliz
   assert.equal(runHybridSlice.calls.length, 0);
 });
 
-test('slice-2 case 9: single with no deps.runSingle → _runSingle default throws not-yet-wired', async () => {
+test('slice-2 case 9: single with no deps.runSingle → default returns a dispatch-single directive', async () => {
+  // Plan 2 Slice 1: the single route no longer throws. With no injected runSingle,
+  // runSplit returns a normalized directive the skill orchestrator acts on (it owns
+  // the actual Task/subagent dispatch; runSplit stays pure).
   const sliceSection = slice('**Split:** single');
-  await assert.rejects(
-    () =>
-      runSplit({
-        driver: 'autopilot',
-        planPath: 'p.md',
-        specPath: 's.md',
-        workItem: workItemFor(sliceSection),
-        repoRoot: '/repo',
-        deps: {},
-      }),
-    (err) => /not yet wired/i.test(err.message)
-  );
+  const result = await runSplit({
+    driver: 'autopilot',
+    planPath: 'p.md',
+    specPath: 's.md',
+    workItem: workItemFor(sliceSection),
+    repoRoot: '/repo',
+    deps: {},
+  });
+  assert.deepEqual(result, {
+    ok: true,
+    split: 'single',
+    outcome: {
+      kind: 'dispatch-single',
+      driver: 'autopilot',
+      specPath: 's.md',
+      sliceId: 'slice-1',
+      repoRoot: '/repo',
+    },
+  });
+});
+
+test('slice-2 case 9a: dispatch-single directive carries the active driver (interactive)', async () => {
+  const sliceSection = slice('**Split:** single');
+  const result = await runSplit({
+    driver: 'interactive',
+    planPath: 'p.md',
+    specPath: 's.md',
+    workItem: workItemFor(sliceSection),
+    repoRoot: '/repo',
+    deps: {},
+  });
+  assert.equal(result.outcome.kind, 'dispatch-single');
+  assert.equal(result.outcome.driver, 'interactive');
+});
+
+test('slice-2 case 9b: injected deps.runSingle still wins over the default directive', async () => {
+  const sliceSection = slice('**Split:** single');
+  const runSingle = spy({ outcome: 'custom-single' });
+  const result = await runSplit({
+    driver: 'autopilot',
+    planPath: 'p.md',
+    specPath: 's.md',
+    workItem: workItemFor(sliceSection),
+    repoRoot: '/repo',
+    deps: { runSingle },
+  });
+  assert.equal(runSingle.calls.length, 1);
+  // The default directive must NOT be produced when a runner is injected.
+  assert.notDeepEqual(result.outcome, {
+    kind: 'dispatch-single',
+    driver: 'autopilot',
+    specPath: 's.md',
+    sliceId: 'slice-1',
+    repoRoot: '/repo',
+  });
+  assert.deepEqual(result.outcome, { outcome: 'custom-single' });
+  // The injected runner receives the driver too.
+  assert.equal(runSingle.calls[0][0].driver, 'autopilot');
 });
 
 export {
