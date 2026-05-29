@@ -63,8 +63,39 @@ or `Phase B` — into anything the user sees. Describe what is happening in term
 
 ## Driver: interactive
 
-(Wired in a later step.) Normalizes the plan's split directive and runs the plan step-by-step with the
-user in the loop, delegating to `subagent-driven-development`.
+Run the plan step-by-step with the user in the loop. The implementation flow lives in
+`codex-paired-superpowers:subagent-driven-development`; this driver reaches it through `execution` so
+the user-facing entry point stays `execution`.
+
+For each work item in the plan:
+
+1. **Normalize the split directive** for the work item and route it through `runSplit` (the same
+   normalize-then-route seam autopilot uses). `runSplit` resolves the work item to one of three split
+   paths: `single`, `two-disjoint`, or `hybrid-ui-backend`.
+2. **Run the corresponding split path** (see below).
+3. **Run the domain reviewers** for the work item using the reviewer-named APIs.
+4. **Run the Codex paired review** for the work item.
+5. **Show plain-English progress and blockers** to the user, pausing for review between steps.
+
+Split-specific behavior (interactive uses the same split it would under autopilot):
+
+- **`single`** → `runSplit` returns a `dispatch-single` directive. Act on it by running the existing
+  Step A implementing-subagent dispatch from `subagent-driven-development` (one implementing subagent /
+  foreground implementer), then the reviewer checks and Codex review.
+- **`two-disjoint`** → use the existing implementer worktree fan-out and `dispatchImplementers`, then
+  the existing merge coordinator and post-merge review. The interactive driver may pause between
+  dispatch, merge, and review, but it is the same split reachable under autopilot.
+- **`hybrid-ui-backend`** → call `runHybridSlice({ mode: 'interactive', ... })`. The UI owner runs as
+  `claude-inline`; the backend owner runs as `codex-background-bash`. This reuses the runner behavior
+  already in `lib/codex-bridge/hybrid/runner.js` — no new runner.
+
+**Dirty working tree before a hybrid step.** `runHybridSlice` in `interactive` mode refuses to start if
+the working tree has uncommitted changes (internal halt `hybrid-preflight-dirty`). Do not show that
+code to the user. Instead say, in plain English: "Your working tree has uncommitted changes; commit or
+stash them before running a hybrid step, then re-run." Then stop and wait for the user.
+
+Interactive execution has no no-argument resume in v1 and always requires a plan path (see selection
+rules 3-4).
 
 ## Driver: autopilot
 

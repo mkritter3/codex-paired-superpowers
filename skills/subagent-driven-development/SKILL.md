@@ -5,6 +5,10 @@ description: Use when executing a Codex-paired plan. After each slice's subagent
 
 # Subagent-Driven Development (Codex-paired)
 
+This is the **interactive driver implementation** reached through
+`codex-paired-superpowers:execution` (`driver: interactive`). Users invoke `execution`; this skill is
+the per-slice engine it delegates to.
+
 ## What this changes vs. upstream
 After each slice's implementing subagent reports completion, Claude runs a **scoped Codex review** before moving to the next slice. The review is locked to the slice's tasks; out-of-scope issues are noted but cannot block.
 

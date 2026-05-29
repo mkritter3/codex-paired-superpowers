@@ -20,9 +20,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   runTurnWithDeps,
@@ -574,4 +575,78 @@ test('autopilot: panel suppresses peer messages (peer-DM duplicate-delivery guar
   assert.equal(mailboxWrites.length, 0,
     'panel mode must suppress peer-DM mailbox writes (avoid duplicate delivery)');
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── Plan 2 Slice 4 — interactive driver wiring (incl. interactive hybrid) ──
+
+// Local copy of the section-slicing helper (it is not importable from skill-structure.test.js).
+const __SLICE4_DIR = dirname(fileURLToPath(import.meta.url));
+const __SLICE4_PLUGIN_ROOT = join(__SLICE4_DIR, '..', '..');
+
+function readSkillFile(name) {
+  return readFileSync(join(__SLICE4_PLUGIN_ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+}
+
+function sectionByHeader(content, header) {
+  const lines = content.split('\n');
+  const start = lines.findIndex((l) => l.trimEnd() === header);
+  assert.ok(start !== -1, `expected to find section header ${JSON.stringify(header)}`);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^## /.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+test('execution interactive driver documents per-work-item flow: normalize → split → reviewers → Codex review', () => {
+  const section = sectionByHeader(readSkillFile('execution'), '## Driver: interactive');
+  // Order matters (spec lines 212-218): normalize, run split path, reviewers, Codex paired review.
+  const iNormalize = section.search(/normaliz/i);
+  const iSplit = section.search(/runSplit/);
+  const iReviewers = section.search(/reviewer/i);
+  const iCodex = section.search(/Codex (paired )?review/i);
+  assert.ok(iNormalize !== -1, 'interactive section must describe split normalization');
+  assert.ok(iSplit !== -1, 'interactive section must name runSplit');
+  assert.ok(iReviewers !== -1, 'interactive section must describe domain reviewers');
+  assert.ok(iCodex !== -1, 'interactive section must describe Codex paired review');
+  assert.ok(
+    iNormalize < iReviewers && iReviewers < iCodex,
+    'interactive flow must be ordered: normalize → reviewers → Codex review',
+  );
+  // The three split paths must all be named.
+  assert.match(section, /dispatch-single/, 'single split → dispatch-single directive (Step A subagent)');
+  assert.match(section, /subagent-driven-development/, 'single split names subagent-driven-development Step A');
+  assert.match(section, /dispatchImplementers/, 'two-disjoint split → dispatchImplementers + merge');
+});
+
+test('execution interactive hybrid routes runHybridSlice with mode: interactive + claude-inline/codex-background-bash', () => {
+  // The unit that runSplit actually threads mode:'interactive' is pinned by dispatcher slice-2 case 4
+  // (Plan 1, tests/codex-bridge/execution/split-dispatcher.test.js). This test pins the SKILL prose
+  // that triggers that path.
+  const section = sectionByHeader(readSkillFile('execution'), '## Driver: interactive');
+  assert.match(section, /runHybridSlice/, 'interactive hybrid must call runHybridSlice');
+  assert.match(
+    section,
+    /mode:\s*'interactive'|mode:\s*interactive|mode: 'interactive'/,
+    "interactive hybrid must pass mode: 'interactive'",
+  );
+  assert.match(section, /claude-inline/, 'interactive hybrid UI owner runtime is claude-inline');
+  assert.match(section, /codex-background-bash/, 'interactive hybrid backend owner runtime is codex-background-bash');
+});
+
+test('execution interactive dirty-checkout halt is surfaced in plain English (no raw code to user)', () => {
+  const section = sectionByHeader(readSkillFile('execution'), '## Driver: interactive');
+  // Plain-English rendering present (uncommitted changes / commit or stash).
+  assert.match(
+    section,
+    /uncommitted changes|commit or stash/i,
+    'dirty-checkout halt must be rendered as a plain-English message',
+  );
+  // The raw halt code may be referenced as the internal trigger, but the user-visible message must
+  // not BE the raw code. Assert the plain-English phrasing exists alongside any code mention.
+  assert.match(
+    section,
+    /re-?run/i,
+    'dirty-checkout message must tell the user to re-run after committing/stashing',
+  );
 });
