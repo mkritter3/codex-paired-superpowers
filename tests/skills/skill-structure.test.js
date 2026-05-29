@@ -656,8 +656,11 @@ test('v0.13.0: brainstorming + writing-plans do not persist audits separately on
   }
 });
 
-test('v0.13.0: brainstorming + writing-plans document Codex thread-loss recovery', () => {
-  for (const skill of ['brainstorming', 'writing-plans']) {
+test('v0.13.0: every codex-using skill documents Codex thread-loss recovery', () => {
+  // The replay over real transcripts found 8 "Session not found" thread losses across
+  // subagent-driven, autopilot, and brainstorm/plan flows — so EVERY skill that continues a Codex
+  // thread must document the detect→replay→rotate recovery, not just brainstorming + writing-plans.
+  for (const skill of ['brainstorming', 'writing-plans', 'subagent-driven-development', 'autopilot', 'systematic-debugging']) {
     const content = readSkill(skill);
     assert.ok(
       content.includes('Session not found for thread_id'),

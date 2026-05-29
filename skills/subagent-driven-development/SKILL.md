@@ -42,6 +42,8 @@ THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id
 
 Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is Codex's review + verdict block.
 
+**If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old> --newThreadId <new> --reason session-not-found`). Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
+
 For slice-review specifically, you may pass `config: { model_reasoning_effort: "medium" }` to speed up small-diff reviews; reserve `high` for slices that touch core architecture.
 
 ### Step D: 7-round loop

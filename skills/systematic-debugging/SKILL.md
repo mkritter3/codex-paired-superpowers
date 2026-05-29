@@ -56,6 +56,8 @@ Codex's critiques are typically: "you're assuming X but Y could also cause this"
 
 Round loop runs as before. Sidecar phase is `debug:<short-bug-id>`.
 
+**If a `codex-reply` returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-session — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the pending hypothesis prompt, then persist the rotation (`sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old> --newThreadId <new> --reason session-not-found`). Surface one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue. Do not discard prior hypothesis history.
+
 ## Composer-picked hypothesis review (v0.9.0)
 
 After Phase 2's first Codex round produces a critique, the orchestrator MAY (and for high-stakes bugs SHOULD) fan out **composer-selected experts** to critique the hypothesis from domain-specific angles. Usually 1–2 experts based on bug signals (per spec § 3 table).

@@ -149,6 +149,16 @@ Each `/autopilot` invocation re-discovers state from the sidecar. When a plan pa
 
 ## Per-phase procedures
 
+**Mid-phase Codex thread loss (applies to every `codex-reply` below).** If any phase's `codex-reply`
+returns `isError: true` with `Session not found for thread_id:` (the MCP server restarted mid-run —
+threads are process-local), do NOT halt the slice. Recover: build replay context
+(`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`),
+open a NEW thread via the initial `codex` tool seeded with that replay + the pending phase prompt,
+persist the rotation (`sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old>
+--newThreadId <new> --reason session-not-found --phase <phase> --round <n>`), surface one line to the
+user, and continue the current phase. This is distinct from cross-session resume (re-running
+`/autopilot`); it handles a thread dying *within* a live run.
+
 ### Phase A: plan-slice + test-list review
 Three artifacts reviewed in one phase: the task list, the test list, AND the validation rubric coverage for this slice.
 
