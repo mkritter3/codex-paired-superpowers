@@ -44,10 +44,12 @@ again** — no need to remember the plan path or re-supply any flags.
 
 ## What happens
 
-Invoke the `codex-paired-superpowers:autopilot` skill with the plan path (or the resolved in-progress
-plan). The skill drives each slice through its four phases (plan-slice + test-list review, implement,
-review-slice, docs-update) with full Claude↔Codex review, persisting state to the sidecar after every
-step. It runs slices until one of:
+Invoke `codex-paired-superpowers:execution` with `driver: autopilot` and the plan path (or the
+resolved in-progress plan). The execution skill forwards to the same autopilot flow — resume
+discovery, sidecar state, halt-envelope behavior, and self-continuation are unchanged. That flow
+drives each slice through its four phases (plan-slice + test-list review, implement, review-slice,
+docs-update) with full Claude↔Codex review, persisting state to the sidecar after every step. It runs
+slices until one of:
 
 - **all slices ship** → autopilot reports completion and stops;
 - **a real blocker** → autopilot halts with an actionable `halt_reason` and a resume hint;

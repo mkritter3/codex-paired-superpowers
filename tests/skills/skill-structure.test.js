@@ -882,3 +882,63 @@ test('/execute launches the execution skill and forwards arguments', () => {
     '/execute must forward raw arguments via `Arguments: $ARGUMENTS`',
   );
 });
+
+// ── Plan 2 Slice 3 — /autopilot thin alias (behavior-identical) ──
+
+// Byte-exact snapshot of the `## How resume works` section captured BEFORE the alias edit.
+// The alias only rewrites the `## What happens` section; this section must remain unchanged so
+// resume-discovery semantics (sidecar scan, terminal-halt handling, exactly-one/several/none
+// branches, handoff note) cannot silently regress under a "critical" alias change.
+const AUTOPILOT_RESUME_SECTION_PRE_EDIT =
+  "## How resume works (read this for session handoff)\n\n- **With a plan path:** start that plan, or resume it if its sidecar already has autopilot progress.\n- **With no argument:** the spec/plan isn't known yet, so locate the in-progress run by scanning\n  sidecars, then resume it:\n  1. Enumerate sidecars under `.superpowers-codex-paired/` (they are `<spec-path>.json`).\n  2. For each, inspect its state: an app-autopilot run has `app_state.active_plan` set\n     (`app-state-get --specPath <that-spec>`); a single-plan run has an `autopilot` block with\n     `current_phase` ≠ `all_done`. Treat either as \"in progress\" unless it carries a terminal\n     `halt_reason` (those need the user to act first — surface the resume hint).\n  3. If exactly one in-progress run is found, resume it (use its `active_plan`, or the plan the\n     sidecar's spec frontmatter points to). If several, list them and ask which. If none, say so and\n     point the user at `/autopilot <plan-path>`.\n\nBecause state is in the sidecar, **handing off to a brand-new session just means running `/autopilot`\nagain** — no need to remember the plan path or re-supply any flags.\n";
+
+test('/autopilot delegates to execution with driver: autopilot', () => {
+  const content = readCommand('autopilot.md');
+  assert.ok(
+    content.includes('codex-paired-superpowers:execution'),
+    '/autopilot must invoke `codex-paired-superpowers:execution` (thin alias)',
+  );
+  assert.ok(
+    content.includes('driver: autopilot'),
+    '/autopilot must pass `driver: autopilot`',
+  );
+});
+
+test('/autopilot still forwards $ARGUMENTS via the trailing Plan line', () => {
+  const content = readCommand('autopilot.md');
+  assert.ok(
+    content.trimEnd().endsWith('Plan: $ARGUMENTS'),
+    '/autopilot must still end with `Plan: $ARGUMENTS` (plan path forwarding preserved)',
+  );
+});
+
+test('/autopilot resume-discovery section is byte-identical to the pre-alias snapshot', () => {
+  const section = sectionByHeader(readCommand('autopilot.md'), '## How resume works (read this for session handoff)');
+  assert.equal(
+    section,
+    AUTOPILOT_RESUME_SECTION_PRE_EDIT,
+    'the `## How resume works` section must not change under the thin-alias edit',
+  );
+  // Usage lines must also remain present (asserted outside the resume section).
+  const content = readCommand('autopilot.md');
+  assert.ok(
+    content.includes('/autopilot                       # resume the in-progress autopilot run (handoff-friendly)'),
+    '/autopilot usage block must keep the no-arg resume line',
+  );
+  assert.ok(
+    content.includes('/autopilot docs/plans/<plan>.md  # start (or resume) a specific plan'),
+    '/autopilot usage block must keep the plan-path line',
+  );
+});
+
+test('/autopilot alias introduces no new -- flags', () => {
+  const content = readCommand('autopilot.md');
+  const flags = content.match(/(?<![A-Za-z0-9])--[A-Za-z][\w-]*/g) || [];
+  // Today the only `--` token is `--specPath` inside the resume-discovery example prose.
+  // The thin-alias edit must not add any new flag shapes beyond that baseline.
+  assert.deepEqual(
+    [...new Set(flags)].sort(),
+    ['--specPath'],
+    `/autopilot must not introduce new CLI flags; found: ${flags.join(', ')}`,
+  );
+});
