@@ -61,9 +61,9 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-activ
 The marker has an 8-hour TTL; for longer autopilot runs, refresh it on each major phase boundary (or pass `--ttl-hours 24`). See `skills/honest-reporting/SKILL.md` for the VERIFIED / ASSUMED / UNTESTED vocabulary.
 
 ## Required inputs
-- A double-SHIP'd plan at `docs/superpowers/plans/<plan>.md`.
-- The plan's parent spec at `docs/superpowers/specs/<spec>.md` with a sidecar (`<spec>.codex.json`) containing the persistent Codex threadId.
-- The plan's frontmatter must reference the spec path explicitly (`**Spec:** docs/superpowers/specs/...`).
+- A double-SHIP'd plan at `docs/plans/<plan>.md`.
+- The plan's parent spec at `docs/specs/<spec>.md` with a sidecar (`<spec>.codex.json`) containing the persistent Codex threadId.
+- The plan's frontmatter must reference the spec path explicitly (`**Spec:** docs/specs/...`).
 
 If any of these are missing, halt with a clear error message. Do NOT try to brainstorm or write a plan from inside autopilot.
 

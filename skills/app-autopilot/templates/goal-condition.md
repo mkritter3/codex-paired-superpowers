@@ -12,15 +12,15 @@ Read the most recent <<<APP_AUTOPILOT_PROGRESS>>> block in the transcript. If "G
 
 ## Substitutions
 
-- `{{spec_path}}` — full path to the app-scoped spec, e.g. `docs/superpowers/specs/2026-05-22-todo-app-design.md`. Use the same path string the sidecar was initialized with.
+- `{{spec_path}}` — full path to the app-scoped spec, e.g. `docs/specs/2026-05-22-todo-app-design.md`. Use the same path string the sidecar was initialized with.
 - `{{total_goals}}` — integer count of goals in the spec's `<<<GOALS>>>` block. Get it from `app-state-get` (`.goals.length` or `.total_goals` from `app-state-next-plan-context`).
 
 ## Worked example
 
-For a spec at `docs/superpowers/specs/2026-05-22-todo-app-design.md` with 4 goals, the rendered condition becomes:
+For a spec at `docs/specs/2026-05-22-todo-app-design.md` with 4 goals, the rendered condition becomes:
 
 ```
-The app whose design lives at docs/superpowers/specs/2026-05-22-todo-app-design.md is fully shipped when the assistant has surfaced the line "Goals shipped: 4/4" in its progress block for that spec. This goal is also satisfied if the assistant surfaces "APP_HALT" — that means it hit something it can't recover from on its own and is handing back to the user. As a safety cap, stop after 200 turns regardless.
+The app whose design lives at docs/specs/2026-05-22-todo-app-design.md is fully shipped when the assistant has surfaced the line "Goals shipped: 4/4" in its progress block for that spec. This goal is also satisfied if the assistant surfaces "APP_HALT" — that means it hit something it can't recover from on its own and is handing back to the user. As a safety cap, stop after 200 turns regardless.
 
 Read the most recent <<<APP_AUTOPILOT_PROGRESS>>> block in the transcript. If "Goals shipped" matches "4/4", the goal is met. If "APP_HALT" appears anywhere in the most recent turn, the goal is met (the human will take it from here). Otherwise the goal is NOT met and the assistant should keep working — its next turn should run app-autopilot again on the same spec.
 ```

@@ -20,7 +20,7 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-mark-activ
 The marker has an 8-hour TTL and auto-expires; no cleanup needed.
 
 ## Phase 0 — Locate the sidecar
-The plan must be born from a double-SHIP'd spec. Read the spec's frontmatter or use the convention `<plan>` ↔ `<spec>` mapping (plans live under `docs/superpowers/plans/`, specs under `docs/superpowers/specs/`, same date prefix and name).
+The plan must be born from a double-SHIP'd spec. Read the spec's frontmatter or use the convention `<plan>` ↔ `<spec>` mapping (plans live under `docs/plans/`, specs under `docs/specs/`, same date prefix and name).
 
 Verify the sidecar exists and the spec is double-SHIP'd:
 
@@ -31,12 +31,12 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-show --specPath "<spe
 Expected: most recent spec-phase round shows `claude: SHIP` and `codex: SHIP`. If not, halt — the spec needs to be shipped first.
 
 ## Phase 1 — Draft the plan (Claude alone)
-Write the plan locally to `docs/superpowers/plans/YYYY-MM-DD-<feature>.md`. Follow the upstream `superpowers:writing-plans` discipline: file structure first, slices, then bite-sized tasks, exact file paths, no placeholders, complete code.
+Write the plan locally to `docs/plans/YYYY-MM-DD-<feature>.md`. Follow the upstream `superpowers:writing-plans` discipline: file structure first, slices, then bite-sized tasks, exact file paths, no placeholders, complete code.
 
 The plan MUST include in its frontmatter the spec path:
 
 ```markdown
-**Spec:** `docs/superpowers/specs/YYYY-MM-DD-<feature>-design.md`
+**Spec:** `docs/specs/YYYY-MM-DD-<feature>-design.md`
 ```
 
 This makes sidecar discovery deterministic for downstream slice-review.

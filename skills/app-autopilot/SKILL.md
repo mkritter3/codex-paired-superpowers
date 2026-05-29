@@ -32,8 +32,8 @@ Every user-facing line app-autopilot writes — progress updates, halt messages,
 
 ## Required inputs
 
-- A double-SHIP'd **app-scoped** spec at `docs/superpowers/specs/<spec>.md`. The spec's `<<<GOALS>>>` block must list ≥ 1 user-observable outcome — typically 3+ for a real app. Brainstorming with `app-scoped: true` enforces this.
-- A double-SHIP'd **first plan** at `docs/superpowers/plans/<plan-1>.md`, drafted by Codex-paired `writing-plans`, that delivers at least one of the spec's goals.
+- A double-SHIP'd **app-scoped** spec at `docs/specs/<spec>.md`. The spec's `<<<GOALS>>>` block must list ≥ 1 user-observable outcome — typically 3+ for a real app. Brainstorming with `app-scoped: true` enforces this.
+- A double-SHIP'd **first plan** at `docs/plans/<plan-1>.md`, drafted by Codex-paired `writing-plans`, that delivers at least one of the spec's goals.
 - The sidecar's `app_state` block, initialized via `app-state-init`. (Brainstorming does this automatically when the spec is app-scoped.)
 
 If you arrive at app-autopilot without these in place, halt and route the user back to `brainstorming` (with app-scope) → `writing-plans`. Do NOT try to brainstorm or write a plan from inside app-autopilot.
@@ -143,7 +143,7 @@ This step only fires when no plan is active. Reuse the **writing-plans** skill, 
 
 3. Run the standard writing-plans 7-round loop using the spec's existing Codex threadId. Reuse the existing skill verbatim — `writing-plans` already handles round counting, audit gates, panel TDD review, etc. Pass the spec path; it picks up the threadId from the sidecar.
 
-4. When writing-plans returns a double-SHIP'd plan, write it to `docs/superpowers/plans/<date>-<auto-named>.md` and mark it active:
+4. When writing-plans returns a double-SHIP'd plan, write it to `docs/plans/<date>-<auto-named>.md` and mark it active:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js app-state-set-plan \
@@ -172,10 +172,10 @@ Adapt to what actually happened this turn. Examples for other situations:
 
 ```
 <<<APP_AUTOPILOT_PROGRESS>>>
-Spec: docs/superpowers/specs/<spec>.md
+Spec: docs/specs/<spec>.md
 Goals shipped: 2/6
-Active plan: docs/superpowers/plans/2026-05-24-profile-pictures.md
-Just shipped this turn: goal-password-reset (via docs/superpowers/plans/2026-05-23-password-reset.md)
+Active plan: docs/plans/2026-05-24-profile-pictures.md
+Just shipped this turn: goal-password-reset (via docs/plans/2026-05-23-password-reset.md)
 Halt: none
 <<<END_PROGRESS>>>
 ```

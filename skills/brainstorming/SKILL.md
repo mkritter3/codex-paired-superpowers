@@ -38,7 +38,7 @@ Default to feature-scoped if the user is ambiguous. App-scoped MUST have ≥ 3 g
 Read relevant files. Build a short context note: existing patterns, conventions, file organization, prior art. This becomes context for Codex.
 
 ## Phase 2 — Open Codex session (uncounted)
-Pick a spec path: `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` (or user override).
+Pick a spec path: `docs/specs/YYYY-MM-DD-<topic>-design.md` (or user override).
 
 ### Goal extraction (do this before composing the prompt)
 
