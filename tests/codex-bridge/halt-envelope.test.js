@@ -220,6 +220,11 @@ test('HALT_MAP snapshot — terminal vs transient classification', () => {
     'reconciler-failed',
     'role-composer-fan-out-unjustified',
     'sidecar-replay-concurrent-order-invalid',
+    // unified execution driver — split-dispatcher halts (sorted)
+    'split-directive-unknown',
+    'split-single-with-implementers',
+    'split-two-disjoint-not-exactly-two',
+    'split-unknown-driver',
     'subagent-blocked',
     'subagent-needs-context',
     'user-input-required',
@@ -648,8 +653,8 @@ test('v0.10.0: HALT_MAP total key count snapshot (16 legacy terminal + 3 transie
   // NOTE: This test was the original slice-1 count snapshot.
   // After slice-7 adds 11 more codes, slice-8 adds 10 more, slice-9 adds 7 more, total = 65.
   // The original 37 = 16 legacy terminal + 3 transient + 18 v0.10.0 new.
-  // Slice 7 adds 11 more, slice 8 adds 10 more, slice-9 adds 7 more, slice-4 hybrid adds 12 more, so total = 77.
-  assert.equal(HALT_MAP.size, 77, 'HALT_MAP must have exactly 77 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 + 7 slice-9 + 12 hybrid-slice-4 additions)');
+  // Slice 7 adds 11 more, slice 8 adds 10 more, slice-9 adds 7 more, slice-4 hybrid adds 12 more, split-dispatcher adds 4 more, so total = 81.
+  assert.equal(HALT_MAP.size, 81, 'HALT_MAP must have exactly 81 entries (37 pre-slice-7 + 11 slice-7 + 10 slice-8 + 7 slice-9 + 12 hybrid-slice-4 + 4 split-dispatcher additions)');
 });
 
 // ── v0.10.0 slice-7: 11 new halt codes (8 merge + 3 retroactive worktree) ───
@@ -733,8 +738,8 @@ test('slice-8: wrapAsHaltEnvelope returns correct shape for all 10 new merger co
   }
 });
 
-test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new + 7 slice-9 + 12 hybrid = 77)', () => {
-  assert.equal(HALT_MAP.size, 77, 'HALT_MAP must have exactly 77 entries after slice-8 + slice-9 + hybrid-slice-4 additions');
+test('slice-8: HALT_MAP total key count snapshot updated (48 + 10 new + 7 slice-9 + 12 hybrid + 4 split-dispatcher = 81)', () => {
+  assert.equal(HALT_MAP.size, 81, 'HALT_MAP must have exactly 81 entries after slice-8 + slice-9 + hybrid-slice-4 + split-dispatcher additions');
 });
 
 test('slice-7: all 11 new halt codes are present in HALT_MAP', () => {
@@ -776,7 +781,8 @@ test('slice-7: isTerminalHalt returns true for all 11 new halt codes', () => {
 test('slice-7: HALT_MAP total key count snapshot updated (37 + 11 new = 48, but slice-8 adds 10 more = 58, slice-9 adds 7 more = 65)', () => {
   // Snapshot the total count so additions are always explicit.
   // After slice-8: 48 + 10 = 58. After slice-9: 58 + 7 = 65. After hybrid slice-4: 65 + 12 = 77.
-  assert.equal(HALT_MAP.size, 77, 'HALT_MAP must have exactly 77 entries after slice-7 + slice-8 + slice-9 + hybrid-slice-4 additions');
+  // After unified-execution-driver split-dispatcher: 77 + 4 = 81.
+  assert.equal(HALT_MAP.size, 81, 'HALT_MAP must have exactly 81 entries after slice-7 + slice-8 + slice-9 + hybrid-slice-4 + split-dispatcher additions');
 });
 
 test('slice-7: snapshot terminal vs transient classification includes new codes', () => {
@@ -872,6 +878,11 @@ test('slice-7: snapshot terminal vs transient classification includes new codes'
     'reconciler-failed',
     'role-composer-fan-out-unjustified',
     'sidecar-replay-concurrent-order-invalid',
+    // unified execution driver — split-dispatcher halts (sorted)
+    'split-directive-unknown',
+    'split-single-with-implementers',
+    'split-two-disjoint-not-exactly-two',
+    'split-unknown-driver',
     'subagent-blocked',
     'subagent-needs-context',
     'user-input-required',
