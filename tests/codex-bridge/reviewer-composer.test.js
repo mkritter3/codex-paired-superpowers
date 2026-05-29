@@ -137,6 +137,85 @@ test('>5 selected reviewers WITHOUT fanOutRationale throws role-composer-fan-out
   }
 });
 
+// ── Slice 7: **Reviewers:** canonical directive + **Experts:** deprecated alias ──
+
+test('reviewersDirective selects roles with canonical reason; directiveWarning null', () => {
+  const root = makeRepo();
+  try {
+    const result = composeReviewers({
+      phase: 'spec-review',
+      signals: { reviewersDirective: 'ui, test' },
+      repoRoot: root,
+    });
+    const selected = ids(result);
+    assert.ok(selected.includes('reviewer-ui'), selected);
+    assert.ok(selected.includes('reviewer-test'), selected);
+    assert.equal(result.selectionReasons['reviewer-ui'], 'from **Reviewers:** directive');
+    assert.equal(result.directiveWarning, null);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('expertsDirective alone selects roles + emits deprecation directiveWarning', () => {
+  const root = makeRepo();
+  try {
+    const result = composeReviewers({
+      phase: 'spec-review',
+      signals: { expertsDirective: 'ui' },
+      repoRoot: root,
+    });
+    const selected = ids(result);
+    assert.ok(selected.includes('reviewer-ui'), selected);
+    assert.equal(result.selectionReasons['reviewer-ui'], 'from **Experts:** directive');
+    assert.ok(result.directiveWarning, 'expected a directiveWarning');
+    assert.match(result.directiveWarning, /deprecat/i);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('both reviewersDirective and expertsDirective present → Reviewers wins + precedence warning', () => {
+  const root = makeRepo();
+  try {
+    const result = composeReviewers({
+      phase: 'spec-review',
+      signals: { reviewersDirective: 'ui', expertsDirective: 'security' },
+      repoRoot: root,
+    });
+    const selected = ids(result);
+    assert.ok(selected.includes('reviewer-ui'), selected);
+    // experts-only role NOT added when reviewers directive is present.
+    assert.ok(!selected.includes('reviewer-security'), selected);
+    assert.equal(result.selectionReasons['reviewer-ui'], 'from **Reviewers:** directive');
+    assert.ok(result.directiveWarning, 'expected a directiveWarning');
+    assert.match(
+      result.directiveWarning,
+      /\*\*Reviewers:\*\* takes precedence over deprecated \*\*Experts:\*\*/,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('legacy explicitDirective alias behaves exactly like expertsDirective', () => {
+  const root = makeRepo();
+  try {
+    const result = composeReviewers({
+      phase: 'spec-review',
+      signals: { explicitDirective: 'ui' },
+      repoRoot: root,
+    });
+    const selected = ids(result);
+    assert.ok(selected.includes('reviewer-ui'), selected);
+    assert.equal(result.selectionReasons['reviewer-ui'], 'from **Experts:** directive');
+    assert.ok(result.directiveWarning, 'expected a deprecation directiveWarning');
+    assert.match(result.directiveWarning, /deprecat/i);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('>5 selected reviewers WITH fanOutRationale returns successfully', () => {
   const root = makeRepo();
   try {
