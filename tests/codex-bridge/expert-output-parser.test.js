@@ -8,6 +8,17 @@ import {
   parseExpertOutput,
   buildRepairPrompt,
 } from '../../lib/codex-bridge/expert-output-parser.js';
+import {
+  parseReviewerOutput,
+  buildRepairPrompt as reviewerBuildRepairPrompt,
+} from '../../lib/codex-bridge/reviewer-output-parser.js';
+
+// Plan 3 one-window contract: the expert-* shim re-exports the identical
+// reviewer-* references.
+test('expert-output-parser shim === reviewer-output-parser canonical', () => {
+  assert.equal(parseExpertOutput, parseReviewerOutput);
+  assert.equal(buildRepairPrompt, reviewerBuildRepairPrompt);
+});
 
 function validPayload(overrides = {}) {
   return {

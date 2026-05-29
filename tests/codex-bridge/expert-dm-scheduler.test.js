@@ -11,6 +11,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { drainPeerDMs } from '../../lib/codex-bridge/expert-dm-scheduler.js';
+import { drainPeerDMs as reviewerDrainPeerDMs } from '../../lib/codex-bridge/reviewer-dm-scheduler.js';
+
+// Plan 3 one-window contract: the expert-* shim re-exports the identical
+// reviewer-* reference.
+test('expert-dm-scheduler shim === reviewer-dm-scheduler canonical', () => {
+  assert.equal(drainPeerDMs, reviewerDrainPeerDMs);
+});
 
 function makeIdentity(id, role = id.replace(/^expert-/, '')) {
   return { id, role, promptPath: `/fake/prompts/${id}.md`, source: 'builtin' };

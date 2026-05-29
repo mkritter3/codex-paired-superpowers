@@ -26,6 +26,17 @@ import {
   HALT_REASONS_ARCHIVE,
   HALT_REASONS_PRESERVE,
 } from '../../lib/codex-bridge/expert-archive.js';
+import {
+  archive as reviewerArchive,
+  ReviewerArchiveError,
+} from '../../lib/codex-bridge/reviewer-archive.js';
+
+// Plan 3 one-window contract: the expert-* shim must re-export the identical
+// reviewer-* references (single source of truth).
+test('expert-archive shim === reviewer-archive canonical', () => {
+  assert.equal(archive, reviewerArchive);
+  assert.equal(ExpertArchiveError, ReviewerArchiveError);
+});
 
 const IDENTITY = { id: 'expert-ui', role: 'ui', source: 'builtin' };
 const REPO_ROOT = '/tmp/fake-repo';

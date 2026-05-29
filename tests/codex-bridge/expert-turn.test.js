@@ -9,7 +9,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { assembleSpawnPrompt, runTurnWithDeps } from '../../lib/codex-bridge/expert-turn.js';
+import {
+  assembleSpawnPrompt as reviewerAssembleSpawnPrompt,
+  runTurnWithDeps as reviewerRunTurnWithDeps,
+} from '../../lib/codex-bridge/reviewer-turn.js';
 import { initSidecar, loadSidecar } from '../../lib/codex-bridge/sidecar.js';
+
+// Plan 3 one-window contract: the expert-* shim re-exports the identical
+// reviewer-* references.
+test('expert-turn shim === reviewer-turn canonical', () => {
+  assert.equal(runTurnWithDeps, reviewerRunTurnWithDeps);
+  assert.equal(assembleSpawnPrompt, reviewerAssembleSpawnPrompt);
+});
 
 function makeTmp(prefix = 'cps-expert-turn-') {
   return mkdtempSync(join(tmpdir(), prefix));

@@ -14,7 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import * as facade from '../../lib/codex-bridge/expert-runtime.js';
-import { composeExperts } from '../../lib/codex-bridge/role-composer.js';
+import * as reviewerRuntime from '../../lib/codex-bridge/reviewer-runtime.js';
+import { composeReviewers } from '../../lib/codex-bridge/reviewer-composer.js';
 import { writeToMailbox } from '../../lib/codex-bridge/mailbox.js';
 
 function makeRepo() {
@@ -30,14 +31,21 @@ test('facade exposes exactly 5 callable methods: resolveIdentity, selectTeammate
   }
 });
 
-test('facade.selectTeammates is an alias for composeExperts', () => {
-  assert.equal(facade.selectTeammates, composeExperts);
+test('facade.selectTeammates is an alias for composeReviewers (Plan 3)', () => {
+  assert.equal(facade.selectTeammates, composeReviewers);
+  assert.equal(facade.selectReviewers, composeReviewers);
 });
 
-test('facade.resolveIdentity resolves builtin role', () => {
+test('expert-runtime shim re-exports the identical reviewer-runtime references', () => {
+  for (const name of ['resolveIdentity', 'selectReviewers', 'selectTeammates', 'runTurn', 'archive', 'pollInbox']) {
+    assert.equal(facade[name], reviewerRuntime[name], `facade.${name} must === reviewer-runtime.${name}`);
+  }
+});
+
+test('facade.resolveIdentity resolves builtin role to canonical reviewer-* id', () => {
   // architecture is one of the shipped builtin prompts (per slice 2).
   const id = facade.resolveIdentity('architecture', '/nonexistent-repo-root');
-  assert.equal(id.id, 'expert-architecture');
+  assert.equal(id.id, 'reviewer-architecture');
   assert.equal(id.role, 'architecture');
   assert.equal(id.source, 'builtin');
 });
