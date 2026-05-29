@@ -547,3 +547,75 @@ test('markManyAsRead works for expert-* recipients', async () => {
   }
   cleanup(root);
 });
+
+// ── v0.14.0 contract metadata persistence (hybrid Slice 2) ─────────────────
+
+test('writeToMailbox persists optional metadata (kind/priority/implementer_run_id/slice_id/body_hash)', async () => {
+  const root = makeRepo();
+  const bodyHash = 'sha256:' + 'a'.repeat(64);
+  const { id } = await writeToMailbox(root, 'slice-4', {
+    from: 'orchestrator',
+    text: 'contract published',
+    kind: 'contract',
+    priority: 'urgent',
+    implementer_run_id: 'run-abc-123',
+    slice_id: 'slice-4',
+    body_hash: bodyHash,
+  });
+  const messages = await readMailbox(root, 'slice-4');
+  assert.equal(messages.length, 1);
+  const m = messages[0];
+  assert.equal(m.id, id);
+  assert.equal(m.kind, 'contract');
+  assert.equal(m.priority, 'urgent');
+  assert.equal(m.implementer_run_id, 'run-abc-123');
+  assert.equal(m.slice_id, 'slice-4');
+  assert.equal(m.body_hash, bodyHash);
+  cleanup(root);
+});
+
+test('VALID_KINDS includes contract; a kind:contract message is accepted', async () => {
+  const root = makeRepo();
+  const r = await writeToMailbox(root, 'slice-4', {
+    from: 'orchestrator',
+    text: 'hi',
+    kind: 'contract',
+  });
+  assert.match(r.id, /^msg-\d{4}/);
+  const messages = await readMailbox(root, 'slice-4');
+  assert.equal(messages[0].kind, 'contract');
+  cleanup(root);
+});
+
+test('back-compat: messages without optional metadata read cleanly (fields absent, no throw)', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'orchestrator', { from: 'slice-1', text: 'plain' });
+  const messages = await readMailbox(root, 'orchestrator');
+  assert.equal(messages.length, 1);
+  const m = messages[0];
+  // Optional metadata not supplied → not persisted as a key
+  assert.equal('kind' in m, false);
+  assert.equal('priority' in m, false);
+  assert.equal('implementer_run_id' in m, false);
+  assert.equal('slice_id' in m, false);
+  assert.equal('body_hash' in m, false);
+  cleanup(root);
+});
+
+test('partial optional metadata persists only supplied keys', async () => {
+  const root = makeRepo();
+  await writeToMailbox(root, 'slice-4', {
+    from: 'orchestrator',
+    text: 'progress note',
+    kind: 'progress',
+    slice_id: 'slice-4',
+  });
+  const messages = await readMailbox(root, 'slice-4');
+  const m = messages[0];
+  assert.equal(m.kind, 'progress');
+  assert.equal(m.slice_id, 'slice-4');
+  assert.equal('priority' in m, false);
+  assert.equal('implementer_run_id' in m, false);
+  assert.equal('body_hash' in m, false);
+  cleanup(root);
+});
