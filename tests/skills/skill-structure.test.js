@@ -808,3 +808,77 @@ test('v0.14.0: hybrid orchestration type named consistently across both skills',
     );
   }
 });
+
+// ── Plan 2 Slice 2 — unified execution skill + /execute command ──
+
+function readCommand(name) {
+  return readFileSync(join(PLUGIN_ROOT, 'commands', name), 'utf8');
+}
+
+test('execution skill exists and names both drivers', () => {
+  const content = readSkill('execution');
+  assert.ok(content.includes('driver: interactive'), 'execution skill must name `driver: interactive`');
+  assert.ok(content.includes('driver: autopilot'), 'execution skill must name `driver: autopilot`');
+});
+
+test('execution skill documents no-arg resume as autopilot-only (scoped to selection rules)', () => {
+  // Scope to the selection-rules section so the assertion can't pass on unrelated prose.
+  const section = sectionByHeader(readSkill('execution'), '## Selection rules');
+  assert.match(
+    section,
+    /autopilot-only/i,
+    'selection rules must state no-argument resume is autopilot-only (spec rule 3)',
+  );
+  assert.match(
+    section,
+    /sidecar/i,
+    'selection rules must state no-arg resume reuses the /autopilot sidecar scan',
+  );
+  assert.match(
+    section,
+    /\/autopilot/,
+    'selection rules must reference the same /autopilot resume behavior',
+  );
+});
+
+test('execution skill states interactive requires a plan path / is non-resumable (scoped)', () => {
+  const section = sectionByHeader(readSkill('execution'), '## Selection rules');
+  assert.match(section, /driver: interactive/, 'selection rules must mention `driver: interactive`');
+  assert.match(
+    section,
+    /not resum|non-resumable|requires a plan path|plan path/i,
+    'selection rules must state interactive needs a plan path and is not resumed from sidecar state (spec rule 4)',
+  );
+});
+
+test('/execute command exists and documents driver + no-arg autopilot resume', () => {
+  const content = readCommand('execute.md');
+  assert.match(
+    content,
+    /driver=<interactive\|autopilot>/,
+    '/execute must document `driver=<interactive|autopilot>`',
+  );
+  assert.match(content, /plan[- ]path|plan path|<plan-path>/i, '/execute must document the plan path argument');
+  assert.match(content, /autopilot/i, '/execute must document no-argument autopilot resume');
+});
+
+test('execution skill forbids internal labels in user-visible output', () => {
+  const content = readSkill('execution');
+  assert.match(content, /plain[- ]english/i, 'execution skill must require plain-English user-visible output');
+  assert.ok(
+    content.includes('slice') && content.includes('SHIP') && content.includes('Phase B'),
+    'execution skill output guard must name the forbidden internal labels (slice / SHIP / Phase B)',
+  );
+});
+
+test('/execute launches the execution skill and forwards arguments', () => {
+  const content = readCommand('execute.md');
+  assert.ok(
+    content.includes('codex-paired-superpowers:execution'),
+    '/execute must invoke `codex-paired-superpowers:execution`',
+  );
+  assert.ok(
+    content.includes('Arguments: $ARGUMENTS'),
+    '/execute must forward raw arguments via `Arguments: $ARGUMENTS`',
+  );
+});
