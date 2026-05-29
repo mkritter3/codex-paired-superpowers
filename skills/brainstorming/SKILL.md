@@ -227,7 +227,7 @@ Loop exits when **both** Claude and Codex emit SHIP in the same round, OR after 
 ### Open contentions
 If a critique survives 2 rounds (both sides keep restating opposing views without converging), record it under `## Open Contentions` in the spec AND in the sidecar via `sidecar-add-contention`. Bring it to the user.
 
-## Composer-selected expert spec-review (v0.9.0)
+## Composer-selected reviewer spec-review (v0.9.0)
 
 After each Codex round in Phase 3 produces a revised draft, the orchestrator MAY (and at high-stakes phases SHOULD) fan out **composer-selected experts in parallel** to critique that draft before Claude forms its own round verdict. This adds cross-model L11 critique without changing the double-SHIP exit gate.
 
@@ -238,8 +238,8 @@ This phase is **optional per round** but **strongly recommended after rounds 1 a
 Call the v0.8.0 composer with the spec's signals:
 
 ```js
-const { composeExperts } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-composer.js');
-const result = composeExperts({
+const { composeReviewers } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-composer.js');
+const result = composeReviewers({
   phase: 'spec-review',
   signals: {
     specHas:    [/* spec keywords */],
@@ -273,7 +273,7 @@ const availableCLIs  = availableCLISet(detectorResult);
 for (const identity of result.selected) {
   let resolved;
   try {
-    // Resolver is keyed by the recommendation role id (e.g. "expert-architecture"),
+    // Resolver is keyed by the recommendation role id (e.g. "reviewer-architecture"),
     // which is identity.id — NOT identity.role (the short form "architecture").
     resolved = resolveAdapter(identity.id, availableCLIs, /* userRouting */ null);
   } catch (err) {
@@ -303,7 +303,7 @@ For each expert, build the request and dispatch via `runTurnWithDeps` (v0.9.0 �
 
 ```js
 const { runTurnWithDeps, assembleSpawnPrompt } =
-  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-turn.js');
 const { readUnreadMessages } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
 
@@ -330,7 +330,7 @@ Dispatch all selected experts in parallel — Claude's single-turn parallel-tool
 
 ### Step 4 — Panel mode for high-stakes spec phases (optional)
 
-If the composer flags the phase as high-stakes (e.g., security-sensitive spec, foundational architectural decision), upgrade `expert-security` or `expert-architecture` to **panel mode** via `dispatchPanel` (slice 6 contract). Build a `dispatchFns: Map<member_id, fn>` where each entry wraps `runTurnWithDeps` with an adapter-specific identity:
+If the composer flags the phase as high-stakes (e.g., security-sensitive spec, foundational architectural decision), upgrade `reviewer-security` or `reviewer-architecture` to **panel mode** via `dispatchPanel` (slice 6 contract). Build a `dispatchFns: Map<member_id, fn>` where each entry wraps `runTurnWithDeps` with an adapter-specific identity:
 
 ```js
 const { dispatchPanel } =

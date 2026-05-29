@@ -2,7 +2,7 @@
 //
 // Codex plan round-2 critique flagged critical-tier prose changes as needing
 // verification: every SKILL.md update for v0.9.0 must consistently reference
-// the new dispatcher APIs (composeExperts, runTurnWithDeps, dispatchPanel,
+// the new dispatcher APIs (composeReviewers, runTurnWithDeps, dispatchPanel,
 // resolveAdapter, detectAvailableCLIs) and the new section headings.
 //
 // These tests are PURE STRUCTURAL — they assert substring presence in each
@@ -31,13 +31,13 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
       '## Phase 0',
       '## Phase 2',
       '## Phase 3',
-      '## Composer-selected expert spec-review',
+      '## Composer-selected reviewer spec-review',
     ],
     required_commands: [
       'mcp__plugin_codex-paired-superpowers_codex__codex-reply',
     ],
     required_api_refs: [
-      'composeExperts',
+      'composeReviewers',
       'runTurnWithDeps',
       'dispatchPanel',
       'resolveAdapter',
@@ -53,14 +53,14 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
       '## high_stakes frontmatter',
     ],
     required_commands: [
-      'expert-test',
+      'reviewer-test',
       // tdd-review is the v0.9.0 phase string passed to dispatchPanel and
       // matches the phase recorded in the sidecar.
       'tdd-review',
     ],
     required_api_refs: [
       'dispatchPanel',
-      'composeExperts',
+      'composeReviewers',
       'runTurnWithDeps',
       'resolveAdapter',
       'detectAvailableCLIs',
@@ -73,7 +73,7 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
     ],
     required_commands: [
       '--single',
-      'expert-test',
+      'reviewer-test',
     ],
     required_api_refs: [
       'dispatchPanel',
@@ -83,10 +83,10 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
   },
   'subagent-driven-development': {
     required_headings: [
-      '## Per-slice expert review',
+      '## Per-slice reviewer review',
     ],
     required_api_refs: [
-      'composeExperts',
+      'composeReviewers',
       'runTurnWithDeps',
       'resolveAdapter',
       'detectAvailableCLIs',
@@ -104,7 +104,7 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
       '## Composer-picked hypothesis review',
     ],
     required_api_refs: [
-      'composeExperts',
+      'composeReviewers',
       'runTurnWithDeps',
       'dispatchPanel',
     ],
@@ -123,7 +123,7 @@ const SKILL_STRUCTURE_REQUIREMENTS = {
       'dispatchPanel',
       'resolveAdapter',
       'drainPeerDMs',
-      'composeExperts',
+      'composeReviewers',
       'runTurnWithDeps',
       'detectAvailableCLIs',
     ],
@@ -807,6 +807,142 @@ test('v0.14.0: hybrid orchestration type named consistently across both skills',
       `${skill}/SKILL.md must name the hybrid orchestration type as "**Orchestration:** hybrid"`,
     );
   }
+});
+
+// ── Plan 3 Slice 8 — reviewer-named skill prose (six skills) ──
+//
+// New write/dispatch prose must name the reviewer APIs/fields/ids. The legacy
+// expert-* surface keeps working via runtime shims (validated by
+// skill-dispatch-integration.test.js), but the SKILL.md instructions must point
+// new work at the canonical reviewer names. Writer-side `expert-implementer` and
+// `hybrid-*` ids are a DIFFERENT (implementer) sense and are out of scope.
+
+const REVIEWER_PROSE_SKILLS = [
+  'brainstorming',
+  'writing-plans',
+  'test-driven-development',
+  'subagent-driven-development',
+  'systematic-debugging',
+  'autopilot',
+];
+
+// Reviewer-sense role-id stems. `implementer` is intentionally excluded (it is
+// the writer-side sense, untouched by this migration).
+const REVIEWER_ROLE_STEMS = ['test', 'security', 'architecture', 'ui', 'ux', 'backend', 'ai-harness'];
+
+// Forbidden expert-sense literals in NEW write/dispatch instructions. Each is a
+// reviewer-sense name with a canonical reviewer replacement. `updateExpertStatus`
+// and `appendFanOutRationale` are NOT listed — they were not renamed (no reviewer
+// export exists), so they remain valid.
+const FORBIDDEN_EXPERT_SENSE_LITERALS = [
+  'composeExperts',
+  'expert-turn',      // import path expert-turn.js → reviewer-turn.js
+  'expert-runtime',   // import path expert-runtime.js → reviewer-runtime.js
+  'expert_teammates',
+  'experts_selected',
+  'expert_turn_ids',
+  'expert_blockers',
+  'appendExpert',     // appendExpertSelection/Turn → appendReviewer*
+  ...REVIEWER_ROLE_STEMS.map((r) => `expert-${r}`),
+];
+
+test('Slice 8: writing-plans emits **Reviewers:** (canonical) and notes **Experts:** deprecated', () => {
+  const content = readSkill('writing-plans');
+  assert.ok(
+    content.includes('**Reviewers:**'),
+    'writing-plans must document the canonical **Reviewers:** plan directive',
+  );
+  assert.match(
+    content,
+    /\*\*Experts:\*\*[\s\S]{0,200}?deprecat/i,
+    'writing-plans must note the **Experts:** directive is deprecated',
+  );
+});
+
+test('Slice 8: autopilot + subagent-driven-development build composer signals from reviewers with experts fallback', () => {
+  for (const skill of ['autopilot', 'subagent-driven-development']) {
+    const content = readSkill(skill);
+    // Canonical reviewers directive read, with the deprecated experts fallback.
+    assert.ok(
+      content.includes('reviewersDirective'),
+      `${skill}/SKILL.md must build composer signals from sliceFrontmatter.reviewers (reviewersDirective)`,
+    );
+    assert.ok(
+      content.includes('sliceFrontmatter.reviewers'),
+      `${skill}/SKILL.md must read the canonical sliceFrontmatter.reviewers directive`,
+    );
+    assert.ok(
+      content.includes('sliceFrontmatter.experts'),
+      `${skill}/SKILL.md must keep sliceFrontmatter.experts as a deprecated fallback`,
+    );
+    // Reviewer write APIs/fields in the sidecar-write prose.
+    assert.ok(
+      content.includes('composeReviewers'),
+      `${skill}/SKILL.md must dispatch via composeReviewers`,
+    );
+  }
+  // autopilot sidecar-write fields specifically.
+  const auto = readSkill('autopilot');
+  for (const field of ['reviewer_teammates', 'reviewers_selected', 'reviewer_turn_ids', 'reviewer_blockers']) {
+    assert.ok(
+      auto.includes(field),
+      `autopilot/SKILL.md sidecar-write prose must name reviewer field ${JSON.stringify(field)}`,
+    );
+  }
+  assert.ok(
+    auto.includes('appendReviewerSelection') && auto.includes('appendReviewerTurn'),
+    'autopilot/SKILL.md must name the reviewer write APIs (appendReviewerSelection/appendReviewerTurn)',
+  );
+});
+
+test('Slice 8: all six reviewer-prose skills dispatch via composeReviewers (not composeExperts)', () => {
+  for (const skill of REVIEWER_PROSE_SKILLS) {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('composeReviewers'),
+      `${skill}/SKILL.md must reference composeReviewers`,
+    );
+  }
+});
+
+test('Slice 8: writing-plans + test-driven-development panel prose uses reviewer-test AND reviewer-test@${cli} composite', () => {
+  for (const skill of ['writing-plans', 'test-driven-development']) {
+    const content = readSkill(skill);
+    assert.ok(
+      content.includes('reviewer-test'),
+      `${skill}/SKILL.md panel prose must dispatch the reviewer-test role`,
+    );
+    assert.ok(
+      content.includes('reviewer-test@${cli}'),
+      `${skill}/SKILL.md panel prose must build the member_id composite as reviewer-test@\${cli}`,
+    );
+    assert.equal(
+      content.includes('expert-test@${cli}'),
+      false,
+      `${skill}/SKILL.md must NOT keep the legacy expert-test@\${cli} composite in a new-dispatch instruction`,
+    );
+  }
+});
+
+test('Slice 8: no reviewer-prose skill names forbidden expert-sense literals', () => {
+  const violations = [];
+  for (const skill of REVIEWER_PROSE_SKILLS) {
+    const content = readSkill(skill);
+    content.split('\n').forEach((line, i) => {
+      for (const lit of FORBIDDEN_EXPERT_SENSE_LITERALS) {
+        if (line.includes(lit)) {
+          violations.push(`${skill}:${i + 1}  ${lit}  ::  ${line.trim()}`);
+        }
+      }
+    });
+  }
+  assert.deepEqual(
+    violations,
+    [],
+    `Found forbidden expert-sense literal(s) in reviewer-prose skills. New write/dispatch ` +
+      `instructions must use reviewer naming (the expert-* runtime shims still work but skill ` +
+      `prose must point new work at the canonical names):\n${violations.join('\n')}`,
+  );
 });
 
 // ── Plan 2 Slice 2 — unified execution skill + /execute command ──

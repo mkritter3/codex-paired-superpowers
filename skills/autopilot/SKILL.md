@@ -312,24 +312,32 @@ In all other ambiguous cases (no implementer directive or all plausible domains 
 
 #### Phase B.0.5 — Expert selection per slice (v0.8.0)
 
-For each slice in the current batch, the orchestrator selects an expert teammate set based on signals (slice frontmatter `**Domain:**`, file paths in the slice's `**Files:**` block, content keywords). The selection is recorded in the sidecar's `expert_teammates.selected[]`:
+For each slice in the current batch, the orchestrator selects an expert teammate set based on signals (slice frontmatter `**Domain:**`, file paths in the slice's `**Files:**` block, content keywords). The selection is recorded in the sidecar's `reviewer_teammates.selected[]`:
 
 ```js
-// Pseudo-code: orchestrator selects experts via expert-runtime.
-// IMPORTANT: if the orchestrator believes a broad selection (>5 experts) is
+// Pseudo-code: orchestrator selects reviewers via reviewer-runtime.
+// IMPORTANT: if the orchestrator believes a broad selection (>5 reviewers) is
 // warranted, it MUST pre-compute fanOutRationale and pass it INTO signals
-// BEFORE calling selectTeammates. role-composer.js throws
+// BEFORE calling selectTeammates. reviewer-composer.js throws
 // `role-composer-fan-out-unjustified` if it returns >5 selections without
 // a fanOutRationale, so providing it after the fact is too late.
-const { selectTeammates } = await import('<plugin>/lib/codex-bridge/expert-runtime.js');
+const { selectTeammates } = await import('<plugin>/lib/codex-bridge/reviewer-runtime.js');
 
 // First pass: estimate breadth from signals (or attempt a narrow call first
 // without rationale and recover via try/catch if it throws).
+//
+// Directive precedence: the canonical **Reviewers:** slice directive maps to
+// `reviewersDirective`. The deprecated **Experts:** directive is still accepted
+// on read and maps to `explicitDirective` — if both are present, Reviewers wins
+// and the composer returns a `directiveWarning` (persist it to the sidecar
+// audit). Prefer `sliceFrontmatter.reviewers`; fall back to
+// `sliceFrontmatter.experts` only for legacy plans.
 const signals = {
   specHas: [/* spec keywords */],
   filePaths: [/* slice Files block */],
   domains: [sliceDomain],
-  explicitDirective: sliceFrontmatter.experts,  // optional **Experts:** directive
+  reviewersDirective: sliceFrontmatter.reviewers,  // canonical **Reviewers:** directive
+  explicitDirective: sliceFrontmatter.experts,     // deprecated **Experts:** alias (accepted-on-read)
 };
 
 // If the orchestrator anticipates broad selection (touches UI + UX + arch
@@ -343,18 +351,31 @@ const result = selectTeammates({
   signals,
   repoRoot: <repoRoot>,
 });
-// result.selected: ExpertIdentity[]
+// result.selected: ReviewerIdentity[]
 // result.fanOutRationale: string|null  (populated when >5 selected)
-// result.selectionReasons: {[expertId]: string}
+// result.selectionReasons: {[reviewerId]: string}
+// result.directiveWarning: string|null (set when **Experts:** is used, or
+//                          when both **Reviewers:** and **Experts:** are present)
 
 // Persist:
 for (const identity of result.selected) {
-  appendExpertSelection(specPath, {
+  appendReviewerSelection(specPath, {
     id: identity.id,
     role: identity.role,
     source: identity.source,
     phase: 'post-implementation-review',
     selectionReason: result.selectionReasons[identity.id],
+  });
+}
+if (result.directiveWarning) {
+  // Record the deprecation/precedence warning so the sidecar audit captures
+  // that a legacy **Experts:** directive was read for this slice.
+  appendReviewerSelection(specPath, {
+    id: 'reviewer-directive-warning',
+    role: 'audit',
+    source: 'composer',
+    phase: 'post-implementation-review',
+    selectionReason: result.directiveWarning,
   });
 }
 if (result.fanOutRationale !== null) {
@@ -366,7 +387,7 @@ if (result.fanOutRationale !== null) {
 }
 ```
 
-The role-composer enforces the fan-out contract via `role-composer-fan-out-unjustified` (thrown from `composeExperts`, not from `appendFanOutRationale`). `appendFanOutRationale` is purely a persistence call — it validates that `selected_count > 5` but cannot detect missing rationale on the composer side.
+The role-composer enforces the fan-out contract via `role-composer-fan-out-unjustified` (thrown from `composeReviewers`, not from `appendFanOutRationale`). `appendFanOutRationale` is purely a persistence call — it validates that `selected_count > 5` but cannot detect missing rationale on the composer side.
 
 **Composition with existing Phase B.0:** B.0 still chooses implementer transport (codex vs sonnet) via `dispatchers.json`. B.0.5 augments by selecting domain-expert REVIEWERS for the same slice. Experts do not replace implementers in MVP — they are advisory reviewers that emit verdicts and findings, never accepted manuscript writes.
 
@@ -374,10 +395,10 @@ The role-composer enforces the fan-out contract via `role-composer-fan-out-unjus
 
 The v0.9.0 dispatcher introduces three named seams that B.0.5 / B.1.5 / B.5.5 now go through. The phases' logic is unchanged; only the API names + adapter-resolution layer are new:
 
-1. **`composeExperts`** (v0.8.0, unchanged) — picks experts from signals.
+1. **`composeReviewers`** (v0.8.0, unchanged) — picks experts from signals.
 2. **`detectAvailableCLIs` + `resolveAdapter`** (v0.9.0 new) — for each selected expert, walks the preference ladder and returns `{cli, variant, ...}` where `cli ∈ {'claude','codex','ollama','gemini','qwen'}`. Sidecar adapter value is derived: `cli === 'claude'` → `'claude-task'`; otherwise `'cli-harness:${cli}'`. User overrides in `.codex-paired/role-routing.json` take precedence. The resolver THROWS `RoleRoutingError` on failure (codes: `no-supported-cli-for-role`, `override-cli-unavailable`, `override-variant-unknown`); for gate-class reviews this becomes a `cli-dispatch-failed` halt — never silently degrade.
 3. **`runTurnWithDeps`** (v0.9.0 — extended for replay-field persistence + `suppressPeerMessages`) — single-expert dispatch wrapping the adapter-specific `agentDispatch`.
-4. **`dispatchPanel`** (v0.9.0 slice 6) — panel-mode dispatch for `paired-reviewer` at the release gate AND for any `high_stakes: true` slice's `expert-security` + `expert-architecture` reviews. Builds a `dispatchFns: Map<member_id, fn>` map where each entry wraps `runTurnWithDeps` with an adapter-specific identity.
+4. **`dispatchPanel`** (v0.9.0 slice 6) — panel-mode dispatch for `paired-reviewer` at the release gate AND for any `high_stakes: true` slice's `reviewer-security` + `reviewer-architecture` reviews. Builds a `dispatchFns: Map<member_id, fn>` map where each entry wraps `runTurnWithDeps` with an adapter-specific identity.
 
 The orchestrator (Claude) builds `dispatchFns` per-member; `dispatchPanel` snapshots the member list, fans out in parallel, aggregates verdicts deterministically (per spec § 4 panel-mode table).
 
@@ -387,7 +408,7 @@ const { detectAvailableCLIs, availableCLISet } =
 const { resolveAdapter } =
   await import('<plugin>/lib/codex-bridge/role-routing/resolver.js');
 const { runTurnWithDeps } =
-  await import('<plugin>/lib/codex-bridge/expert-turn.js');
+  await import('<plugin>/lib/codex-bridge/reviewer-turn.js');
 const { dispatchPanel } =
   await import('<plugin>/lib/codex-bridge/panel/dispatcher.js');
 
@@ -400,7 +421,7 @@ const { RoleRoutingError } =
 for (const identity of result.selected) {
   let resolved;
   try {
-    // Resolver is keyed by identity.id ("expert-architecture"), NOT identity.role.
+    // Resolver is keyed by identity.id ("reviewer-architecture"), NOT identity.role.
     resolved = resolveAdapter(identity.id, availableCLIs, projectRouting);
   } catch (err) {
     if (err instanceof RoleRoutingError) {
@@ -486,7 +507,7 @@ For each expert tagged with `pre-dispatch` in its registry phases (currently `ar
 **Step 1: Assemble the spawn prompt + dispatch the Task subagent yourself.**
 
 ```js
-const { assembleSpawnPrompt } = await import('<plugin>/lib/codex-bridge/expert-turn.js');
+const { assembleSpawnPrompt } = await import('<plugin>/lib/codex-bridge/reviewer-turn.js');
 // adapter is derived from the v0.9.0 resolution step (resolveAdapter →
 // resolved.cli) BEFORE this request is built. It MUST be present or
 // runTurnWithDeps defaults the sidecar audit field to 'claude-task'
@@ -517,7 +538,7 @@ Then YOU (Claude as orchestrator) dispatch the Task tool with `prompt` as the su
 **Step 2: Drive the rest of the pipeline via `runTurnWithDeps`** with an `agentDispatch` impl that just returns `taskResponseText`:
 
 ```js
-const { runTurnWithDeps } = await import('<plugin>/lib/codex-bridge/expert-turn.js');
+const { runTurnWithDeps } = await import('<plugin>/lib/codex-bridge/reviewer-turn.js');
 const result = await runTurnWithDeps(request, {
   agentDispatch: async () => taskResponseText,
 });
@@ -530,7 +551,7 @@ This runs through: re-read unread → re-assemble prompt (idempotent + cheap) �
 
 Do NOT call `runTurn(expert, {phase})` with two arguments — that's the scheduler's INTERNAL wrapper signature inside B.5.5's `drainPeerDMs` deps, not a public API.
 
-If all pre-review experts SHIP (no blocking findings), held turn records flow through to B.7 where they are attached to the dispatch record's `expert_blockers: []` (empty) + `experts_selected[]` + `expert_turn_ids[]`. Normal flow continues to B.2.
+If all pre-review experts SHIP (no blocking findings), held turn records flow through to B.7 where they are attached to the dispatch record's `reviewer_blockers: []` (empty) + `reviewers_selected[]` + `reviewer_turn_ids[]`. Normal flow continues to B.2.
 
 If any pre-review expert returns blocking findings (parsed `Machine Result.blocking_findings[]` non-empty), the slice does NOT proceed to B.4 dispatch. To preserve the durable-state requirement, the orchestrator immediately appends a **sentinel halted dispatch record** to anchor the blockers on a durable record:
 
@@ -540,15 +561,15 @@ appendImplementDispatch(specPath, sliceId, {
   outcome: "failed-halted",
   failure_reason: "pre-dispatch-blocker",
   dispatched_at: <now-iso>,
-  experts_selected: <expert ids>,
-  expert_turn_ids: <turn ids from pre-review>,
-  expert_blockers: [/* ...findings with disposition:"open"... */],
+  reviewers_selected: <expert ids>,
+  reviewer_turn_ids: <turn ids from pre-review>,
+  reviewer_blockers: [/* ...findings with disposition:"open"... */],
 });
 ```
 
 The sentinel exists ONLY to anchor blocker state on a durable record — it does NOT represent a real dispatch (no worker spawned, no commits made). The sentinel makes `updateDispatchExpertBlocker({sliceId, dispatched_at}, findingId, ...)` resolution work uniformly across pre-dispatch and post-dispatch blockers. After the sentinel is appended, halt with `expert-blocker-open` (preserves expert mailboxes per slice 7 archival policy).
 
-On resume, Claude reads the sentinel's `expert_blockers[]` and either:
+On resume, Claude reads the sentinel's `reviewer_blockers[]` and either:
 
 - (a) overrides technical false-positives via `updateDispatchExpertBlocker({sliceId, dispatched_at}, findingId, {disposition: "technical-override", rationale, evidence})`
 - (b) routes product/UX/business findings to the human user (halt code `expert-blocker-needs-user`).
@@ -866,12 +887,12 @@ All-unread overflow during `archiveAndReset` throws `MailboxError(code='mailbox-
 At **terminal-state halt** (autopilot is stopping forward progress —
 either `completed` / `abandoned-by-user` or any of the preserve-class
 halt reasons below), iterate every active expert in
-`expert_teammates.selected[]` and call:
+`reviewer_teammates.selected[]` and call:
 
 ```js
-import { archive } from '<plugin>/lib/codex-bridge/expert-runtime.js';
+import { archive } from '<plugin>/lib/codex-bridge/reviewer-runtime.js';
 
-for (const expert of sidecar.expert_teammates.selected) {
+for (const expert of sidecar.reviewer_teammates.selected) {
   if (expert.status === 'archived' || expert.status === 'failed') continue;
   const result = await archive(
     { id: expert.id },
@@ -912,7 +933,7 @@ reason, extend the set in `expert-archive.js` deliberately (the
 audit-grep target is "every halt reason maps to ARCHIVE or PRESERVE,
 no silent skip").
 
-**v0.8.0 update.** B.4.5 now ALSO polls active expert inboxes (as recorded in `expert_teammates.selected[]`) alongside orchestrator + in-flight slice inboxes. If an active expert has unread messages at B.4.5:
+**v0.8.0 update.** B.4.5 now ALSO polls active expert inboxes (as recorded in `reviewer_teammates.selected[]`) alongside orchestrator + in-flight slice inboxes. If an active expert has unread messages at B.4.5:
 
 - Record the inbox state (don't immediately spawn — expert review should see reconciled implementation truth at B.5.5, not partial worker output).
 - Schedule the expert for B.5.5 post-review drain.
@@ -970,13 +991,13 @@ or `{ok:false, halt:{reason:"reconciler-failed", detail}}` on git failure.
 
 #### Phase B.5.5 — Expert post-review and peer-DM drain (v0.8.0)
 
-After reconcile and before routing/fallback, invoke the peer-DM drain scheduler. For each active expert selected for the slice (per `expert_teammates.selected[]`), the scheduler:
+After reconcile and before routing/fallback, invoke the peer-DM drain scheduler. For each active expert selected for the slice (per `reviewer_teammates.selected[]`), the scheduler:
 
 1. Reads unread messages for that expert.
 2. Spawns the expert with the reconciled slice output plus unread messages.
 3. Parses the machine result.
 4. Marks injected messages read **only after parse success**.
-5. Records findings, DMs sent, and status in the sidecar via `appendExpertTurn` + `updateExpertStatus`.
+5. Records findings, DMs sent, and status in the sidecar via `appendReviewerTurn` + `updateExpertStatus`.
 6. If the expert sent DMs to another active expert, schedules the recipient in the same B.5.5 drain loop.
 
 ```js
@@ -1056,11 +1077,11 @@ const drainResult = await drainPeerDMs(
 - `drainResult.halt === "expert-peer-dm-enqueue-failed"` (**v0.8.1**): an outbound peer-DM write failed for one or more requested recipients. The scheduler observes `turnResult.peer_dm_summary.failed > 0` immediately after a `runTurn` returns and halts. Inspect the most recent turn's `peer_messages_failed[]` to see which recipients and why (`invalid-recipient`, `self-dm`, `empty-body`, `malformed-item`, or a MailboxError code). PRESERVE policy keeps mailboxes intact so resume can fix-and-replay.
 - `drainResult.halt === null`: drain converged normally. Continue to B.6 routing.
 
-**Sidecar safety net (v0.8.1).** Scheduler-observed halt is the primary detector. As a backstop, before declaring drain converged autopilot also scans `expert_teammates.turns[]` for any turn with non-empty `peer_messages_failed` belonging to the current slice/phase. If found AND `drainResult.halt === null`, treat it as `expert-peer-dm-enqueue-failed` (the scheduler missed the signal — e.g., `appendExpertTurn` succeeded while the scheduler crashed mid-loop). This is a backup, not the primary path.
+**Sidecar safety net (v0.8.1).** Scheduler-observed halt is the primary detector. As a backstop, before declaring drain converged autopilot also scans `reviewer_teammates.turns[]` for any turn with non-empty `peer_messages_failed` belonging to the current slice/phase. If found AND `drainResult.halt === null`, treat it as `expert-peer-dm-enqueue-failed` (the scheduler missed the signal — e.g., `appendReviewerTurn` succeeded while the scheduler crashed mid-loop). This is a backup, not the primary path.
 
 **Peer-DM schema (v0.8.1).** Expert Machine Result emits `peer_messages_requested: array of {to, body, summary?}`. The orchestrator's runtime (`runTurnWithDeps`) enqueues each valid item into the recipient's mailbox via `writeToMailbox(repoRoot, to, {from: identity.id, text: body ?? summary, summary})`. The expert does NOT call `mailbox-write` itself. Legacy `peer_messages_sent` (v0.8.0) is accepted as an alias for one release with a parse warning.
 
-**Integration gate.** Block integration if any unresolved blocking finding remains — i.e., any entry in `expert_blockers[]` (across all dispatch records for this slice) with `disposition: "open"`. See the Blocking-Finding Override Authority section below for resolution paths.
+**Integration gate.** Block integration if any unresolved blocking finding remains — i.e., any entry in `reviewer_blockers[]` (across all dispatch records for this slice) with `disposition: "open"`. See the Blocking-Finding Override Authority section below for resolution paths.
 
 ##### Blocking-Finding Override Authority (v0.8.0)
 

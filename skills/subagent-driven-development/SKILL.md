@@ -155,7 +155,7 @@ through the verification floor. Handle flakes honestly rather than papering over
   for the round and push back on a SHIP whose verification was flaky rather than clean. Prefer fixing
   the flake's root cause (e.g. a wall-clock or ordering race) over retrying around it.
 
-## Per-slice expert review (v0.9.0)
+## Per-slice reviewer review (v0.9.0)
 
 After the implementing subagent reports completion (Step A) and the slice's diff + tests are captured (Step B), but BEFORE Step C's Codex slice review, the orchestrator MUST run **composer-selected experts** on the slice. This mirrors autopilot's Phase B.5.5 pattern but applies to inline (non-autopilot) execution: every slice gets domain-expert review before it's allowed to ship.
 
@@ -164,21 +164,29 @@ This is the inline analog of autopilot's `post-implementation-review` phase — 
 ### Step 1 — Compose experts from slice signals
 
 ```js
-const { composeExperts } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-composer.js');
+const { composeReviewers } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-composer.js');
 
+// Directive precedence: the canonical **Reviewers:** slice directive maps to
+// `reviewersDirective`. The deprecated **Experts:** directive is still accepted
+// on read and maps to `explicitDirective`. Prefer `sliceFrontmatter.reviewers`;
+// fall back to `sliceFrontmatter.experts` only for legacy plans. If both are
+// present, Reviewers wins and the composer returns a `directiveWarning`.
 const signals = {
   specHas:    [/* keywords from slice plan section */],
   filePaths:  [/* slice **Files:** block */],
   domains:    [sliceDomain],
-  explicitDirective: sliceFrontmatter.experts,  // optional **Experts:** directive
+  reviewersDirective: sliceFrontmatter.reviewers, // canonical **Reviewers:** directive
+  explicitDirective: sliceFrontmatter.experts,    // deprecated **Experts:** alias (accepted-on-read)
   fanOutRationale: anticipatesFanOut ? '<concrete justification>' : undefined,
 };
-const result = composeExperts({
+const result = composeReviewers({
   phase: 'post-implementation-review',
   signals,
   repoRoot,
 });
-// result.selected: ExpertIdentity[]
+// result.selected: ReviewerIdentity[]
+// result.directiveWarning: string|null (set when a legacy **Experts:** directive
+//                          is read, or when both directives are present)
 ```
 
 The composer throws `role-composer-fan-out-unjustified` for >5 selections without rationale.
@@ -201,7 +209,7 @@ const resolutions = [];
 for (const identity of result.selected) {
   let resolved;
   try {
-    // Resolver is keyed by identity.id ("expert-architecture"), NOT identity.role ("architecture").
+    // Resolver is keyed by identity.id ("reviewer-architecture"), NOT identity.role ("architecture").
     resolved = resolveAdapter(identity.id, availableCLIs, /* userRouting */ null);
   } catch (err) {
     if (err instanceof RoleRoutingError) {
@@ -227,7 +235,7 @@ Each expert runs **independently in single mode** (panel mode is opt-in via plan
 
 ```js
 const { runTurnWithDeps, assembleSpawnPrompt } =
-  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-turn.js');
 const { readUnreadMessages } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
 

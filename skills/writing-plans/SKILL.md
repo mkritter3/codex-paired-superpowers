@@ -58,6 +58,21 @@ Allowed values:
 
 Codex applies the validation rubric (`lib/codex-bridge/prompts/validation-rubric.md`) at the declared tier in Phase A and Phase C of autopilot. If autopilot is not used, this declaration is informational.
 
+### Per-slice reviewer directive (optional)
+A slice MAY name an explicit reviewer set in its header. The canonical directive is **Reviewers:** — a comma-separated list of reviewer roles that the composer merges into (never replaces) its signal-inferred selection:
+
+```markdown
+## Slice 3: Auth token refresh
+**Reviewers:** security, architecture
+**Validation:** critical
+
+[task list...]
+```
+
+The downstream driver reads this as `sliceFrontmatter.reviewers` and passes it to the composer as `reviewersDirective`.
+
+The older **Experts:** directive is **deprecated** but still accepted on read for one migration window: legacy plans that declare `**Experts:**` continue to work (the driver falls back to `sliceFrontmatter.experts`). When emitting a new plan, always write `**Reviewers:**`, never `**Experts:**`. If a slice declares both, **Reviewers:** wins and the composer surfaces a deprecation warning.
+
 ## Phase 2 — Codex plan review (counted, max 7 rounds)
 
 Look up the existing threadId from the sidecar:
@@ -158,7 +173,7 @@ was restarted — threads are process-local), recover instead of halting:
 
 ## high_stakes frontmatter (v0.9.0)
 
-Each plan slice MAY declare `**high_stakes: true**` in its frontmatter. This is a **user-controlled signal** (per spec § 4): it opts that slice's `expert-security` + `expert-architecture` reviews into **panel mode** (cross-model consensus) instead of single-model dispatch.
+Each plan slice MAY declare `**high_stakes: true**` in its frontmatter. This is a **user-controlled signal** (per spec § 4): it opts that slice's `reviewer-security` + `reviewer-architecture` reviews into **panel mode** (cross-model consensus) instead of single-model dispatch.
 
 ```markdown
 ## Slice 3: Auth token refresh
@@ -174,7 +189,7 @@ Panel mode is N× cost vs single (3× for default `panel_max_size=3`). Reserve i
 
 ## TDD test-list review (mandatory) (v0.9.0)
 
-After Phase 2 plan-review converges to double-SHIP and BEFORE Phase 3 user sign-off, the orchestrator MUST run an **`expert-test` panel review** of every slice's test list. This makes TDD non-skippable in `writing-plans` — the "skip TDD for trivial slices" escape hatch is removed (per spec § 3).
+After Phase 2 plan-review converges to double-SHIP and BEFORE Phase 3 user sign-off, the orchestrator MUST run an **`reviewer-test` panel review** of every slice's test list. This makes TDD non-skippable in `writing-plans` — the "skip TDD for trivial slices" escape hatch is removed (per spec § 3).
 
 ### Step 1 — Extract per-slice test lists
 
@@ -186,9 +201,9 @@ For each slice in the plan, locate its `## Tests required` block (or equivalent 
 
 If any slice is missing a test list, halt — `writing-plans` cannot ship a plan without per-slice test coverage in v0.9.0.
 
-### Step 2 — Build the `expert-test` panel dispatch
+### Step 2 — Build the `reviewer-test` panel dispatch
 
-`expert-test` is **always panel mode** in `writing-plans` (per spec § 4 table). Preference ladder is `[codex, claude]`. Build the `dispatchFns: Map<member_id, fn>` by probing CLI availability and resolving the ladder:
+`reviewer-test` is **always panel mode** in `writing-plans` (per spec § 4 table). Preference ladder is `[codex, claude]`. Build the `dispatchFns: Map<member_id, fn>` by probing CLI availability and resolving the ladder:
 
 ```js
 const { detectAvailableCLIs, availableCLISet } =
@@ -196,14 +211,14 @@ const { detectAvailableCLIs, availableCLISet } =
 const { resolveAdapter } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-routing/resolver.js');
 const { runTurnWithDeps } =
-  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-turn.js');
 const { dispatchPanel } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
 
 const detectorResult = await detectAvailableCLIs(repoRoot);
 const availableCLIs  = availableCLISet(detectorResult);
 
-// expert-test preference ladder: [codex, claude]. The map key is the
+// reviewer-test preference ladder: [codex, claude]. The map key is the
 // member_id composite "role@cli"; the value carries the dispatch_fn AND
 // the runtime_kind metadata the panel dispatcher reads.
 const dispatchFns = new Map();
@@ -214,7 +229,7 @@ for (const cli of ['codex', 'claude']) {
   // otherwise slice 5b defaults to 'claude-task' and codex panelists would
   // be audited as claude (the round-2 critique fix).
   const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
-  dispatchFns.set(`expert-test@${cli}`, {
+  dispatchFns.set(`reviewer-test@${cli}`, {
     fn: async (req) => {
       // adapter-specific: codex via cli-harness; claude via Task
       const responseText = await /* adapter-specific dispatch */;
@@ -229,7 +244,7 @@ for (const cli of ['codex', 'claude']) {
 
 ```js
 const panelOutcome = await dispatchPanel(
-  'expert-test',
+  'reviewer-test',
   {
     identity:    expertTestIdentity,
     repoRoot,
@@ -262,13 +277,13 @@ The dispatcher applies `mode: 'panel'` semantics internally: snapshot members, f
 
 ### Step 5 — high_stakes-slice escalation
 
-For each slice with `high_stakes: true`, ALSO run **panel-mode `expert-security` + `expert-architecture` reviews** of that slice (per spec § 4 table). Build a separate `dispatchFns` per role; the same `dispatchPanel(role, request, dispatchFns)` contract applies. Both panel outcomes must be `panel-SHIP` (or technically-overridden) before the high-stakes slice ships.
+For each slice with `high_stakes: true`, ALSO run **panel-mode `reviewer-security` + `reviewer-architecture` reviews** of that slice (per spec § 4 table). Build a separate `dispatchFns` per role; the same `dispatchPanel(role, request, dispatchFns)` contract applies. Both panel outcomes must be `panel-SHIP` (or technically-overridden) before the high-stakes slice ships.
 
-If `expert-security` or `expert-architecture` returns `panel-REVISE` on a high-stakes slice, revise the plan and re-enter Phase 2.
+If `reviewer-security` or `reviewer-architecture` returns `panel-REVISE` on a high-stakes slice, revise the plan and re-enter Phase 2.
 
 ### Step 6 — Composer-augmented advisories
 
-For non-`expert-test`/non-high-stakes review, the orchestrator MAY invoke `composeExperts` (single mode) to dispatch advisory experts (e.g., `expert-ui` for UI-touching slices). These run via `runTurnWithDeps` (single dispatch) and feed findings into the Round-(N+1) prompt. They are advisory only — `panel-SHIP` from `expert-test` is the load-bearing gate.
+For non-`reviewer-test`/non-high-stakes review, the orchestrator MAY invoke `composeReviewers` (single mode) to dispatch advisory experts (e.g., `reviewer-ui` for UI-touching slices). These run via `runTurnWithDeps` (single dispatch) and feed findings into the Round-(N+1) prompt. They are advisory only — `panel-SHIP` from `reviewer-test` is the load-bearing gate.
 
 ## Phase 3 — User sign-off (uncounted)
 After double-SHIP and after the TDD panel SHIPs, show the user the plan path and quote the slice list. Get a "yes" before handing off to implementation.

@@ -65,15 +65,15 @@ After Phase 2's first Codex round produces a critique, the orchestrator MAY (and
 ### Step 1 — Compose experts from bug-domain signals
 
 ```js
-const { composeExperts } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/role-composer.js');
+const { composeReviewers } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-composer.js');
 
 const signals = {
   specHas:    [/* hypothesis text keywords */],
   filePaths:  [/* files implicated in the hypothesis */],
-  domains:    [bugDomain],     // 'ui' → expert-ui; 'security' → expert-security; etc.
+  domains:    [bugDomain],     // 'ui' → reviewer-ui; 'security' → reviewer-security; etc.
   fanOutRationale: undefined,  // hypothesis review usually narrow; rarely >2 experts
 };
-const result = composeExperts({
+const result = composeReviewers({
   phase: 'hypothesis-review',
   signals,
   repoRoot,
@@ -82,16 +82,16 @@ const result = composeExperts({
 ```
 
 Typical mappings:
-- UI bug (visual glitch, layout regression) → `expert-ui`
-- Backend/data bug (concurrency, ordering, persistence) → `expert-backend`
-- Security-relevant bug (auth bypass, secret leak, escalation) → `expert-security`
-- Cross-domain "shouldn't be possible" bug → `expert-architecture`
+- UI bug (visual glitch, layout regression) → `reviewer-ui`
+- Backend/data bug (concurrency, ordering, persistence) → `reviewer-backend`
+- Security-relevant bug (auth bypass, secret leak, escalation) → `reviewer-security`
+- Cross-domain "shouldn't be possible" bug → `reviewer-architecture`
 
 ### Step 2 — Single-mode dispatch (default)
 
 ```js
 const { runTurnWithDeps, assembleSpawnPrompt } =
-  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/expert-turn.js');
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-turn.js');
 const { readUnreadMessages } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/mailbox.js');
 
@@ -108,7 +108,7 @@ const availableCLIs  = availableCLISet(detectorResult);
 for (const identity of result.selected) {
   let resolved;
   try {
-    // Resolver is keyed by identity.id ("expert-architecture"), not identity.role.
+    // Resolver is keyed by identity.id ("reviewer-architecture"), not identity.role.
     resolved = resolveAdapter(identity.id, availableCLIs, /* userRouting */ null);
   } catch (err) {
     if (err instanceof RoleRoutingError) continue;  // hypothesis review is advisory
