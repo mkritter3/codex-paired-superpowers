@@ -96,18 +96,24 @@ for (const role of EXPECTED_EXPERTS) {
     assert.ok(Array.isArray(entry.domains), 'domains is array');
   });
 
-  test(`expert "${role}" id matches expert-<role> convention`, () => {
+  test(`expert "${role}" id is canonical reviewer-<role> with legacy_id expert-<role>`, () => {
     const reg = loadRegistry();
     const entry = reg.experts[role];
-    assert.equal(entry.id, `expert-${role}`);
+    assert.equal(entry.id, `reviewer-${role}`);
+    assert.equal(entry.legacy_id, `expert-${role}`);
   });
 
-  test(`expert "${role}" prompt path resolves to a real file`, () => {
+  test(`expert "${role}" prompt path is the reviewer-<role>.md file and exists`, () => {
     const reg = loadRegistry();
     const entry = reg.experts[role];
     assert.ok(
       entry.prompt.startsWith('lib/codex-bridge/prompts/'),
       `prompt should live under lib/codex-bridge/prompts/, got ${entry.prompt}`,
+    );
+    assert.equal(
+      entry.prompt,
+      `lib/codex-bridge/prompts/reviewer-${role}.md`,
+      `prompt should be the reviewer-${role}.md file, got ${entry.prompt}`,
     );
     const abs = join(PLUGIN_ROOT, entry.prompt);
     assert.ok(existsSync(abs), `prompt file does not exist: ${entry.prompt}`);
@@ -135,6 +141,19 @@ for (const role of EXPECTED_EXPERTS) {
     }
   });
 }
+
+test('each registry legacy_id resolves through the loader to the canonical reviewer file', async () => {
+  const { roleIdToFilename } = await import(
+    '../../lib/codex-bridge/role-prompts-loader.js'
+  );
+  const reg = loadRegistry();
+  for (const role of EXPECTED_EXPERTS) {
+    const entry = reg.experts[role];
+    // Legacy expert-<role> id must alias to the same reviewer-<role>.md file.
+    assert.equal(roleIdToFilename(entry.legacy_id), `reviewer-${role}.md`);
+    assert.equal(roleIdToFilename(entry.id), `reviewer-${role}.md`);
+  }
+});
 
 test('architecture and test experts include pre-dispatch phase', () => {
   const reg = loadRegistry();

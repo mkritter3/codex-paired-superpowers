@@ -23,44 +23,51 @@
   },
   "experts": {
     "ui": {
-      "id": "expert-ui",
-      "prompt": "lib/codex-bridge/prompts/expert-ui.md",
+      "id": "reviewer-ui",
+      "legacy_id": "expert-ui",
+      "prompt": "lib/codex-bridge/prompts/reviewer-ui.md",
       "phases": ["spec-review", "post-implementation-review"],
       "domains": ["ui"]
     },
     "ux": {
-      "id": "expert-ux",
-      "prompt": "lib/codex-bridge/prompts/expert-ux.md",
+      "id": "reviewer-ux",
+      "legacy_id": "expert-ux",
+      "prompt": "lib/codex-bridge/prompts/reviewer-ux.md",
       "phases": ["spec-review"],
       "domains": ["ui"]
     },
     "architecture": {
-      "id": "expert-architecture",
-      "prompt": "lib/codex-bridge/prompts/expert-architecture.md",
+      "id": "reviewer-architecture",
+      "legacy_id": "expert-architecture",
+      "prompt": "lib/codex-bridge/prompts/reviewer-architecture.md",
       "phases": ["spec-review", "pre-dispatch", "post-implementation-review"],
       "domains": ["backend", "ai-harness", "general", "ui"]
     },
     "backend": {
-      "id": "expert-backend",
-      "prompt": "lib/codex-bridge/prompts/expert-backend.md",
+      "id": "reviewer-backend",
+      "legacy_id": "expert-backend",
+      "prompt": "lib/codex-bridge/prompts/reviewer-backend.md",
       "phases": ["spec-review", "post-implementation-review"],
       "domains": ["backend"]
     },
     "ai-harness": {
-      "id": "expert-ai-harness",
-      "prompt": "lib/codex-bridge/prompts/expert-ai-harness.md",
+      "id": "reviewer-ai-harness",
+      "legacy_id": "expert-ai-harness",
+      "prompt": "lib/codex-bridge/prompts/reviewer-ai-harness.md",
       "phases": ["spec-review", "post-implementation-review"],
       "domains": ["ai-harness"]
     },
     "test": {
-      "id": "expert-test",
-      "prompt": "lib/codex-bridge/prompts/expert-test.md",
+      "id": "reviewer-test",
+      "legacy_id": "expert-test",
+      "prompt": "lib/codex-bridge/prompts/reviewer-test.md",
       "phases": ["spec-review", "pre-dispatch", "post-implementation-review"],
       "domains": ["general"]
     },
     "security": {
-      "id": "expert-security",
-      "prompt": "lib/codex-bridge/prompts/expert-security.md",
+      "id": "reviewer-security",
+      "legacy_id": "expert-security",
+      "prompt": "lib/codex-bridge/prompts/reviewer-security.md",
       "phases": ["spec-review", "post-implementation-review"],
       "domains": ["backend", "ai-harness"]
     }
