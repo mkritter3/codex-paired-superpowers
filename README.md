@@ -292,11 +292,45 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.8.0 — domain-expert teammates (peer-negotiated coordination, Claude-driven role composition, plugin-only recreation of agent-teams). Release-gate procedure documented at `docs/verification/v0.8.0-domain-experts.md` (PENDING until maintainer runs the smoke).
+v0.15.0 — reliability release driven by transcript/sidecar replay of ten days of real usage: honest-reporting hook false-positive surgery (message-wide evidence, quoted-mention stripping, stop-loop guard, marker lifecycle), hang detection for Codex dispatches (auth-aware availability probe, bounded cli-harness rule, stall watchdog + empty-reply protocol), sink-side round validation (shape/sequence/budget/SHIP-audit gates moved out of the fail-open hook regex), and stale-run surfacing (`sidecar-scan-stale`).
 
 Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook architecture intact, release-gate INCONCLUSIVE in Claude Code 2.1.138 (Task tool lacks the `cwd` parameter the hook design relies on; doesn't invalidate the architecture — see `docs/verification/v0.7.3.1-hook-fires.md`).
 
 ### Changelog
+
+- **v0.15.0** — reliability: hook false-positive surgery + hang detection.
+  Driven by replaying 10 days of session transcripts, 106 Codex session
+  logs, and 24 sidecars from real plugin usage.
+  - **Honest-reporting hook:** evidence now counts anywhere in the message
+    (was: same paragraph ±200 chars — the majority of 47 observed blocks
+    were false positives on already-cited messages); short quoted mentions
+    ("shipped") no longer re-trigger the hook during rewrites; bare
+    confirmed/installed/released dropped from the lowercase vocabulary;
+    `stop_hook_active` guard caps blocking at once per stop; new
+    `honest-reporting-clear` verb + skills clear the marker on completion
+    (TTL remains the backstop); slice worktrees resolve to the main repo
+    marker; the no-marker fast path skips the node boot entirely and
+    transcript reads are tail-bounded.
+  - **Hang detection:** the codex availability probe now runs
+    `codex login status` — an expired login (the leading suspect for two
+    observed background-exec hangs of 25min and 3h24m) reports as NOT
+    LOGGED IN instead of available; skills carry a hard rule that
+    reviewer/panelist dispatches go through the bounded cli-harness (15min
+    cap, stderr captured), never hand-rolled background `codex exec`; every
+    Codex wait gets a deadline checked each turn; empty instant replies are
+    retried with backoff instead of being read as verdicts.
+  - **Sidecar integrity:** rounds are validated at the sink — shape
+    (bare-integer corruption guard), sequential numbering, the 7-round
+    budget (overruns of 11/13/15 rounds were observed via phase-key reuse),
+    and SHIP-audit backing (relocated from the PreToolUse hook's shell-string
+    regex, which `--round "$VAR"` bypassed). `--force-round` /
+    `--allow-over-budget` are explicit, user-approved overrides. All cli
+    JSON flags now fail with usage messages instead of JSON.parse crashes.
+  - **Workflow round-savers:** commit-parity preflight before slice reviews
+    (two full rounds had been burned on fixes left uncommitted); a
+    consistency sweep before plan re-submissions (stale-count churn
+    dominated late plan rounds); `sidecar-scan-stale` surfaces in-flight
+    autopilot runs gone quiet (one sat silently resumable for 11 days).
 
 - **v0.8.0** — domain-expert teammates. Adds a curated bundle of **7
   expert roles** that compose with the existing Codex L11 reviewer: `ui`,
