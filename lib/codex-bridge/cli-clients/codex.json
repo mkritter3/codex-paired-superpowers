@@ -1,9 +1,27 @@
 {
   "name": "codex",
   "command": "codex",
-  "additional_args": ["--json"],
+  "additional_args": [
+    "--json"
+  ],
   "permissions": {
-    "read-only":     { "args": ["--sandbox", "read-only"] },
-    "write-allowed": { "args": ["--dangerously-bypass-approvals-and-sandbox"] }
+    "read-only": {
+      "args": [
+        "--sandbox",
+        "read-only"
+      ]
+    },
+    "write-allowed": {
+      "args": [
+        "--dangerously-bypass-approvals-and-sandbox"
+      ]
+    }
+  },
+  "auth_probe": {
+    "args": [
+      "login",
+      "status"
+    ],
+    "timeout_ms": 5000
   }
 }

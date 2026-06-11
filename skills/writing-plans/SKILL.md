@@ -249,14 +249,41 @@ for (const cli of ['codex', 'claude']) {
   const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
   dispatchFns.set(`reviewer-test@${cli}`, {
     fn: async (req) => {
-      // adapter-specific: codex via cli-harness; claude via Task
-      const responseText = await /* adapter-specific dispatch */;
+      let responseText;
+      if (cli === 'claude') {
+        responseText = await /* dispatch via the Agent tool (Task) */;
+      } else {
+        // v0.15.0 — NON-claude panelists go through the cli-harness
+        // dispatcher, NEVER a hand-rolled `codex exec` in background Bash.
+        // The harness owns the timeout, SIGTERM→SIGKILL escalation,
+        // process-group reaping, and stderr capture. A raw background
+        // `codex exec` with stderr suppressed parks invisibly on auth
+        // prompts (observed: 25min and 3h24m panelist hangs, both caught
+        // by the USER, not the orchestrator).
+        const { dispatch } =
+          await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli-harness/harness.js');
+        const result = await dispatch(
+          { cli, variant: 'read-only' },
+          req.systemPrompt,
+          req.userPrompt,
+          { timeout_ms: 15 * 60 * 1000 },  // review turns: 15min hard cap
+        );
+        responseText = result.responseText;
+      }
       return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
     },
     runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });
 }
 ```
+
+**Hard rule (v0.15.0): no unsupervised background `codex exec`.** Reviewer/panelist
+work is synchronous and bounded — it goes through `cli-harness/harness.js` `dispatch`
+with an explicit `timeout_ms` as above. Background Bash is reserved for the
+implementer path, and ONLY via `scripts/codex-exec-with-status.sh` (status file +
+`codex_dispatch.max_runtime_ms` kill semantics). Never pipe a codex dispatch through
+`tail`, never send stderr to `/dev/null`, and never wait on a background codex task
+without a deadline you check every turn.
 
 ### Step 3 — Dispatch the panel
 

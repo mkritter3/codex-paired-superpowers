@@ -19,6 +19,20 @@ This plugin bundles `codex mcp-server` as an MCP server (registered in `plugin.j
 
 The first call (`codex`) opens a thread; capture `threadId` and persist it via `sidecar-init`. Every subsequent call in the same feature uses `codex-reply` with that same threadId — that's how the conversation continues across all phases (brainstorm -> plan -> slice reviews) on one Codex thread.
 
+### Empty replies and slow turns (v0.15.0)
+
+Two silent failure modes observed in Codex session logs — neither produces an error:
+
+- **Empty reply:** the tool returns ~1s after the prompt with empty/whitespace `content` and
+  unchanged token usage. This is a swallowed API/stream failure, NOT a verdict. Re-send the SAME
+  prompt once after ~30s; if still empty, once more after ~5min (observed outage windows were
+  ≤10min). Three consecutive empties → surface to the user. Never log a round from an empty reply.
+- **Slow turn:** healthy review turns run median ~1.5min, p99 ~7min, max observed 10.3min. Past
+  15 minutes, treat the call as stalled and surface it — don't wait silently.
+
+(`Session not found` thread loss is a third, loud failure — handled by the thread-recovery
+protocol; see `lib/codex-bridge/thread-recovery.js`.)
+
 ## Bridge CLI subcommands (sidecar only)
 
 ```

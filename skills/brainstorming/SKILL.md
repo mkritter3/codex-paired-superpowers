@@ -386,6 +386,12 @@ If the user explicitly asks for unattended multi-plan execution driven by Claude
 
 ## Failure modes
 - **Codex unreachable:** retry once, then surface to user with option to abort or skip the round.
+- **Codex empty reply (v0.15.0):** a `codex`/`codex-reply` result that is empty/whitespace ~1s after
+  the prompt is a swallowed API failure, not a verdict. Re-send the same prompt once after ~30s;
+  still empty → once more after ~5min; three empties → surface to the user. Never log a round for
+  an empty reply.
+- **Codex slow (v0.15.0):** a review turn past 15 minutes is a stall, not patience — surface it to
+  the user with the elapsed time rather than waiting silently.
 - **Round-7 deadlock:** annotate spec with both positions; user arbitrates; arbitration recorded in sidecar.
 - **User overrides Codex:** allowed; recorded under `open_contentions`.
 - **Sidecar corruption:** treat as data loss; restart with new session, surface to user.

@@ -1043,7 +1043,13 @@ const drainResult = await drainPeerDMs(
       const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
       // YOU (Claude) dispatch the appropriate transport (Task tool for
       // 'claude'; cli-harness for everything else), capture taskResponseText,
-      // then:
+      // then below. v0.15.0 hard rule: "cli-harness for everything else"
+      // means lib/codex-bridge/cli-harness/harness.js `dispatch(...)` with
+      // an explicit timeout_ms (15min for review turns) — NEVER a hand-
+      // rolled `codex exec` in background Bash. The harness owns timeout,
+      // SIGTERM→SIGKILL escalation, and stderr capture; a raw background
+      // exec with stderr suppressed parks invisibly on auth prompts
+      // (observed: 25min + 3h24m panelist hangs, both user-detected).
       return await runTurnWithDeps(request, {
         agentDispatch: async () => taskResponseText,
       });
@@ -1691,6 +1697,35 @@ On cleanup success, Phase E is complete. The sidecar already has `phases.live-ve
 - Background subagent calls let the orchestrator continue prep work while Codex thinks.
 - BUT: only ONE codex-reply may be in flight against the feature's threadId at any time. Single-writer mutex enforced by the orchestrator.
 - See `skills/autopilot/codex-via-subagent-prompt.md` for the subagent prompt template.
+
+### Stall watchdog for anything Codex-shaped (v0.15.0)
+Transcript replay found two hangs (25min, 3h24m) where the orchestrator dispatched codex in the
+background and never noticed the stall — both were detected by the user. The rules:
+
+- **Every wait has a deadline.** When awaiting a Codex MCP call, a codex subagent, or a background
+  codex task, fix a deadline up front: 15 minutes for a review round (MCP p99 is ~7min), or
+  `codex_dispatch.max_runtime_ms` for implementer dispatches. While waiting across turns, check
+  elapsed time EVERY turn (`ps -o etime= -p <pid>` for process-backed work, dispatch timestamps
+  otherwise).
+- **On deadline:** treat it as a stall, not patience. Kill the process if there is one (SIGTERM,
+  then SIGKILL after 5s), record what happened (sidecar contention or halt), then retry ONCE with
+  a fresh dispatch. A second stall is a terminal halt — surface to the user, do not silently
+  re-dispatch again.
+- **Never suppress the evidence.** No `2>/dev/null` on codex dispatches, no piping output through
+  `tail` so that nothing streams. A silent auth prompt on stderr was the leading suspect for the
+  3h24m hang.
+- **Preflight before long dispatch chains.** `detectAvailableCLIs` now runs an auth probe for codex
+  (`codex login status`); an `unauthenticated` result means every one-shot exec WILL park on a
+  login prompt — halt with the doctor remedy instead of dispatching.
+
+### Empty-reply retry (v0.15.0)
+Codex session logs show a swallowed-API-failure mode: `codex`/`codex-reply` returns a completed
+turn ~1 second after the prompt with an EMPTY message and unchanged token usage (no error event;
+rate limits healthy). Detection: the MCP result text is empty/whitespace. Response: treat it as
+transient — re-send the SAME prompt once after ~30s; if still empty, wait ~5 minutes and re-send
+once more (observed outage windows were ≤10min). Three consecutive empties → halt
+`codex-empty-replies` and surface to the user. Do NOT log a round for an empty reply, and do NOT
+interpret it as a verdict.
 
 ## Failure modes
 See Spec § "Failure modes" — implement every row of that table. Each halt sets `autopilot.halt_reason` to a specific string the user can search for, and prints a human-readable summary.
