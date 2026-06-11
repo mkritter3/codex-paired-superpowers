@@ -104,7 +104,7 @@ Read the current `autopilot` block. Dispatch on `current_phase`:
 - **docs-update** → run Phase D.
 - **live-verification** → run Phase E (see below).
 - **shipped** → mark the slice shipped (`slice_reviews[slice-N].shipped = true`), advance `current_slice` to the next unfinished slice, set `current_phase = "plan-slice"`, reset `phase_start_sha = HEAD`.
-- **all_done** → write a final autopilot block with `halt_reason: "completed"`, clear the anchor, return success. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), ALSO print the `<<<PLAN_SHIPPED>>> path=<plan> goals_audited=[...]` sentinel to stdout before returning.
+- **all_done** → write a final autopilot block with `halt_reason: "completed"`, clear the anchor, clear the honest-reporting marker (`honest-reporting-clear` — v0.15.0; the hook must not police unrelated work after the run ends), return success. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), ALSO print the `<<<PLAN_SHIPPED>>> path=<plan> goals_audited=[...]` sentinel to stdout before returning.
 
 After each phase ships (double-SHIP), advance `current_phase` to the next phase in the sequence and update `phase_start_sha = HEAD` and `last_commit_sha = HEAD` atomically.
 
@@ -112,6 +112,7 @@ After each phase ships (double-SHIP), advance `current_phase` to the next phase 
 1. Set `autopilot.halt_reason` in the sidecar (atomic).
 2. Print a summary to the user: which slice, which phase, what blocked. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), the summary MUST also include a literal `APP_HALT: <halt_reason>: <plain-English one-liner>` line so the parent `/goal` evaluator picks it up.
 3. **Clear the active anchor** (`anchor-clear --repoRoot <repo>`). This is critical: while halted, the user must be able to make manual recovery commits without the provenance hook blocking them. The sidecar's `autopilot` block (with `halt_reason` set) remains and is the source of truth for resumption.
+3b. **Clear the honest-reporting marker** (`honest-reporting-clear` — v0.15.0). While halted, the user (or an unrelated session in this repo) must not fight the claim scanner. Resuming re-marks it via the entry block.
 4. **Emit the halt envelope** (v0.9.0). Before returning, wrap the halt reason through the halt-envelope module so the resume path (and any `/loop` driver) receives the structured shape:
 
    ```js

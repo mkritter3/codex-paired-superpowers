@@ -306,6 +306,8 @@ For non-`reviewer-test`/non-high-stakes review, the orchestrator MAY invoke `com
 ## Phase 3 — User sign-off (uncounted)
 After double-SHIP and after the TDD panel SHIPs, show the user the plan path and quote the slice list. Get a "yes" before handing off to implementation.
 
+Once the user signs off, clear the honest-reporting marker (`node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-clear` — v0.15.0) so the claim scanner doesn't police unrelated follow-on conversation; the execution skill's entry block re-marks it when implementation starts.
+
 ## Phase 4 — Hand off
 Offer execution choice (matches upstream):
 1. **Subagent-driven** (recommended) → `superpowers:subagent-driven-development` (forked when available in this plugin)

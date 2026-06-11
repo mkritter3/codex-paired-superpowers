@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,7 @@ import {
   readMarker,
   isActive,
   markerPath,
+  clearMarker,
 } from '../../lib/codex-bridge/honest-reporting-marker.js';
 
 function makeTmpRepo() {
@@ -140,38 +141,100 @@ test('scanner: claim inside blockquote → ignored', () => {
   assert.equal(ok, true);
 });
 
-test('scanner: multiple claims, some with evidence and some without → fails on the unsourced ones', () => {
+test('scanner v0.15.0: evidence anywhere in the message clears all claims', () => {
+  // The old "same paragraph ±200 chars" window blocked the most common
+  // honest shape — a citation paragraph followed by a summary paragraph.
+  // Transcript replay (47 blocks, 8 sessions) showed the majority of fires
+  // were on already-cited messages. Message-wide evidence is the contract.
   const text = [
     'Two paragraphs, two claims.',
     '',
     'VERIFIED with `node --test`.',
     '',
-    'Also TAGGED.', // no evidence here
+    'Also TAGGED.', // no evidence in THIS paragraph — but the message is cited
   ].join('\n');
   const { ok, matches } = scanForUnsourcedClaims(text);
-  assert.equal(ok, false);
-  // VERIFIED in para 2 has evidence; TAGGED in para 3 does not.
-  const ver = matches.find((m) => m.word === 'VERIFIED');
-  const tag = matches.find((m) => m.word === 'TAGGED');
-  assert.ok(ver && ver.hasEvidence === true, 'VERIFIED should be sourced');
-  assert.ok(tag && tag.hasEvidence === false, 'TAGGED should be unsourced');
+  assert.equal(ok, true, `expected ok, got matches=${JSON.stringify(matches)}`);
 });
 
-test('scanner: evidence proximity is paragraph-bounded', () => {
-  // Evidence in paragraph 1, claim in paragraph 2 — should NOT count.
+test('scanner v0.15.0: evidence in an earlier paragraph counts for a later claim', () => {
   const text = [
     'Backticks here: `npm test`.',
     '',
     'And separately VERIFIED.',
   ].join('\n');
+  const { ok } = scanForUnsourcedClaims(text);
+  assert.equal(ok, true);
+});
+
+test('scanner v0.15.0: message with claims and NO evidence anywhere still blocks', () => {
+  const text = [
+    'Everything is wrapped up.',
+    '',
+    'The feature is VERIFIED and the release SHIPPED.',
+  ].join('\n');
   const { ok, matches } = scanForUnsourcedClaims(text);
   assert.equal(ok, false);
   assert.ok(matches.some((m) => m.word === 'VERIFIED' && !m.hasEvidence));
+  assert.ok(matches.some((m) => m.word === 'SHIPPED' && !m.hasEvidence));
 });
 
 test('scanner: empty input → ok', () => {
   assert.deepEqual(scanForUnsourcedClaims(''), { ok: true, matches: [] });
   assert.deepEqual(scanForUnsourcedClaims(null), { ok: true, matches: [] });
+});
+
+// ── v0.15.0 false-positive surgery ────────────────────────────────────────
+
+test('scanner v0.15.0: quoted single-word mention "shipped" is a meta-mention, not a claim', () => {
+  // The observed re-block loop: the hook flags "shipped", Claude's rewrite
+  // says it is removing the word "shipped", and the quoted mention
+  // re-triggers the hook — up to 3 consecutive blocks in the transcripts.
+  const { ok, matches } = scanForUnsourcedClaims(
+    'Rewriting the summary without the word "shipped" since I did not source it.',
+  );
+  assert.equal(ok, true, `expected ok, got matches=${JSON.stringify(matches)}`);
+});
+
+test('scanner v0.15.0: smart-quoted mention “shipped” is also stripped', () => {
+  const { ok } = scanForUnsourcedClaims('Dropping the term “shipped” from the wrap-up.');
+  assert.equal(ok, true);
+});
+
+test('scanner v0.15.0: quoted short phrase "tests pass" is stripped (hook-feedback echo)', () => {
+  const { ok } = scanForUnsourcedClaims(
+    'The hook flagged "tests pass" so I am restating the result with its source.',
+  );
+  assert.equal(ok, true);
+});
+
+test('scanner v0.15.0: long quoted sentence containing a claim still fires', () => {
+  // Quotes only shield SHORT mentions (≤3 words, ≤40 chars). A full quoted
+  // sentence is substantive text and must still be scanned.
+  const { ok } = scanForUnsourcedClaims(
+    'As I said before, "the whole epic is built and SHIPPED to production today" and that is final.',
+  );
+  assert.equal(ok, false);
+});
+
+test('scanner v0.15.0: lowercase confirmed/installed/released no longer fire', () => {
+  const { ok, matches } = scanForUnsourcedClaims(
+    'The user confirmed the choice. Node is installed by default. React 18 was released in 2022.',
+  );
+  assert.equal(ok, true, `expected ok, got matches=${JSON.stringify(matches)}`);
+});
+
+test('scanner v0.15.0: caps CONFIRMED still fires without evidence', () => {
+  const { ok, matches } = scanForUnsourcedClaims('Status: CONFIRMED.');
+  assert.equal(ok, false);
+  assert.ok(matches.some((m) => m.word === 'CONFIRMED' && !m.hasEvidence));
+});
+
+test('scanner v0.15.0: lowercase shipped/deployed still fire without evidence', () => {
+  const { ok } = scanForUnsourcedClaims('The epic is now built, reviewed, and shipped.');
+  assert.equal(ok, false);
+  const { ok: ok2 } = scanForUnsourcedClaims('Everything was deployed this morning.');
+  assert.equal(ok2, false);
 });
 
 // ── v0.8.1 round-1 review fixes ───────────────────────────────────────────
@@ -447,6 +510,71 @@ test('isActive: returns active=false when expiresAt missing/unparseable', () => 
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ── v0.15.0 marker lifecycle ──────────────────────────────────────────────
+
+test('clearMarker removes an existing marker and is idempotent', () => {
+  const dir = makeTmpRepo();
+  writeMarker(dir, { skillName: 'autopilot' });
+  assert.equal(isActive(dir).active, true);
+  const first = clearMarker(dir);
+  assert.equal(first.cleared, true);
+  assert.equal(isActive(dir).active, false);
+  const second = clearMarker(dir);
+  assert.equal(second.cleared, false); // no-op, no throw
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('markerPath: non-repo path under .git-worktrees walks up to the main root', () => {
+  // Implementer subagents run from <repo>/.git-worktrees/slice-N. The hook
+  // must police them against the main repo's marker — previously the
+  // worktree root resolved to a marker-less path and silently deactivated
+  // enforcement exactly where it mattered most. This case exercises the
+  // walk-up on the git-free fallback path (rev-parse fails → startDir).
+  const dir = mkdtempSync(join(tmpdir(), 'cps-honest-wt-'));
+  const worktree = join(dir, '.git-worktrees', 'slice-3');
+  mkdirSync(worktree, { recursive: true });
+  const p = markerPath(worktree);
+  assert.equal(p, join(dir, '.codex-paired', 'honest-reporting-active.json'));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('markerPath: a real git slice worktree resolves to the MAIN repo marker', () => {
+  // End-to-end: a genuine `git worktree add` under .git-worktrees/slice-N.
+  // rev-parse from inside returns the WORKTREE toplevel; the walk-up must
+  // land on the main repo root.
+  const dir = makeTmpRepo();
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t.test',
+    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t.test',
+  };
+  const commit = spawnSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: dir, env, timeout: 10000 });
+  const worktree = join(dir, '.git-worktrees', 'slice-7');
+  const add = spawnSync('git', ['worktree', 'add', '--detach', worktree], { cwd: dir, env, timeout: 10000 });
+  if (commit.status !== 0 || add.status !== 0) {
+    // git unavailable or worktree unsupported in this environment — the
+    // fallback-path test above still pins the walk-up contract.
+    rmSync(dir, { recursive: true, force: true });
+    return;
+  }
+  const p = markerPath(worktree);
+  const realDir = realpathSync(dir);
+  assert.equal(p, join(realDir, '.codex-paired', 'honest-reporting-active.json'));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('cli honest-reporting-clear: clears the marker and reports the path', () => {
+  const dir = makeTmpRepo();
+  writeMarker(dir, { skillName: 'writing-plans' });
+  const CLI = join(__dirname__, '..', '..', 'lib', 'codex-bridge', 'cli.js');
+  const r = spawnSync('node', [CLI, 'honest-reporting-clear', '--cwd', dir], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout);
+  assert.equal(parsed.cleared, true);
+  assert.equal(isActive(dir).active, false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 // ── readLastAssistantTurn ────────────────────────────────────────────────
 
 test('readLastAssistantTurn: extracts text from last assistant message', () => {
@@ -538,6 +666,26 @@ test('mainWithStdin: marker active, unsourced claim → exit 2 with message', as
   const result = await mainWithStdin('stop', JSON.stringify({ cwd: dir, transcript_path: transcriptPath }));
   assert.equal(result.exit, 2);
   assert.match(result.message, /VERIFIED/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('mainWithStdin v0.15.0: stop_hook_active=true → exit 0 even with unsourced claims (loop guard)', async () => {
+  // Claude Code sets stop_hook_active when the turn is already a Stop-hook
+  // continuation. Blocking again risks an un-exitable loop while the user
+  // is away (autopilot). One block per stop, then pass.
+  const dir = makeTmpRepo();
+  writeMarker(dir, { skillName: 'autopilot' });
+  const transcriptPath = join(dir, 'transcript.jsonl');
+  writeFileSync(transcriptPath, JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'All VERIFIED.' }] },
+  }));
+  const result = await mainWithStdin('stop', JSON.stringify({
+    cwd: dir,
+    transcript_path: transcriptPath,
+    stop_hook_active: true,
+  }));
+  assert.equal(result.exit, 0);
   rmSync(dir, { recursive: true, force: true });
 });
 

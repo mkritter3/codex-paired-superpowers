@@ -47,6 +47,24 @@ if [ ! -f "$NODE_MODULE" ]; then
   exit 0
 fi
 
+# v0.15.0 fast path: this hook fires on EVERY Stop and Bash PreToolUse, and
+# the node boot (module graph + git rev-parse + transcript read) costs
+# ~100-300ms even when the marker is absent. Stat the marker file from bash
+# first; if it doesn't exist, exit before paying for node. Expiry and the
+# scan itself remain node's job when the file is present.
+#
+# Hook commands run with cwd = the session's project dir, which matches the
+# `cwd` field Claude Code sends on stdin, so a $PWD-derived root is the same
+# root node would resolve. Mirrors markerPath(): git toplevel, walked up out
+# of a `.git-worktrees/<id>` slice worktree, falling back to $PWD.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || REPO_ROOT="$PWD"
+case "$REPO_ROOT" in
+  */.git-worktrees/*) REPO_ROOT="${REPO_ROOT%%/.git-worktrees/*}" ;;
+esac
+if [ ! -f "$REPO_ROOT/.codex-paired/honest-reporting-active.json" ]; then
+  exit 0
+fi
+
 # Capture stderr; only propagate it (and exit 2) if the node module
 # emitted both signals together. Anything else → exit 0, drop stderr.
 # mktemp can fail under disk-full / permission errors. Fail-open in

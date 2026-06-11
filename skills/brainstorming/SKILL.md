@@ -369,6 +369,8 @@ Concatenate each expert's `blocking_findings[]` + `nonblocking_findings[]` (verb
 ## Phase 4 — User sign-off (uncounted)
 Show the user the final spec path. Quote the goal + open contentions if any. Wait for explicit "yes" or revisions. If the user requests changes, re-enter the loop at round 1 with the user's input as additional critique.
 
+After the user accepts, clear the honest-reporting marker (`node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" honest-reporting-clear` — v0.15.0). The next skill in the chain re-marks it on entry; clearing here keeps the scanner from policing whatever the user does between phases.
+
 ## Phase 5 — Hand off
 
 **Default path (both feature-scoped and app-scoped specs):**

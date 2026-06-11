@@ -37,12 +37,16 @@ The scanner strips these before scanning:
 - `## Machine Result` sections
 - Blockquoted lines (`> ...`)
 - Content inside single backticks (the backticks themselves remain as evidence markers)
+- Short double-quoted mentions (≤3 words) — `the flagged word "shipped"` is a meta-mention,
+  not a claim (v0.15.0; this is what previously caused re-block loops when a rewrite
+  discussed the word the hook flagged)
 
 So you can quote user text or include verdict blocks without false positives.
 
 ## Evidence markers the scanner accepts
 
-Within the same paragraph **and** ±200 characters of a claim match:
+Anywhere in the same message as a claim match (v0.15.0 — previously the window was
+"same paragraph ±200 chars", which punished the honest tool-output-then-summary shape):
 
 - Inline backticks (any short code reference)
 - Tool/CLI references: `Bash`, `Edit`, `Read`, `Write`, `gh `, `git `, `node `, `npm `, `pnpm`, `pytest`, `jest`, etc.
@@ -74,13 +78,30 @@ The marker file is `<repo-root>/.codex-paired/honest-reporting-active.json`:
 }
 ```
 
-Default TTL: 8 hours. After expiry, the hook is inactive. No explicit cleanup step needed — the TTL is the contract. Skills GC stale markers (>24h old) on their next entry.
+Default TTL: 8 hours. After expiry, the hook is inactive. Skills GC stale markers (>24h old) on their next entry.
 
 The marker is written by the entry block of each codex-paired skill — they invoke:
 
 ```bash
 node "$CLAUDE_PLUGIN_ROOT/lib/codex-bridge/cli.js" honest-reporting-mark-active --skill <name> [--spec <path>] [--ttl-hours N]
 ```
+
+**Clearing on completion (v0.15.0).** The TTL is the backstop, not the lifecycle. When the
+workflow finishes — the loop double-SHIPs, autopilot writes `halt_reason: "completed"` or halts,
+or the skill's work is otherwise wrapped up — clear the marker so the hook stops policing
+unrelated work in the same repo for the rest of the TTL window:
+
+```bash
+node "$CLAUDE_PLUGIN_ROOT/lib/codex-bridge/cli.js" honest-reporting-clear
+```
+
+This mirrors autopilot's anchor-clear. Sessions that die without cleanup are still covered by
+TTL expiry. The marker also now resolves slice worktrees (`.git-worktrees/slice-N`) to the main
+repo root, so implementer subagents are policed by the same marker.
+
+**One block per stop (v0.15.0).** The Stop hook honors `stop_hook_active`: it blocks a turn at
+most once. The rewrite goes through even if imperfect — fix the substance, don't fight the hook.
+When rewriting, do NOT quote or discuss the flagged word; state the evidence or reclassify.
 
 ## When NOT active
 
