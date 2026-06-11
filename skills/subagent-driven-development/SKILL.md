@@ -27,6 +27,14 @@ The marker has an 8-hour TTL and auto-expires; no cleanup needed.
 Same as upstream — dispatch a subagent for slice N with the slice's tasks. Wait for completion + tests passing.
 
 ### Step B: capture slice artifacts
+
+**Commit-parity preflight (v0.15.0).** Before capturing the diff — on round 1 AND on every
+re-review after a fix — run `git status --porcelain` in the slice's working directory. If any
+slice-touched file shows uncommitted or unstaged changes, STOP and commit them first. Sidecar
+replay found two features that each burned a full review round because the fix existed in the
+working tree but not in the committed state the reviewer saw ("staged index still has the old
+regex"). The diff sent to review must be the committed diff, and the tree must be clean.
+
 Collect:
 - Slice scope: the exact task list from the plan for slice N (literal markdown, the bullet list).
 - Diff: `git diff <slice-start-sha>..HEAD -- <files-this-slice-was-meant-to-touch>`

@@ -157,6 +157,18 @@ If Codex's response has no `## Audit log` section, **do not log a SHIP verdict**
 
 Claude's own verdict ALSO needs an audit entry (`side: "claude"`) — Claude must verify the same claims independently against the repo. The gate enforces this symmetrically: a Claude SHIP verdict without a matching audit entry is also blocked.
 
+**Consistency sweep before every re-submission (v0.15.0).** Sidecar replay shows late plan
+rounds are dominated by staleness churn — a stale count here, an un-updated cross-reference
+there, each costing a full revise + re-audit round (three of the four observed 7-round cap hits
+were plans whose tail rounds fixed one stale item each). After applying a round's edits and
+BEFORE sending the revision back, sweep the whole plan for what the edits invalidated:
+- numbers and counts (test counts, slice counts, file counts) mentioned anywhere else;
+- cross-references to renamed/renumbered slices, sections, or files;
+- wording that describes the pre-edit design ("as above", "the single X" after adding a second);
+- the slice list / summary table at the top vs. the slice bodies.
+Fix everything the sweep finds in the SAME revision. One extra read of your own plan is cheaper
+than a review round.
+
 Subsequent rounds: send the revised plan + both prior critiques + the same `<<<GOALS>>>` block (goals are invariant across rounds unless the user explicitly revises them). Codex re-runs PART A only when the plan changes file paths or proposes new primitives; otherwise PART A is "no change since round N, audit still valid" — and you still record an audit entry referencing the prior round's audit (the (phase, round, side) triple must be present for the Stop-gate to clear). Same anti-yes-man rules as brainstorming. Same sidecar round logging (`phase: "plan"`).
 
 After each round, record the audits **and** the round in ONE atomic command (v0.13.0). This replaces

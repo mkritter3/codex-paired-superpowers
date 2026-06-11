@@ -48,6 +48,13 @@ plan:   docs/plans/<plan>.md | omitted-for-resume
    normalization (see `## Driver: interactive`).
 7. **`driver: autopilot`** delegates to the existing autopilot flow after split normalization (see
    `## Driver: autopilot`).
+8. **Stale-run surfacing (v0.15.0).** On every entry, run
+   `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-scan-stale --repoRoot <repo>` and,
+   if it returns any entries, tell the user in plain English before proceeding: which plan, which
+   step it stopped at, and how long it has been idle (e.g. "an unattended run for <plan> stopped at
+   slice 4 planning 11 days ago — resume it, or mark it halted?"). A quiet in-flight run is
+   otherwise indistinguishable from one running in another session, and replay found one sitting
+   silently resumable for 11 days.
 
 ## What this delegates to
 

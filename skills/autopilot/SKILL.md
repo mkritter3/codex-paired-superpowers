@@ -1345,7 +1345,11 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
   recompute from a fresh read. A byte-identical retry is a procedural error.
 
 ### Phase C: review-slice
-1. Compute the diff: `git diff <slice_start_sha>..HEAD`.
+1. Compute the diff: `git diff <slice_start_sha>..HEAD`. **Commit-parity preflight (v0.15.0):**
+   first run `git status --porcelain` — if any slice-touched file has uncommitted changes, commit
+   them BEFORE computing the diff. This applies doubly on re-review after a REVISE fix: two
+   features each burned a full review round because the fix lived in the working tree while the
+   reviewer judged the committed state.
 2. Read Phase A's structured `validation_coverage` from the sidecar:
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-show --specPath "<spec-path>" \
