@@ -51,6 +51,13 @@ test('__shapesForTests: dispatchInputProps is already sorted', () => {
   );
 });
 
+test('__shapesForTests: dispatchInputOptionalProps matches the frozen optional contract', () => {
+  assert.deepEqual(
+    __shapesForTests.dispatchInputOptionalProps,
+    ['effort', 'model', 'modelRole', 'onLaunched', 'repoRoot'],
+  );
+});
+
 // ── ImplementerDispatchResult ─────────────────────────────────────────────────
 
 test('__shapesForTests: dispatchResultProps matches spec L87-95 required properties (sorted)', () => {
@@ -80,11 +87,21 @@ test('__shapesForTests: dispatchResultProps is already sorted', () => {
   );
 });
 
+test('__shapesForTests: dispatchResultOptionalProps matches the frozen optional contract', () => {
+  assert.deepEqual(__shapesForTests.dispatchResultOptionalProps, ['attemptInFlight', 'modelSnapshot']);
+});
+
 // ── shape integrity ───────────────────────────────────────────────────────────
 
-test('__shapesForTests: object has exactly three expected keys', () => {
+test('__shapesForTests: object has exactly five expected keys', () => {
   const keys = Object.keys(__shapesForTests).sort();
-  assert.deepEqual(keys, ['dispatchInputProps', 'dispatchResultProps', 'runtimeKindMembers']);
+  assert.deepEqual(keys, [
+    'dispatchInputOptionalProps',
+    'dispatchInputProps',
+    'dispatchResultOptionalProps',
+    'dispatchResultProps',
+    'runtimeKindMembers',
+  ]);
 });
 
 test('__shapesForTests: all arrays are non-empty arrays', () => {
@@ -94,4 +111,8 @@ test('__shapesForTests: all arrays are non-empty arrays', () => {
   assert.ok(__shapesForTests.dispatchInputProps.length > 0, 'dispatchInputProps must be non-empty');
   assert.ok(Array.isArray(__shapesForTests.dispatchResultProps), 'dispatchResultProps must be array');
   assert.ok(__shapesForTests.dispatchResultProps.length > 0, 'dispatchResultProps must be non-empty');
+  assert.ok(Array.isArray(__shapesForTests.dispatchInputOptionalProps), 'dispatchInputOptionalProps must be array');
+  assert.ok(__shapesForTests.dispatchInputOptionalProps.length > 0, 'dispatchInputOptionalProps must be non-empty');
+  assert.ok(Array.isArray(__shapesForTests.dispatchResultOptionalProps), 'dispatchResultOptionalProps must be array');
+  assert.ok(__shapesForTests.dispatchResultOptionalProps.length > 0, 'dispatchResultOptionalProps must be non-empty');
 });
