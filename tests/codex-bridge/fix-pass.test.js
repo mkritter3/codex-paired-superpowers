@@ -242,11 +242,13 @@ test('restore failure during rollback keeps the recovery copies on disk and name
   const { repoRoot, specPath } = makeRepo();
   writeFileSync(join(repoRoot, 'notes.txt'), 'irreplaceable\n');
   let err;
+  let restoring = false;
   try {
     await runFixPass({
       specPath, sliceId: 'slice-3', repoRoot, pass: 1,
-      execFn: async () => { rmSync(join(repoRoot, 'notes.txt')); throw new Error('boom'); },
-      _deps: { copyFile: () => { const e = new Error('ENOSPC'); e.code = 'ENOSPC'; throw e; } },
+      // capture succeeds (before the pass); the RESTORE copy (after the pass) fails
+      execFn: async () => { restoring = true; rmSync(join(repoRoot, 'notes.txt')); throw new Error('boom'); },
+      _deps: { copyFile: (src, dst) => { if (restoring) { const e = new Error('ENOSPC'); e.code = 'ENOSPC'; throw e; } writeFileSync(dst, readFileSync(src)); } },
     });
   } catch (e) { err = e; }
   assert.ok(err, 'restore failure must surface');
@@ -293,5 +295,25 @@ test('checkpoint persistence failure before the pass runs cleans up the snapshot
   }));
   assert.equal(launched, false);
   assert.equal(snapshotDirs(), dirsBefore, 'pre-execution failure must not leak its snapshot directory');
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+// Codex review-slice:slice-3 round 5: a copy failure while capturing must not leak partial backups.
+test('snapshot capture failure (second copy fails) cleans up the partial directory and never launches', async () => {
+  const { repoRoot, specPath } = makeRepo();
+  writeFileSync(join(repoRoot, 'a.txt'), 'a\n');
+  writeFileSync(join(repoRoot, 'b.txt'), 'b\n');
+  const snapshotDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith('cps-fix-pass-snapshot-')).length;
+  const dirsBefore = snapshotDirs();
+  let launched = false;
+  let calls = 0;
+  await assert.rejects(() => runFixPass({
+    specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => { launched = true; return { statusFile: { exit_code: 0 } }; },
+    _deps: { copyFile: (src, dst) => { calls += 1; if (calls === 2) { const e = new Error('ENOSPC'); e.code = 'ENOSPC'; throw e; } writeFileSync(dst, readFileSync(src)); } },
+  }), /ENOSPC/);
+  assert.equal(launched, false);
+  assert.equal(snapshotDirs(), dirsBefore, 'partial snapshot directory must be removed');
+  assert.equal(readFileSync(join(repoRoot, 'a.txt'), 'utf8'), 'a\n');
   rmSync(repoRoot, { recursive: true, force: true });
 });
