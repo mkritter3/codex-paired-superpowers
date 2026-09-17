@@ -1313,3 +1313,49 @@ test('v0.16.0: every thread-opening MCP call in skills resolves the role via mod
       `${skill}/SKILL.md must resolve the thread model via model-role --format mcp`);
   }
 });
+
+// ── v0.17.0 — Antigravity (agy) transport: every reviewer thread site and implementer site is CLI-aware ──
+//
+// Spec: docs/specs/2026-09-17-v0.17.0-antigravity-transport-design.md; plan slice 5 task 1.
+
+test('v0.17.0: every reviewer-thread call site carries the agy transport branch', () => {
+  const sites = [
+    ['brainstorming', 2],
+    ['writing-plans', 1],
+    ['subagent-driven-development', 1],
+    ['systematic-debugging', 1],
+    ['execution', 1],
+    ['autopilot', 2],
+  ];
+  for (const [skill, minMentions] of sites) {
+    const content = readSkill(skill);
+    const mentions = (content.match(/reviewer-thread-(open|reply)/g) || []).length;
+    assert.ok(mentions >= minMentions, `${skill}/SKILL.md must mention reviewer-thread-open/-reply at least ${minMentions}× (found ${mentions})`);
+    assert.ok(/model-role --role (planning|review) --format json/.test(content),
+      `${skill}/SKILL.md must resolve the role's cli via model-role --format json before opening/continuing a thread`);
+  }
+  const subagentPrompt = readFileSync(join(PLUGIN_ROOT, 'skills', 'autopilot', 'codex-via-subagent-prompt.md'), 'utf8');
+  assert.ok(subagentPrompt.includes('reviewer-thread-reply'), 'codex-via-subagent-prompt.md must carry the agy branch');
+});
+
+test('v0.17.0: implementer command is selected from the resolved cli, with both locked forms documented', () => {
+  const autopilot = readSkill('autopilot');
+  const sdd = readSkill('subagent-driven-development');
+  assert.ok(/model-role --role implement --format json/.test(autopilot), 'autopilot B.4 must pick the implementer form from model-role --format json');
+  assert.ok(/agy form/.test(sdd) && /codex form/.test(sdd), 'SDD Step A must show both the codex and the agy form');
+  const contract = readFileSync(join(PLUGIN_ROOT, 'docs', 'codex-implementer-contract.md'), 'utf8');
+  assert.ok(contract.includes('**Codex form:**') && contract.includes('Antigravity (`agy`, Gemini) form'), 'contract doc must carry both locked invocations');
+  assert.ok(/Trust boundary/.test(contract), 'contract doc must state the --add-dir/.git trust boundary');
+  assert.ok(contract.includes('--cwd <worktree-absolute-path>'), 'agy form must pass --cwd');
+});
+
+test('v0.17.0: no reference to the removed gemini.json placeholder; README documents the cli field', () => {
+  const files = [...collectSkillMarkdown(join(PLUGIN_ROOT, 'skills')), ...collectSkillMarkdown(join(PLUGIN_ROOT, 'docs')).filter((f) => !/docs\/(plans|specs)\//.test(f))];
+  for (const f of files) {
+    assert.ok(!readFileSync(f, 'utf8').includes('gemini.json'), `${f.replace(PLUGIN_ROOT + '/', '')} still references gemini.json`);
+  }
+  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8');
+  assert.ok(readme.includes('"cli": "agy"') && readme.includes('CODEX_PAIRED_CLI'), 'README Configuration must document the cli field and env override');
+  const pairing = readFileSync(join(PLUGIN_ROOT, 'skills', 'brainstorming', 'codex-pairing.md'), 'utf8');
+  assert.ok(pairing.includes('Reviewer transports'), 'codex-pairing.md must describe the reviewer transports');
+});

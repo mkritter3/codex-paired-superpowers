@@ -1,6 +1,6 @@
 {
   "name": "codex-paired-superpowers",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,12 +9,14 @@
     "test:affected:main": "node scripts/tia.mjs run --base main",
     "test:tia-build": "node scripts/tia.mjs build",
     "test:tia-refresh": "node scripts/tia.mjs refresh",
-    "test:installed-smoke": "CPS_INSTALLED_SMOKE=1 node --test tests/installed-smoke/codex-real.test.js tests/installed-smoke/codex-mcp-reliability.test.js tests/installed-smoke/ollama-real.test.js",
+    "test:installed-smoke": "CPS_INSTALLED_SMOKE=1 node --test tests/installed-smoke/codex-real.test.js tests/installed-smoke/codex-mcp-reliability.test.js tests/installed-smoke/ollama-real.test.js tests/installed-smoke/agy-real.test.js",
     "test:replay": "node --test tests/replay/replay-from-sidecar.test.js",
     "test:all": "node --test $(node scripts/collect-test-files.mjs --all)",
     "release-gate": "./scripts/v0.9.0-release-gate.sh"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "proper-lockfile": "^4.1.2"
   }

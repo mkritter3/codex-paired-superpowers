@@ -189,6 +189,28 @@ Defaults (no config needed) — the four model roles:
 
 Max rounds: 7 per phase.
 
+**Choose the CLI per role (v0.17.0).** Each role also has a `cli`: `codex` (default) or `agy`
+(the Antigravity CLI, Google's Gemini models). Codex runs over its MCP server / `codex exec`;
+Gemini runs over `agy` conversations / `agy -p`. Nothing changes unless you set `cli`.
+
+```json
+{ "models": {
+    "review":    { "cli": "agy", "model": "gemini-3.8-flash-high" },
+    "planning":  { "cli": "agy", "model": "gemini-3.8-flash-high" },
+    "implement": { "cli": "agy", "model": "gemini-3.8-flash-high" },
+    "implement_fallback": { "cli": "agy", "model": "gemini-3.1-pro-high" } } }
+```
+
+```bash
+CODEX_PAIRED_CLI=agy CODEX_PAIRED_MODEL=gemini-3.8-flash-high claude   # everything on Gemini
+CODEX_PAIRED_CLI_IMPLEMENT=agy CODEX_PAIRED_MODEL_IMPLEMENT=gemini-3.8-flash-high claude   # Gemini writes, Codex reviews
+```
+
+For `agy` the model id carries the effort (`gemini-3.8-flash-high|medium|low`, `gemini-3.1-pro-high|low`);
+the role's `effort` is derived from that suffix and overrides inherited efforts. Gemini reviewer
+runs execute in a throwaway checkout, never your working tree. Each `agy` call loads a large
+context (80–135k input tokens even for small prompts), so per-turn cost is higher than Codex.
+
 Overrides, later wins: defaults ← `.codex-paired/project.json` `models` ← env.
 
 ```json

@@ -125,7 +125,9 @@ The goals block is what Codex critiques against — NOT the plan as written. Thi
 
 ### Round 1 prompt
 
-Build the plan-review prompt and invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`**:
+**Transport branch (v0.17.0):** if `model-role --role planning --format json` reports `"cli":"agy"`, pipe the same prompt to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-reply --role planning --specPath "<spec-path>" --repoRoot "$REPO_ROOT" --prompt-stdin` instead of the MCP `codex-reply` tool; its stdout is the same `{ threadId, content }` shape.
+
+Build the plan-review prompt and (Codex role) invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`**:
 
 ```json
 {

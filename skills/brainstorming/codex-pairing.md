@@ -40,6 +40,33 @@ Pass **exactly** that object's `model` and `config` on the `codex` (thread-openi
   `CODEX_PAIRED_MODEL_PLANNING=...` / `CODEX_PAIRED_REASONING_REVIEW=...` (global
   `CODEX_PAIRED_MODEL` / `CODEX_PAIRED_REASONING` apply to every role).
 
+### Reviewer transports (v0.17.0): Codex over MCP, Gemini over `agy`
+
+The role decides the transport. Resolve it first:
+
+```bash
+ROLE=$(node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role planning --format json --repoRoot "$REPO_ROOT")
+#  → {"role":"planning","cli":"codex"|"agy","model":...,"effort":...,...}
+```
+
+| `cli` | Open a thread | Continue a thread | Thread id stored as |
+|---|---|---|---|
+| `codex` | MCP tool `codex` with `model` + `config` from `model-role --format mcp` | MCP tool `codex-reply` with `threadId` | `role_sessions[key]` (Codex thread id) |
+| `agy` | `node cli.js reviewer-thread-open --role <planning\|review> --specPath <spec> --repoRoot <repo> [--planPath <plan>] --prompt-stdin` | `node cli.js reviewer-thread-reply … --prompt-stdin` | `role_sessions[key]` (agy conversation id) |
+
+Both paths print/return the same `{ threadId, content }` shape, so round logging, audits,
+`--headSha` and verdict parsing are identical. `model-role --format mcp` exits 2 for an agy role —
+that is the signal to use the `reviewer-thread-*` verbs instead. Gemini reviewer turns run in a
+throwaway detached checkout of the reviewed commit (the spec/plan under review are overlaid into
+it, so path audits work) and can never modify your working tree. `thread_config[key].cli` records
+which CLI owns each thread; recovery of a lost thread follows the recorded CLI.
+
+The agy verbs also report `ok`, `exit`, `status` and `warnings` and exit **1** when the turn
+failed (non-`SUCCESS` status, timeout, lost conversation) — never treat an empty `content` as a
+reply. On exit 1 whose warnings mention a missing conversation, rotate the thread
+(`thread-recovery` → `recoverStaleThread`, which re-opens on agy) and resend the prompt once;
+exit **2** is a usage/config error (wrong flags, codex role, missing spec) and is terminal.
+
 ### Two threads per feature (v0.16.0)
 
 | `role_sessions` key | Model role | Opened by | Used by |

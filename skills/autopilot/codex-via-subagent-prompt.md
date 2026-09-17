@@ -7,7 +7,9 @@ Use this template when the autopilot dispatches a background subagent (`run_in_b
 ```
 You are a one-shot Codex caller. Do exactly this:
 
-1. Invoke `mcp__plugin_codex-paired-superpowers_codex__codex-reply` with:
+1. If the orchestrator told you the reviewer runs on `agy` (v0.17.0), run instead:
+   `printf '%s' "{{PROMPT_TEXT}}" | node "{{PLUGIN_ROOT}}/lib/codex-bridge/cli.js" reviewer-thread-reply --role review --specPath "{{SPEC_PATH}}" --repoRoot "{{REPO_ROOT}}" --prompt-stdin`
+   and treat its stdout `content` field as the response. Otherwise invoke `mcp__plugin_codex-paired-superpowers_codex__codex-reply` with:
    {
      "threadId": "{{THREAD_ID}}",
      "prompt": "{{PROMPT_TEXT}}"

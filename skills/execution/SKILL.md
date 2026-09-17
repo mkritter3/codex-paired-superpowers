@@ -63,11 +63,12 @@ Slice reviews run on a second, cheaper thread at the `review` role. Before deleg
 driver, open it if `role_sessions["execution-reviewer"]` is absent from the sidecar (resume paths
 skip this):
 
+0. `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role review --format json --repoRoot <repo>` → read `cli`. **If `agy`** (v0.17.0): skip steps 1, 4 and 5 — instead pipe the seed prompt from step 3 to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-open --role review --specPath <spec> --repoRoot <repo> --planPath <plan> --prompt-stdin`, which opens the Gemini conversation in a throwaway checkout and records it in the sidecar itself. If `codex`, continue:
 1. `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role review --format mcp --repoRoot <repo>` → `{ model, config }`. Exit 2 → stop and show the error.
 2. `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-replay-context --specPath <spec>` → replay JSON.
 3. Seed prompt = `composeSeedPrompt(replay, { reason: 'execution-thread', specPath, planPath, pendingPrompt })` from `lib/codex-bridge/thread-recovery.js`, prefixed with `system-rubric.md` + `verdict-format.md`. The seed tells Codex to read the spec and plan from disk.
 4. Call the `codex` MCP tool with that prompt and the `model` + `config` from step 1.
-5. `sidecar-rotate-thread-id --specPath <spec> --role execution-reviewer --newThreadId <id> --reason execution-thread --phase execution --threadConfig '{"role":"review","model":"<model>","effort":"<effort>"}'`.
+5. `sidecar-rotate-thread-id --specPath <spec> --role execution-reviewer --newThreadId <id> --reason execution-thread --phase execution --threadConfig '{"role":"review","cli":"codex","model":"<model>","effort":"<effort>"}'`.
 
 See `skills/brainstorming/codex-pairing.md` "Two threads per feature" for the rationale.
 

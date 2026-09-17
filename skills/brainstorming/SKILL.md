@@ -89,7 +89,9 @@ MCP=$(node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role pla
 
 If that command exits non-zero, stop and show the user its stderr — do not open a thread with a guessed model.
 
-Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with EXACTLY the resolved `model` and `config` from `model-role` plus the prompt:
+**Transport branch (v0.17.0):** if `model-role --role planning --format json` reports `"cli":"agy"`, do NOT call the MCP tool — pipe the same composed prompt to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-open --role planning --specPath "<spec-path>" --repoRoot "$REPO_ROOT" --prompt-stdin` and read `{ threadId, content }` from its stdout (Gemini runs in a throwaway checkout; see `codex-pairing.md` "Reviewer transports"). Everything below is identical for both transports.
+
+For a Codex role, invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with EXACTLY the resolved `model` and `config` from `model-role` plus the prompt:
 
 ```json
 {
@@ -193,7 +195,9 @@ context") and continue. Do not discard prior review history.
    THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>")
    ```
 
-   Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with:
+   **Transport branch (v0.17.0):** if `model-role --role planning --format json` reports `"cli":"agy"`, pipe the same prompt to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-reply --role planning --specPath "<spec-path>" --repoRoot "$REPO_ROOT" --prompt-stdin` instead of the MCP `codex-reply` tool; its stdout is the same `{ threadId, content }` shape.
+
+   For a Codex role, invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with:
 
    ```json
    {

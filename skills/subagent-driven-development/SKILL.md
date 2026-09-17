@@ -29,8 +29,10 @@ subagent). Resolve the slice's domain (autopilot Phase B.0 rules), then climb th
 ladder from `agents/dispatchers.json` (Codex is `preferred` in every domain since v0.16.0):
 
 ```
-rung 1  codex @ implement           — scripts/codex-exec-with-status.sh <status> --model-role implement -- codex exec --skip-git-repo-check -s workspace-write -C <worktree> --add-dir <repo>/.git "<prompt>" </dev/null
-rung 2  codex @ implement_fallback  — same, with --model-role implement_fallback
+rung 1  implement           — codex form: scripts/codex-exec-with-status.sh <status> --model-role implement -- codex exec --skip-git-repo-check -s workspace-write -C <worktree> --add-dir <repo>/.git "<prompt>" </dev/null
+                                agy form:   scripts/codex-exec-with-status.sh <status> --model-role implement --cwd <worktree> -- agy -p "<prompt>" --sandbox --dangerously-skip-permissions --add-dir <repo>/.git --output-format json --print-timeout 2h </dev/null
+                                (pick the form from `model-role --role implement --format json` → "cli"; never hard-code one)
+rung 2  implement_fallback  — same, with --model-role implement_fallback (its own cli may differ)
 rung 3  sonnet subagent             — Task tool, subagent_type slice-implementer-sonnet
         halt implementer-unavailable
 ```
@@ -94,7 +96,9 @@ Look up the threadId and send the prompt via the bundled MCP `codex-reply` tool:
 THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>" --role execution-reviewer)
 ```
 
-Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is Codex's review + verdict block.
+**Transport branch (v0.17.0):** if `model-role --role review --format json` reports `"cli":"agy"`, pipe the same prompt to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-reply --role review --specPath "<spec-path>" --repoRoot "$REPO_ROOT" --prompt-stdin` instead of the MCP `codex-reply` tool; its stdout is the same `{ threadId, content }` shape.
+
+For a Codex role, invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is the reviewer's review + verdict block.
 
 **If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old> --newThreadId <new> --reason session-not-found`). Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
 

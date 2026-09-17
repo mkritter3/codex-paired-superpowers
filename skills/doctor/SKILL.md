@@ -69,3 +69,4 @@ The full check list lives in `bin/codex-paired-doctor` (the source of truth). Cu
 10. **codex-transport** (v0.16.0) — WARNs when `codex --version` is older than the version this release was validated against (`0.153.4`), and when this Codex build no longer offers `codex mcp-server` (the transport the plugin uses).
 
 Adding a new prerequisite? Update the script — the skill auto-tracks because it just runs the script verbatim.
+11. **agy** (v0.17.0) — the availability report lists the Antigravity CLI (`agy`, Gemini); the `models` check also validates roles with `cli: agy` against `agy models` (WARN when the configured id is not listed, or when a role uses agy but it is not installed). Installs that never set `cli: agy` are unaffected.

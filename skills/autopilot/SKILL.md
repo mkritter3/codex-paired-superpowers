@@ -722,7 +722,9 @@ Dispatch via `Task` tool with `subagent_type: slice-implementer-sonnet`. Prompt 
 
 The orchestrator dispatches `codex exec` directly via `Bash` with `run_in_background: true`. No subagent wrapper. This pattern mirrors Claude Code's `LocalShellTask` (per `src/tasks/LocalShellTask/` in the runtime source) and supports unbounded codex runtimes (subject to `codex_dispatch.max_runtime_ms` configured via `.codex-paired/project.json`, default 2 hours).
 
-Locked invocation (orchestrator constructs and runs):
+**Pick the form from the role (v0.17.0).** Run `node <plugin>/lib/codex-bridge/cli.js model-role --role implement --format json` (or `implement_fallback` on rung 2) and read `cli`. `codex` → the codex form below; `agy` → the agy form in `docs/codex-implementer-contract.md` (`--cwd <worktree>` + `agy -p … --sandbox --dangerously-skip-permissions --add-dir <repo>/.git --output-format json --print-timeout 2h`). Never hard-code one: the wrapper exits 78 when the command disagrees with the role.
+
+Locked invocation, codex form (orchestrator constructs and runs):
 
 ```bash
 <plugin>/scripts/codex-exec-with-status.sh \
@@ -1581,7 +1583,7 @@ Build the scenario-generation prompt by reading `${CLAUDE_PLUGIN_ROOT}/skills/au
 | `<slice-diff>` | `git diff <slice_start_sha>..HEAD` |
 | `<relevant-ui-files-or-paths>` | `config.live_verification.evidence.ui_globs` expansion |
 
-Send the prompt via `mcp__plugin_codex-paired-superpowers_codex__codex-reply` on the feature's threadId.
+Send the prompt via `mcp__plugin_codex-paired-superpowers_codex__codex-reply` on the feature's threadId (Codex role) — or, if `model-role --role review --format json` reports `"cli":"agy"`, pipe the same prompt to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-reply --role review --specPath "<spec-path>" --repoRoot "$REPO_ROOT" --prompt-stdin` instead of the MCP `codex-reply` tool; its stdout is the same `{ threadId, content }` shape.
 
 Pipe Codex's content to:
 
@@ -1695,6 +1697,8 @@ const fixLoop = createLiveFixLoop({
   config,
   evidenceStore,
   adapter,          // Claude is the adapter
+  // v0.17.0: when `model-role --role review --format json` says cli:'agy', codexReply must instead shell out to
+  //   node cli.js reviewer-thread-reply --role review --specPath <spec> --repoRoot <repo> --prompt-stdin
   codexReply: (prompt) => mcp__plugin_codex-paired-superpowers_codex__codex-reply({ threadId, content: prompt }),
   dispatchFixSubagent: (prompt) => /* dispatch foreground subagent with prompt */,
   runScenarios: (scenarios) => /* re-run all scenarios per E.6 */,

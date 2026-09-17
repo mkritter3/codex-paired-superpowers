@@ -10,12 +10,16 @@ same commit. Every Codex invocation runs on a **model role** resolved from one p
 (`lib/codex-bridge/models.js`; override in `.codex-paired/project.json` `models` or the
 `CODEX_PAIRED_*` env — see the README "Configuration" section):
 
-| Role | Default | Used for |
-| --- | --- | --- |
-| `planning` | GPT-6 Astra, `xhigh` | spec drafting, plan review, per-slice plan review, debugging hypotheses, test-list review — the `paired-reviewer` thread |
-| `review` | GPT-6 Astra, `high` | slice code review, docs-update, post-implementation reviewer panels — the `execution-reviewer` thread |
-| `implement` | GPT-5.6 Sol, `high` | every `codex exec` implementer attempt (first rung) |
-| `implement_fallback` | GPT-6 Astra, `medium` | the automatic second Codex attempt after an implement failure |
+| Role | Default (`cli: codex`) | `cli: agy` alternative (v0.17.0) | Used for |
+| --- | --- | --- | --- |
+| `planning` | GPT-6 Astra, `xhigh` | e.g. `gemini-3.8-flash-high` via an `agy` conversation | spec drafting, plan review, per-slice plan review, debugging hypotheses, test-list review — the `paired-reviewer` thread |
+| `review` | GPT-6 Astra, `high` | e.g. `gemini-3.8-flash-high` via an `agy` conversation | slice code review, docs-update, post-implementation reviewer panels — the `execution-reviewer` thread |
+| `implement` | GPT-5.6 Sol, `high` | e.g. `gemini-3.8-flash-high` via `agy -p` | every implementer attempt (first rung) |
+| `implement_fallback` | GPT-6 Astra, `medium` | e.g. `gemini-3.1-pro-high` | the automatic second attempt after an implement failure |
+
+The CLI is chosen per role (`cli: codex | agy`); the orchestrator resolves it with `model-role
+--format json` before composing any command. Two-disjoint and hybrid members stay on Codex in
+v0.17.0.
 
 Single-implementer work climbs a three-rung ladder: Codex at `implement` → Codex at
 `implement_fallback` → the Claude subagent → halt `implementer-unavailable`. A configuration

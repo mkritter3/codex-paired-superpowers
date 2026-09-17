@@ -12,11 +12,17 @@ v0.7.2 removes the subagent wrapper. The orchestrator (Claude in autopilot) invo
 
 Because the dispatch is no longer via a subagent, this file does not have YAML frontmatter and is not loaded by Claude Code's plugin runtime.
 
-## Locked invocation (v0.16.0)
+## Locked invocation (v0.16.0, CLI-aware since v0.17.0)
 
-The orchestrator runs codex via the `scripts/codex-exec-with-status.sh` wrapper. The wrapper — not
-the orchestrator — resolves the model and effort for the attempt's **model role** and inserts the
-flags; the orchestrator never writes `-m` itself.
+The orchestrator runs the implementer via the `scripts/codex-exec-with-status.sh` wrapper (the name
+is historical; it launches whichever CLI the role names). The wrapper — not the orchestrator —
+resolves the model and effort for the attempt's **model role** and inserts the flags; the
+orchestrator never writes `-m` / `--model` itself. **The orchestrator picks the command from the
+resolved role**: run `node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" model-role --role implement --format json`
+and read `cli` — `codex` → the codex form, `agy` → the agy form. Wrapping the wrong CLI for the
+role is a 78 (`model-role-conflicting-args`: "config says agy, command runs codex").
+
+**Codex form:**
 
 ```bash
 scripts/codex-exec-with-status.sh \
@@ -31,6 +37,27 @@ scripts/codex-exec-with-status.sh \
     "<implementation prompt>" \
   </dev/null
 ```
+
+**Antigravity (`agy`, Gemini) form (v0.17.0):**
+
+```bash
+scripts/codex-exec-with-status.sh \
+  <status-file-path> \
+  --model-role implement \
+  --cwd <worktree-absolute-path> \
+  -- \
+  agy -p "<implementation prompt>" \
+      --sandbox --dangerously-skip-permissions \
+      --add-dir <repo-root>/.git \
+      --output-format json --print-timeout 2h \
+  </dev/null
+```
+
+The wrapper inserts `--model <id>` right after the `agy` token (`agy` has no `-C`, so `--cwd`
+sets the working directory; `--print-timeout` should equal `codex_dispatch.max_runtime_ms`). On
+timeout `agy` exits non-zero with a JSON body whose `status` is not `SUCCESS`; that is classified
+`failed` (fallback), like a codex non-zero exit. The command token may be a path (`/opt/homebrew/bin/agy`)
+or preceded by `env`/`VAR=value`; the wrapper compares the basename.
 
 The second rung of the ladder passes `--model-role implement_fallback`. See
 [docs/execution-model.md](execution-model.md) for the ladder.
@@ -50,6 +77,10 @@ Mandatory flags:
 - `--add-dir <repo-root>/.git` — a git worktree's metadata lives under the main repo's
   `.git/worktrees/<id>`, outside the worktree cwd; without this the sandbox blocks `git commit`
   (observed in the v0.16.0 dogfood run: the implementer finished but could not commit).
+  **Trust boundary:** with `--add-dir <repo>/.git` (either CLI) plus Codex `workspace-write` or
+  `agy --dangerously-skip-permissions`, the implementer can run shell commands and write under the
+  shared `.git` (refs, hooks). That is the same trust the v0.16.0 Codex contract already grants; it
+  is not a sandbox against a hostile model. Never grant `--add-dir` beyond the repo's `.git`.
 - `</dev/null` redirect — prevents codex from inheriting the parent shell's stdin and hanging under bash backgrounding.
 
 **Do not use** `--dangerously-bypass-approvals-and-sandbox` — it bypasses the sandbox and would allow codex to escape the worktree.
