@@ -104,6 +104,20 @@ test('harness.dispatch forwards variant in options to the adapter', async () => 
   assert.equal(fake.calls[0].options.foo, 'bar');
 });
 
+test('harness.dispatch passes model options and audits modelRole in adapterMeta', async () => {
+  const fake = makeFakeAdapter();
+  const result = await dispatch(
+    { cli: 'fake' },
+    'sys',
+    'usr',
+    { modelRole: 'planning', model: 'gpt-6-astra', reasoningEffort: 'xhigh' },
+    { adapters: new Map([['fake', fake]]) },
+  );
+  assert.equal(fake.calls[0].options.model, 'gpt-6-astra');
+  assert.equal(fake.calls[0].options.reasoningEffort, 'xhigh');
+  assert.equal(result.adapterMeta.model_role, 'planning');
+});
+
 test('harness.dispatch records a non-negative duration_ms', async () => {
   const fake = makeFakeAdapter({ duration_ms: undefined });
   const result = await dispatch(

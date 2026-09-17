@@ -892,9 +892,12 @@ test('orchestrator stress.scale parallel cap: 5 fake implementers; 5 started eve
   const startedEvents = run.events.filter((e) => e.event_type === 'started');
   assert.equal(startedEvents.length, 5, 'sidecar should have 5 started events');
 
-  // Seqs should cover 1..5 (contiguous, not necessarily in member order).
+  // Started events remain unique and monotonic; terminal events may interleave
+  // now that every dispatch persists its completion before returning.
   const seqs = startedEvents.map((e) => e.event_seq).sort((a, b) => a - b);
-  assert.deepEqual(seqs, [1, 2, 3, 4, 5], 'event_seqs should be 1..5 contiguous');
+  assert.equal(new Set(seqs).size, 5);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  assert.equal(run.events.filter((e) => e.event_type === 'completed').length, 5);
 });
 
 test('integration.cross-module specPath required: omitting specPath rejects loudly', async () => {
@@ -1234,4 +1237,218 @@ test('orchestrator: returned outcome "halted" lands in failed bucket with haltEn
   // The haltEnvelope must be preserved through to the failed entry.
   assert.deepEqual(entry.result.haltEnvelope, fakeHaltEnvelope,
     'haltEnvelope must be preserved in the failed entry');
+});
+
+test('orchestrator snapshots only codex inputs and records terminal payloads', async () => {
+  const { spec } = makeSpec('cps-orch-snapshot-');
+  const codex = makeOrchImpl({
+    memberId: 'expert-implementer@codex:gpt-5.5#0',
+    adapter: 'codex-cli',
+    model: 'gpt-5.5',
+    branchName: 'codex-legacy',
+  });
+  const claude = makeOrchImpl({ branchName: 'claude-current' });
+  const inputs = [];
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'base',
+    implementers: [codex, claude],
+    modelSnapshot: { model_role: 'implement', model: 'gpt-5.6-terra', effort: 'high' },
+    dispatchFn: async (input) => {
+      inputs.push(input);
+      return {
+        memberId: input.memberId, outcome: 'completed', exitCode: 0,
+        headSha: 'head', changedFiles: ['x.js'], diffHash: 'sha256:diff', haltEnvelope: null,
+        modelSnapshot: input.model ? { model_role: input.modelRole, model: input.model, effort: input.effort } : null,
+      };
+    },
+  });
+  assert.equal(result.success.length, 2);
+  const codexInput = inputs.find((input) => input.memberId === codex.memberId);
+  const claudeInput = inputs.find((input) => input.memberId === claude.memberId);
+  assert.deepEqual(
+    { modelRole: codexInput.modelRole, model: codexInput.model, effort: codexInput.effort },
+    { modelRole: 'implement', model: 'gpt-5.6-terra', effort: 'high' },
+  );
+  assert.equal(codexInput.repoRoot, '/fake');
+  assert.equal(claudeInput.modelRole, undefined);
+  assert.equal(claudeInput.model, undefined);
+  const run = readImplementerRun(spec, 'slice-3');
+  assert.equal(run.members[codex.memberId].model, 'gpt-5.5');
+  const codexEvents = run.events.filter((event) => event.member_id === codex.memberId);
+  assert.deepEqual(codexEvents.map((event) => event.event_type), ['started', 'completed']);
+  assert.equal(codexEvents[0].payload.model, 'gpt-5.6-terra');
+  assert.equal(codexEvents[1].payload.diff_hash, 'sha256:diff');
+  assert.equal(codexEvents[1].payload.model_role, 'implement');
+});
+
+test('orchestrator records thrown dispatch as failed with cause', async () => {
+  const { spec } = makeSpec('cps-orch-terminal-fail-');
+  await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementers: [makeOrchImpl()],
+    dispatchFn: async () => { throw new Error('boom'); },
+  });
+  const run = readImplementerRun(spec, 'slice-3');
+  assert.deepEqual(run.events.map((event) => event.event_type), ['started', 'failed']);
+  assert.equal(run.events[1].payload.cause, 'boom');
+});
+
+test('orchestrator resume reuses completed result without launch or observation', async () => {
+  const { spec } = makeSpec('cps-orch-resume-completed-');
+  const impl = makeOrchImpl();
+  const first = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementers: [impl],
+    dispatchFn: async (input) => ({
+      memberId: input.memberId, outcome: 'completed', exitCode: 0,
+      headSha: 'saved-head', changedFiles: ['saved.js'], diffHash: 'sha256:saved', haltEnvelope: null,
+    }),
+  });
+  let launches = 0;
+  let observations = 0;
+  const resumed = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementerRunId: first.implementerRunId,
+    resumeInFlight: true,
+    implementers: [impl],
+    dispatchFn: async () => { launches += 1; },
+    observeFn: async () => { observations += 1; },
+  });
+  assert.equal(launches, 0);
+  assert.equal(observations, 0);
+  assert.equal(resumed.success[0].result.headSha, 'saved-head');
+});
+
+test('orchestrator resume observes latest started despite mailbox events and keeps recorded snapshot', async () => {
+  const { spec } = makeSpec('cps-orch-resume-started-');
+  const impl = makeOrchImpl({
+    memberId: 'expert-implementer@codex:gpt-5.5#0', adapter: 'codex-cli', model: 'gpt-5.5',
+  });
+  const { implementer_run_id: runId } = await startImplementerRun(spec, 'slice-3', {
+    base_sha: 'base',
+    members: {
+      [impl.memberId]: {
+        adapter: 'codex-cli', model: 'gpt-5.5', required: true,
+        worktree_id: impl.branchName, branch: impl.branchName, claimed_files: [],
+      },
+    },
+  });
+  for (const [event_type, payload] of [
+    ['started', { phase: 'dispatch-start', model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high' }],
+    ['mailbox_poll', { phase: 'poll' }],
+  ]) {
+    await appendImplementerEventLocked(spec, {
+      event_type, implementer_run_id: runId, slice_id: 'slice-3', member_id: impl.memberId,
+      runtime_kind: 'codex-cli', worktree_id: impl.branchName,
+      payload_hash: 'sha256:' + (await import('node:crypto')).createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+      payload,
+    });
+  }
+  let observedInput;
+  const result = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementerRunId: runId, resumeInFlight: true, implementers: [impl],
+    dispatchFn: async () => { throw new Error('must not launch'); },
+    observeFn: async (input) => {
+      observedInput = input;
+      return {
+        memberId: input.memberId, outcome: 'halted', exitCode: null, headSha: null,
+        changedFiles: [], diffHash: null, haltEnvelope: { halt: 'implementer-attempt-timeout' },
+        modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort },
+        attemptInFlight: true,
+      };
+    },
+  });
+  assert.equal(result.failed.length, 1);
+  assert.equal(observedInput.model, 'gpt-5.6-sol');
+  const run = readImplementerRun(spec, 'slice-3');
+  assert.equal(run.events.at(-1).event_type, 'checkpoint');
+  assert.equal(run.events.at(-1).payload.phase, 'observation-timeout');
+});
+
+test('orchestrator resumeInFlight requires an implementerRunId', async () => {
+  const { spec } = makeSpec('cps-orch-resume-invalid-');
+  await assert.rejects(
+    dispatchImplementers({
+      specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+      resumeInFlight: true, implementers: [makeOrchImpl()], dispatchFn: async () => ({}),
+    }),
+    /resumeInFlight requires implementerRunId/,
+  );
+});
+
+test('orchestrator resolves one current implement snapshot for all new codex members', async () => {
+  const { spec } = makeSpec('cps-orch-resolve-once-');
+  const impls = [0, 1].map((ordinal) => makeOrchImpl({
+    memberId: `expert-implementer@codex:gpt-5.5#${ordinal}`,
+    adapter: 'codex-cli', model: 'gpt-5.5', branchName: `codex-${ordinal}`,
+  }));
+  let resolutions = 0;
+  const seen = [];
+  await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base', implementers: impls,
+    dispatchFn: async (input) => {
+      seen.push(input.model);
+      return { memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: 'h', changedFiles: [], diffHash: 'sha256:d', haltEnvelope: null };
+    },
+    _deps: { resolveModelRoles: () => {
+      resolutions += 1;
+      return { roles: { implement: { model: resolutions === 1 ? 'gpt-5.6-terra' : 'wrong-model', effort: 'high' } } };
+    } },
+  });
+  assert.equal(resolutions, 1);
+  assert.deepEqual(seen, ['gpt-5.6-terra', 'gpt-5.6-terra']);
+});
+
+test('orchestrator evidence beats halted events and observes a live pid without pidAlive hint', async () => {
+  const { spec } = makeSpec('cps-orch-evidence-wins-');
+  const impl = makeOrchImpl({
+    memberId: 'expert-implementer@codex:gpt-5.5#0', adapter: 'codex-cli', model: 'gpt-5.5',
+  });
+  const first = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base', implementers: [impl],
+    modelSnapshot: { model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high' },
+    dispatchFn: async (input) => ({
+      memberId: input.memberId, outcome: 'halted', exitCode: null, headSha: null,
+      changedFiles: [], diffHash: null, haltEnvelope: { halt: 'test-halt' },
+      modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort },
+    }),
+  });
+  let launches = 0;
+  let observations = 0;
+  const resumed = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementerRunId: first.implementerRunId, resumeInFlight: true, implementers: [impl],
+    dispatchFn: async () => { launches += 1; },
+    readAttemptEvidence: async () => ({
+      state: 'running', pid: process.pid, model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high',
+    }),
+    observeFn: async (input) => {
+      observations += 1;
+      return { memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: 'observed', changedFiles: [], diffHash: 'sha256:o', haltEnvelope: null, modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort } };
+    },
+  });
+  assert.equal(launches, 0);
+  assert.equal(observations, 1);
+  assert.equal(resumed.success[0].result.headSha, 'observed');
+});
+
+test('orchestrator completed reuse never resolves changed model configuration', async () => {
+  const { spec } = makeSpec('cps-orch-no-reresolve-');
+  const impl = makeOrchImpl({ memberId: 'expert-implementer@codex:gpt-5.5#0', adapter: 'codex-cli', model: 'gpt-5.5' });
+  const first = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base', implementers: [impl],
+    modelSnapshot: { model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high' },
+    dispatchFn: async (input) => ({ memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: 'h', changedFiles: [], diffHash: 'sha256:d', haltEnvelope: null, modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort } }),
+  });
+  const resumed = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementerRunId: first.implementerRunId, resumeInFlight: true, implementers: [impl],
+    dispatchFn: async () => { throw new Error('must not launch'); },
+    _deps: { resolveModelRoles: () => { throw new Error('must not resolve'); } },
+  });
+  assert.equal(resumed.success[0].result.modelSnapshot.model, 'gpt-5.6-sol');
 });

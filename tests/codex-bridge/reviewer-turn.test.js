@@ -15,7 +15,7 @@ import {
   runTurn,
 } from '../../lib/codex-bridge/reviewer-turn.js';
 import * as expertShim from '../../lib/codex-bridge/expert-turn.js';
-import { initSidecar } from '../../lib/codex-bridge/sidecar.js';
+import { initSidecar, readReviewerTurns } from '../../lib/codex-bridge/sidecar.js';
 import { readUnreadMessages } from '../../lib/codex-bridge/mailbox.js';
 
 test('reviewer-turn exposes the canonical API', () => {
@@ -85,6 +85,8 @@ test('reviewer peer DM to a reviewer-* recipient enqueues + lands in the inbox',
         phase: 'spec-review',
         sliceId: null,
         adapter: 'cli-harness:codex',
+        modelRole: 'planning',
+        modelRoleWarning: 'unknown phase legacy-phase',
         sidecarParticipantState: '',
         task: 'Review the architecture',
         suppressPeerMessages: false,
@@ -100,6 +102,10 @@ test('reviewer peer DM to a reviewer-* recipient enqueues + lands in the inbox',
     // No enqueue failures — proves PEER_RECIPIENT_RE accepted reviewer-ui.
     assert.equal(senderResult.peer_dm_summary.failed, 0, JSON.stringify(senderResult.peer_dm_summary));
     assert.equal(senderResult.peer_dm_summary.enqueued, 1);
+
+    const [turn] = readReviewerTurns(specPath, { phase: 'spec-review' });
+    assert.equal(turn.model_role, 'planning');
+    assert.equal(turn.model_role_warning, 'unknown phase legacy-phase');
 
     // The DM is actually on disk — proves mailbox RECIPIENT_RE accepted reviewer-ui.
     const inbox = await readUnreadMessages(root, 'reviewer-ui');

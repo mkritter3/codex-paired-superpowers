@@ -156,6 +156,114 @@ test('happy.reviewer-args-omitted: omitted execMode defaults to reviewer and --j
   }
 });
 
+test('model role options append validated model flags and echo final argv', async () => {
+  const dir = makeTmpDir('cps-impl-model-');
+  try {
+    const argsFile = join(dir, 'args.txt');
+    const script = makeFakeCli(dir, [`printf '%s\\n' "$@" > '${argsFile}'`, 'exit 0']);
+    const reviewer = await dispatch('', '', {
+      command: script,
+      model: 'gpt-6-astra',
+      reasoningEffort: 'xhigh',
+    });
+    assert.deepEqual(readFileSync(argsFile, 'utf8').trim().split('\n'), [
+      '--json', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort=xhigh',
+    ]);
+    assert.deepEqual(reviewer.adapterMeta.args, [
+      '--json', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort=xhigh',
+    ]);
+
+    await dispatch('', '', {
+      command: script,
+      execMode: 'implementer',
+      cwd: dir,
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high',
+    });
+    assert.deepEqual(readFileSync(argsFile, 'utf8').trim().split('\n'), [
+      'exec', '--sandbox', 'workspace-write', '-C', dir,
+      '-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=high',
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('model options reject escape args and unsafe tokens before spawn', async () => {
+  const dir = makeTmpDir('cps-impl-model-invalid-');
+  try {
+    const marker = join(dir, 'ran');
+    const script = makeFakeCli(dir, [`touch '${marker}'`]);
+    await assert.rejects(
+      dispatch('', '', { command: script, args: [], model: 'gpt-6-astra' }),
+      /mutually exclusive/,
+    );
+    await assert.rejects(
+      dispatch('', '', { command: script, model: 'bad model', reasoningEffort: 'high' }),
+      /model/,
+    );
+    assert.equal(existsSync(marker), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('onSpawn receives the live child pid and is not called for spawn failure', async () => {
+  const dir = makeTmpDir('cps-impl-onspawn-');
+  try {
+    const script = makeFakeCli(dir, ['cat >/dev/null', 'exit 0']);
+    let seenPid = null;
+    await dispatch('', '', {
+      command: script,
+      onSpawn(pid) {
+        assert.equal(isAlive(pid), true);
+        seenPid = pid;
+      },
+    });
+    assert.ok(Number.isInteger(seenPid));
+
+    let failureCalled = false;
+    await dispatch('', '', {
+      command: join(dir, 'missing-codex'),
+      onSpawn() { failureCalled = true; },
+    });
+    assert.equal(failureCalled, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('external AbortSignal terminates a hanging process group as aborted', {
+  timeout: TEST_TIMEOUT_MS,
+}, async () => {
+  const dir = makeTmpDir('cps-impl-abort-');
+  let pid = null;
+  try {
+    const script = makeFakeCli(dir, ["trap '' TERM", 'cat >/dev/null', 'sleep 3600 &', 'wait']);
+    const controller = new AbortController();
+    const pending = dispatch('', '', {
+      command: script,
+      signal: controller.signal,
+      onSpawn(childPid) { pid = childPid; },
+      timeout_ms: 10_000,
+    });
+    setTimeout(() => controller.abort(), 200);
+    const result = await pending;
+    assert.equal(result.exit, 130);
+    assert.ok(result.warnings.includes('aborted'));
+    const deadline = Date.now() + 3000;
+    while (pid && isAlive(pid) && Date.now() < deadline) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+    assert.equal(isAlive(pid), false);
+  } finally {
+    if (pid && isAlive(pid)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ── happy.prompt-delivery ─────────────────────────────────────────────────────
 // Fake CLI captures stdin and writes it to a file. Assert stdin received
 // the composed prompt (system\n\nuser format from composeStdinPayload).
