@@ -204,6 +204,44 @@ test('finalizeImplementDispatch promotes in-progress → shipped with completion
   cleanup(root);
 });
 
+test('finalizeImplementDispatch fills a missing attempt snapshot from terminal evidence', () => {
+  const { root, specPath } = makeSpecRepo();
+  appendImplementDispatch(specPath, 'slice-1', {
+    slice_id: 'slice-1', agent: 'codex', transport: 'codex-background-bash', task_id: 'snapshot-fill',
+    output_file: '/tmp/o.log', status_file: '/tmp/o.status.json', dispatched_at: '2026-05-10T00:00:00.000Z',
+    worktree: '/tmp/wt', outcome: 'in-progress',
+  });
+  finalizeImplementDispatch(specPath, 'slice-1', 'snapshot-fill', {
+    outcome: 'shipped', completed_at: '2026-05-10T00:05:00.000Z',
+    model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high',
+  });
+  const d = readSidecar(root, specPath).slice_reviews['slice-1'].phases.implement.dispatches[0];
+  assert.deepEqual(
+    { model_role: d.model_role, model: d.model, effort: d.effort },
+    { model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high' },
+  );
+  cleanup(root);
+});
+
+test('finalizeImplementDispatch preserves the recorded snapshot over terminal values', () => {
+  const { root, specPath } = makeSpecRepo();
+  appendImplementDispatch(specPath, 'slice-1', {
+    slice_id: 'slice-1', agent: 'codex', transport: 'codex-background-bash', task_id: 'snapshot-wins',
+    output_file: '/tmp/o.log', status_file: '/tmp/o.status.json', dispatched_at: '2026-05-10T00:00:00.000Z',
+    worktree: '/tmp/wt', outcome: 'in-progress', model_role: 'implement', model: 'recorded', effort: 'high',
+  });
+  finalizeImplementDispatch(specPath, 'slice-1', 'snapshot-wins', {
+    outcome: 'shipped', completed_at: '2026-05-10T00:05:00.000Z',
+    model_role: 'implement_fallback', model: 'terminal', effort: 'medium',
+  });
+  const d = readSidecar(root, specPath).slice_reviews['slice-1'].phases.implement.dispatches[0];
+  assert.deepEqual(
+    { model_role: d.model_role, model: d.model, effort: d.effort },
+    { model_role: 'implement', model: 'recorded', effort: 'high' },
+  );
+  cleanup(root);
+});
+
 test('finalizeImplementDispatch matches the most recent in-progress entry by task_id', () => {
   const { root, specPath } = makeSpecRepo();
   // Two background dispatches in-progress with different task_ids

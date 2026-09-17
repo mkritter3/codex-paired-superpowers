@@ -24,6 +24,7 @@ import {
   initSidecar,
   loadSidecar,
   appendRound,
+  appendRoundWithAudits,
   appendAuditLog,
   ROUND_BUDGET,
 } from '../../lib/codex-bridge/sidecar.js';
@@ -40,6 +41,24 @@ function makeSpec() {
 
 const insp = (s = 'ok') => ({ cmd: 'rg foo', summary: s, kind: 'inspection' });
 const verif = () => ({ cmd: 'npm test', summary: 'ran', kind: 'verification', exit_code: 0 });
+const SHA_A = 'a'.repeat(40);
+const SHA_B = 'b'.repeat(40);
+
+function reviewAudit(side, reviewedSha, commands = [verif()]) {
+  return {
+    phase: 'review-slice:slice-1', round: 1, side, commands, verdict_basis: 'verified',
+    ...(reviewedSha === undefined ? {} : { reviewed_sha: reviewedSha }),
+  };
+}
+
+async function appendReviewPath(kind, spec, audits, { headSha } = {}) {
+  const round = { phase: 'review-slice:slice-1', round: 1, claude: 'SHIP', codex: 'SHIP' };
+  if (kind === 'separate') {
+    for (const audit of audits) appendAuditLog(spec, audit);
+    return appendRound(spec, round, { enforceShipAudits: true, headSha });
+  }
+  return appendRoundWithAudits(spec, { audits, round }, { headSha });
+}
 
 function runCli(args, opts = {}) {
   try {
@@ -185,6 +204,73 @@ test('sink gate: out-of-scope phase (neither design nor code-bearing) passes SHI
   rmSync(dir, { recursive: true, force: true });
 });
 
+for (const kind of ['separate', 'atomic']) {
+  test(`${kind} reviewed_sha: matching full SHAs are persisted and accepted`, async () => {
+    const { dir, spec } = makeSpec();
+    await appendReviewPath(kind, spec, [reviewAudit('claude', SHA_A), reviewAudit('codex', SHA_A)], { headSha: SHA_A });
+    assert.deepEqual(loadSidecar(spec).audits.map((a) => a.reviewed_sha), [SHA_A, SHA_A]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: abbreviated and non-hex values are rejected`, async () => {
+    for (const bad of ['abcdef0', 'z'.repeat(40)]) {
+      const { dir, spec } = makeSpec();
+      await assert.rejects(
+        async () => appendReviewPath(kind, spec, [reviewAudit('claude', bad), reviewAudit('codex', bad)], { headSha: bad }),
+        /reviewed_sha.*40.*hex/i,
+      );
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test(`${kind} reviewed_sha: legacy audits without SHAs remain accepted`, async () => {
+    const { dir, spec } = makeSpec();
+    await appendReviewPath(kind, spec, [reviewAudit('claude'), reviewAudit('codex')]);
+    assert.equal(loadSidecar(spec).rounds.length, 1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: asymmetric omission identifies the missing side`, async () => {
+    const { dir, spec } = makeSpec();
+    await assert.rejects(
+      async () => appendReviewPath(kind, spec, [reviewAudit('claude', SHA_A), reviewAudit('codex')], { headSha: SHA_A }),
+      /codex.*reviewed_sha/i,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: SHA-bearing rounds require headSha`, async () => {
+    const { dir, spec } = makeSpec();
+    await assert.rejects(
+      async () => appendReviewPath(kind, spec, [reviewAudit('claude', SHA_A), reviewAudit('codex', SHA_A)]),
+      /headSha required/,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: mismatching headSha is rejected`, async () => {
+    const { dir, spec } = makeSpec();
+    await assert.rejects(
+      async () => appendReviewPath(kind, spec, [reviewAudit('claude', SHA_A), reviewAudit('codex', SHA_A)], { headSha: SHA_B }),
+      /headSha.*reviewed_sha|reviewed_sha.*headSha/i,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: all SHA-bearing audits for the round must agree`, async () => {
+    const { dir, spec } = makeSpec();
+    const audits = [
+      reviewAudit('claude', SHA_A), reviewAudit('codex', SHA_A),
+      reviewAudit('claude', SHA_B, [insp('later inspection')]),
+    ];
+    await assert.rejects(
+      async () => appendReviewPath(kind, spec, audits, { headSha: SHA_B }),
+      /reviewed_sha.*match|same reviewed_sha/i,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
+
 // ── cli.js plumbing ───────────────────────────────────────────────────────
 
 test('cli sidecar-append-round: missing --round → exit 2 with usage message, no stack trace', () => {
@@ -240,5 +326,30 @@ test('cli sidecar-append-round: --allow-over-budget permits round 8 (sequentiall
   const allowed = runCli(['sidecar-append-round', '--specPath', spec, '--round', json, '--allow-over-budget']);
   assert.equal(allowed.status, 0, `stderr: ${allowed.stderr}`);
   assert.equal(loadSidecar(spec).rounds.length, 8);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('cli --headSha reaches the reviewed-SHA gate', () => {
+  const { dir, spec } = makeSpec();
+  appendAuditLog(spec, reviewAudit('claude', SHA_A));
+  appendAuditLog(spec, reviewAudit('codex', SHA_A));
+  const round = JSON.stringify({ phase: 'review-slice:slice-1', round: 1, claude: 'SHIP', codex: 'SHIP' });
+  const r = runCli(['sidecar-append-round', '--specPath', spec, '--round', round, '--headSha', SHA_B]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /headSha.*reviewed_sha|reviewed_sha.*headSha/i);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('cli atomic append also forwards --headSha', () => {
+  const { dir, spec } = makeSpec();
+  const payload = JSON.stringify({
+    audits: [reviewAudit('claude', SHA_A), reviewAudit('codex', SHA_A)],
+    round: { phase: 'review-slice:slice-1', round: 1, claude: 'SHIP', codex: 'SHIP' },
+  });
+  const r = runCli([
+    'sidecar-append-round-with-audits', '--specPath', spec, '--payload', payload, '--headSha', SHA_B,
+  ]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /headSha.*reviewed_sha|reviewed_sha.*headSha/i);
   rmSync(dir, { recursive: true, force: true });
 });

@@ -40,6 +40,44 @@ test('setImplementMeta writes preferred/fallback/parallel/worktree fields under 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('appendImplementDispatch persists optional model snapshot and rung fields', () => {
+  const { dir, spec } = makeSpec();
+  appendImplementDispatch(spec, 'slice-3', {
+    slice_id: 'slice-3', agent: 'codex', dispatched_at: '2026-09-17T00:00:00.000Z',
+    worktree: '/w', outcome: 'shipped', model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', rung: 1,
+  });
+  const dispatch = loadSidecar(spec).slice_reviews['slice-3'].phases.implement.dispatches[0];
+  assert.deepEqual(
+    { model_role: dispatch.model_role, model: dispatch.model, effort: dispatch.effort, rung: dispatch.rung },
+    { model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', rung: 1 },
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch rejects unknown model roles and out-of-range rungs', () => {
+  const { dir, spec } = makeSpec();
+  const base = {
+    slice_id: 'slice-3', agent: 'codex', dispatched_at: '2026-09-17T00:00:00.000Z',
+    worktree: '/w', outcome: 'shipped',
+  };
+  assert.throws(() => appendImplementDispatch(spec, 'slice-3', { ...base, model_role: 'nope' }), /model_role/);
+  assert.throws(() => appendImplementDispatch(spec, 'slice-3', { ...base, model: 'bad model' }), /model/);
+  assert.throws(() => appendImplementDispatch(spec, 'slice-3', { ...base, effort: 'high;rm' }), /effort/);
+  assert.throws(() => appendImplementDispatch(spec, 'slice-3', { ...base, rung: 0 }), /rung/);
+  assert.throws(() => appendImplementDispatch(spec, 'slice-3', { ...base, rung: 4 }), /rung/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('appendImplementDispatch keeps legacy records without attempt fields valid', () => {
+  const { dir, spec } = makeSpec();
+  appendImplementDispatch(spec, 'slice-3', {
+    slice_id: 'slice-3', agent: 'sonnet', dispatched_at: '2026-09-17T00:00:00.000Z',
+    worktree: '/w', outcome: 'shipped',
+  });
+  assert.equal(loadSidecar(spec).slice_reviews['slice-3'].phases.implement.dispatches.length, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('setImplementMeta is overwrite-on-write (second call replaces fields)', () => {
   const { dir, spec } = makeSpec();
   setImplementMeta(spec, 'slice-3', {
