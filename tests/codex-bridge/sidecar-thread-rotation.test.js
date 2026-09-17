@@ -45,8 +45,8 @@ test('initSidecar records the planning thread model snapshot', () => {
   const { dir, spec } = makeSpec();
   const config = loadSidecar(spec).thread_config['paired-reviewer'];
   assert.deepEqual(
-    { role: config.role, model: config.model, effort: config.effort },
-    { role: 'planning', model: 'gpt-5.5', effort: 'high' },
+    { role: config.role, cli: config.cli, model: config.model, effort: config.effort },
+    { role: 'planning', cli: 'codex', model: 'gpt-5.5', effort: 'high' },
   );
   assert.match(config.opened_at, /^\d{4}-\d{2}-\d{2}T/);
   rmSync(dir, { recursive: true, force: true });
@@ -80,11 +80,17 @@ test('CLI rotate --threadConfig persists the execution snapshot', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('getThreadConfig returns recorded entries and a role-aware legacy fallback', () => {
-  const recorded = { role: 'review', model: 'gpt-6-astra', effort: 'high', opened_at: 'now' };
-  assert.equal(getThreadConfig({ thread_config: { 'execution-reviewer': recorded } }, 'execution-reviewer'), recorded);
+test('getThreadConfig returns recorded entries and a role-aware legacy fallback with cli: "codex"', () => {
+  const recorded = { role: 'review', cli: 'agy', model: 'gemini-3.8-flash-high', effort: 'high', opened_at: 'now' };
+  assert.deepEqual(getThreadConfig({ thread_config: { 'execution-reviewer': recorded } }, 'execution-reviewer'), recorded);
+  // Entry without cli returns cli: 'codex'
+  const withoutCli = { role: 'review', model: 'gpt-6-astra', effort: 'high', opened_at: 'now' };
+  assert.deepEqual(getThreadConfig({ thread_config: { 'execution-reviewer': withoutCli } }, 'execution-reviewer'), {
+    ...withoutCli, cli: 'codex',
+  });
+  // Legacy sidecar without thread_config returns cli: 'codex'
   assert.deepEqual(getThreadConfig({}, 'execution-reviewer'), {
-    role: 'review', model: null, effort: null, legacy: true,
+    role: 'review', cli: 'codex', model: null, effort: null, legacy: true,
   });
 });
 
@@ -97,6 +103,27 @@ test('setCodexThreadId rejects unsafe or unknown thread configuration', async ()
   await assert.rejects(
     setCodexThreadId(spec, { newThreadId: 'e1', threadConfig: { role: 'review', model: 'bad model', effort: 'high' } }),
     /threadConfig\.model/,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('setCodexThreadId with threadConfig.cli: "agy" persists it and rejects cli: "gemini"', async () => {
+  const { dir, spec } = makeSpec();
+  await setCodexThreadId(spec, {
+    role: 'execution-reviewer',
+    newThreadId: 'agy-tid',
+    reason: 'session-not-found',
+    threadConfig: { role: 'review', cli: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
+  });
+  const sc = loadSidecar(spec);
+  assert.equal(sc.thread_config['execution-reviewer'].cli, 'agy');
+
+  await assert.rejects(
+    setCodexThreadId(spec, {
+      newThreadId: 'bad-cli-tid',
+      threadConfig: { role: 'review', cli: 'gemini', model: 'gemini-3.8-flash-high', effort: 'high' },
+    }),
+    /threadConfig\.cli/,
   );
   rmSync(dir, { recursive: true, force: true });
 });

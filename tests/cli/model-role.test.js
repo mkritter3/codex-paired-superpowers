@@ -45,7 +45,14 @@ test('model-role json format emits the frozen shape', () => {
   const result = runCli(['model-role', '--role', 'implement', '--repoRoot', root, '--format', 'json']);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
-    role: 'implement', model: 'gpt-5.6-sol', effort: 'high', sources: { model: 'default', effort: 'default' },
+    role: 'implement',
+    cli: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+    command: 'codex',
+    args: ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=high'],
+    insertAfter: 'exec',
+    sources: { cli: 'default', model: 'default', effort: 'default' },
   });
   rmSync(root, { recursive: true, force: true });
 });
@@ -54,6 +61,27 @@ test('model-role flags format emits one exact unquoted line', () => {
   const result = runCli(['model-role', '--role', 'implement', '--format', 'flags']);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), '-m gpt-5.6-sol -c model_reasoning_effort=high');
+});
+
+test('model-role flags format for an agy role prints --model <model>', () => {
+  const root = makeRepo({
+    review: { cli: 'agy', model: 'gemini-3.8-flash-high' },
+  });
+  const result = runCli(['model-role', '--role', 'review', '--repoRoot', root, '--format', 'flags']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), '--model gemini-3.8-flash-high');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('model-role mcp format on an agy role exits 2 with empty stdout and error message', () => {
+  const root = makeRepo({
+    review: { cli: 'agy', model: 'gemini-3.8-flash-high' },
+  });
+  const result = runCli(['model-role', '--role', 'review', '--repoRoot', root, '--format', 'mcp']);
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /uses agy/);
+  rmSync(root, { recursive: true, force: true });
 });
 
 test('model-role mcp format emits the exact MCP object', () => {
@@ -90,9 +118,20 @@ test('model-roles emits every role, source, and validated CLI version', () => {
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   assert.deepEqual(Object.keys(parsed.roles), ['planning', 'review', 'implement', 'implement_fallback']);
-  assert.deepEqual(parsed.sources.planning, { model: 'default', effort: 'default' });
+  assert.equal(parsed.roles.planning.cli, 'codex');
+  assert.deepEqual(parsed.sources.planning, { cli: 'default', model: 'default', effort: 'default' });
   assert.equal(parsed.validated_cli_version, '0.153.4');
   rmSync(root, { recursive: true, force: true });
+});
+
+test('reviewer-thread-open and reviewer-thread-reply are registered stubs that exit 2', () => {
+  const resultOpen = runCli(['reviewer-thread-open']);
+  assert.equal(resultOpen.status, 2);
+  assert.match(resultOpen.stderr, /not implemented until slice 4/);
+
+  const resultReply = runCli(['reviewer-thread-reply']);
+  assert.equal(resultReply.status, 2);
+  assert.match(resultReply.stderr, /not implemented until slice 4/);
 });
 
 test('sidecar-init defaults to the planning model role', () => {

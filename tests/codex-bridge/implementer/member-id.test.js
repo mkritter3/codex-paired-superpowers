@@ -109,6 +109,20 @@ test('parseMemberId: rejects unknown cliKind (gemini)', () => {
   );
 });
 
+test('parseMemberId: rejects unknown cliKind (agy)', () => {
+  assert.throws(
+    () => parseMemberId('expert-implementer@agy:some-model#0'),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes('agy') || err.message.includes('cliKind') || err.message.includes('unknown'),
+        `Expected cliKind/unknown in error message, got: ${err.message}`
+      );
+      return true;
+    }
+  );
+});
+
 test('parseMemberId: rejects empty cliKind', () => {
   // e.g. 'expert-implementer@:model#0' — colon immediately after @
   assert.throws(

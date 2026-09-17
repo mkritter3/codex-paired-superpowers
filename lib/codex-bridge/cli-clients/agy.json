@@ -1,0 +1,17 @@
+{
+  "name": "agy",
+  "command": "agy",
+  "additional_args": [],
+  "permissions": {
+    "read-only": {
+      "args": ["--mode", "plan"]
+    },
+    "write-allowed": {
+      "args": ["--dangerously-skip-permissions"]
+    }
+  },
+  "auth_probe": {
+    "args": ["models"],
+    "timeout_ms": 15000
+  }
+}

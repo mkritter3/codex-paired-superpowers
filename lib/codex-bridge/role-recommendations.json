@@ -20,8 +20,8 @@
     "permissions": "read-only"
   },
   "expert-security": {
-    "preference": ["codex", "gemini", "claude"],
-    "rationale": "Threat-model thinking; codex/gemini strongest",
+    "preference": ["codex", "agy", "claude"],
+    "rationale": "Threat-model thinking; codex/agy strongest",
     "permissions": "read-only"
   },
   "expert-backend": {
@@ -30,12 +30,12 @@
     "permissions": "read-only"
   },
   "expert-ui": {
-    "preference": ["claude", "gemini", "ollama{kimi-k2.6}", "ollama{glm-5.1}", "codex"],
+    "preference": ["claude", "agy", "ollama{kimi-k2.6}", "ollama{glm-5.1}", "codex"],
     "rationale": "Render hazards and prop surfaces; claude well-suited; deep fallback ladder for cross-model diversity",
     "permissions": "read-only"
   },
   "expert-ux": {
-    "preference": ["claude", "gemini", "ollama{kimi-k2.6}", "ollama{glm-5.1}", "codex"],
+    "preference": ["claude", "agy", "ollama{kimi-k2.6}", "ollama{glm-5.1}", "codex"],
     "rationale": "Workflow alignment and copy judgment",
     "permissions": "read-only"
   },

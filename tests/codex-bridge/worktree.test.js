@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync,
   symlinkSync, lstatSync, readlinkSync, existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +28,8 @@ import { execFileSync } from 'node:child_process';
 
 import {
   create,
+  createDetached,
+  withReviewCheckout,
   bootstrap,
   verifyBootstrap,
   reset,
@@ -424,6 +426,147 @@ test('removeBranch: halts worktree-branch-cleanup-failed on missing branch', () 
     const r = removeBranch(repoRoot, 'never-existed-branch');
     assert.equal(r.ok, false);
     assert.equal(r.halt.reason, 'worktree-branch-cleanup-failed');
+  } finally {
+    cleanupRepo(repoRoot);
+  }
+});
+
+// ── createDetached & withReviewCheckout ───────────────────────────────────────
+
+test('createDetached: creates a detached worktree at given SHA (HEAD~1) under tmpdir and registered in worktree list', () => {
+  const { repoRoot } = makeRepo();
+  try {
+    const sha0 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }).toString().trim();
+    const sha1 = commitFile(repoRoot, 'second.txt', 'second commit', 'second');
+    assert.notEqual(sha0, sha1);
+
+    const r = createDetached(repoRoot, 'HEAD~1');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok(r.worktreePath.startsWith(tmpdir()));
+    assert.ok(r.worktreePath.includes('cps-review-'));
+    assert.ok(existsSync(r.worktreePath));
+
+    // worktree HEAD equals HEAD~1 (sha0)
+    const wtHead = execFileSync('git', ['-C', r.worktreePath, 'rev-parse', 'HEAD'], { cwd: repoRoot }).toString().trim();
+    assert.equal(wtHead, sha0);
+
+    // registered in git worktree list
+    const wtList = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
+    assert.ok(wtList.includes(r.worktreePath));
+
+    // cleanup
+    execFileSync('git', ['worktree', 'remove', '--force', r.worktreePath], { cwd: repoRoot });
+    execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot });
+  } finally {
+    cleanupRepo(repoRoot);
+  }
+});
+
+test('withReviewCheckout: overlays uncommitted file, cleans up checkout in finally, leaves repo git status unchanged', async () => {
+  const { repoRoot } = makeRepo();
+  try {
+    // Write uncommitted file in repo
+    mkdirSync(join(repoRoot, 'docs', 'specs'), { recursive: true });
+    writeFileSync(join(repoRoot, 'docs', 'specs', 'x.md'), '# uncommitted spec');
+    const initialStatus = execFileSync('git', ['status', '--porcelain', '-uall'], { cwd: repoRoot }).toString();
+    assert.ok(initialStatus.includes('docs/specs/x.md'));
+
+    let recordedCheckoutPath = null;
+    const result = await withReviewCheckout(
+      repoRoot,
+      { overlayPaths: ['docs/specs/x.md'] },
+      async (checkoutPath) => {
+        recordedCheckoutPath = checkoutPath;
+        assert.ok(existsSync(checkoutPath));
+        const overlaidContent = readFileSync(join(checkoutPath, 'docs', 'specs', 'x.md'), 'utf8');
+        assert.equal(overlaidContent, '# uncommitted spec');
+        return 'review-passed';
+      },
+    );
+
+    assert.equal(result, 'review-passed');
+    assert.ok(recordedCheckoutPath);
+    // Assert worktree is cleaned up
+    assert.equal(existsSync(recordedCheckoutPath), false);
+    const wtList = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
+    assert.ok(!wtList.includes(recordedCheckoutPath));
+
+    // Repo git status --porcelain is unchanged
+    const finalStatus = execFileSync('git', ['status', '--porcelain', '-uall'], { cwd: repoRoot }).toString();
+    assert.equal(finalStatus, initialStatus);
+  } finally {
+    cleanupRepo(repoRoot);
+  }
+});
+
+test('withReviewCheckout: removes checkout in finally when fn throws and rethrows original error', async () => {
+  const { repoRoot } = makeRepo();
+  try {
+    let recordedCheckoutPath = null;
+    await assert.rejects(
+      async () => {
+        await withReviewCheckout(repoRoot, {}, async (checkoutPath) => {
+          recordedCheckoutPath = checkoutPath;
+          assert.ok(existsSync(checkoutPath));
+          throw new Error('reviewer crashed intentionally');
+        });
+      },
+      (err) => {
+        assert.equal(err.message, 'reviewer crashed intentionally');
+        return true;
+      },
+    );
+
+    assert.ok(recordedCheckoutPath);
+    assert.equal(existsSync(recordedCheckoutPath), false);
+    const wtList = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
+    assert.ok(!wtList.includes(recordedCheckoutPath));
+  } finally {
+    cleanupRepo(repoRoot);
+  }
+});
+
+test('withReviewCheckout: rejects invalid overlayPaths before creating checkout (code: review-overlay-invalid)', async () => {
+  const { repoRoot } = makeRepo();
+  try {
+    const wtListBefore = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
+
+    // 1. Path containing ..
+    await assert.rejects(
+      async () => {
+        await withReviewCheckout(repoRoot, { overlayPaths: ['../escape.txt'] }, async () => {});
+      },
+      (err) => {
+        assert.equal(err.code, 'review-overlay-invalid');
+        return true;
+      },
+    );
+
+    // 2. Absolute path
+    await assert.rejects(
+      async () => {
+        await withReviewCheckout(repoRoot, { overlayPaths: ['/tmp/absolute.txt'] }, async () => {});
+      },
+      (err) => {
+        assert.equal(err.code, 'review-overlay-invalid');
+        return true;
+      },
+    );
+
+    // 3. Non-existent file
+    await assert.rejects(
+      async () => {
+        await withReviewCheckout(repoRoot, { overlayPaths: ['nonexistent/file.md'] }, async () => {});
+      },
+      (err) => {
+        assert.equal(err.code, 'review-overlay-invalid');
+        return true;
+      },
+    );
+
+    // No worktrees were created
+    const wtListAfter = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
+    assert.equal(wtListAfter, wtListBefore);
   } finally {
     cleanupRepo(repoRoot);
   }

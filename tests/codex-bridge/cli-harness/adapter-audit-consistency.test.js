@@ -12,7 +12,7 @@ const ADAPTER_DIR = fileURLToPath(
 const EXPECTED_ADAPTER_META = {
   'codex.js': 'cli-harness:codex',
   'ollama.js': 'cli-harness:ollama',
-  'gemini.js': 'cli-harness:gemini',
+  'agy.js': 'cli-harness:agy',
   'qwen.js': 'cli-harness:qwen',
   'claude.js': 'cli-harness:claude',
   // v0.10.0 slice 5: claude-cli adapter (implementer mode, routes to Ollama Cloud / Anthropic API)

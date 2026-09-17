@@ -9,12 +9,15 @@ import {
   MODEL_ROLES,
   MODEL_ROLE_DEFAULTS,
   VALID_EFFORTS,
+  VALID_CLIS,
+  AGY_EFFORT_SUFFIX_RE,
   SAFE_TOKEN,
   CODEX_CLI_VALIDATED_VERSION,
   ModelsConfigError,
   validateModelsBlock,
   resolveModelRoles,
   codexExecArgs,
+  cliExecArgs,
   mcpCallConfig,
   roleForThread,
   modelRoleForPhase,
@@ -42,21 +45,23 @@ function makeRepo(config = null) {
 test('model role constants and frozen defaults match the contract', () => {
   assert.deepEqual(MODEL_ROLES, ['planning', 'review', 'implement', 'implement_fallback']);
   assert.deepEqual(MODEL_ROLE_DEFAULTS, {
-    planning: { model: 'gpt-6-astra', effort: 'xhigh' },
-    review: { model: 'gpt-6-astra', effort: 'high' },
-    implement: { model: 'gpt-5.6-sol', effort: 'high' },
-    implement_fallback: { model: 'gpt-6-astra', effort: 'medium' },
+    planning: { cli: 'codex', model: 'gpt-6-astra', effort: 'xhigh' },
+    review: { cli: 'codex', model: 'gpt-6-astra', effort: 'high' },
+    implement: { cli: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+    implement_fallback: { cli: 'codex', model: 'gpt-6-astra', effort: 'medium' },
   });
   assert.equal(Object.isFrozen(MODEL_ROLE_DEFAULTS), true);
   for (const role of MODEL_ROLES) assert.equal(Object.isFrozen(MODEL_ROLE_DEFAULTS[role]), true);
   assert.deepEqual(VALID_EFFORTS, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  assert.deepEqual(VALID_CLIS, ['codex', 'agy']);
+  assert.ok(AGY_EFFORT_SUFFIX_RE instanceof RegExp);
   assert.equal(SAFE_TOKEN.test('gpt-5.6_sol-x'), true);
   assert.equal(CODEX_CLI_VALIDATED_VERSION, '0.153.4');
 });
 
 test('resolveModelRoles defaults every field and source', () => {
   const envKeys = Object.keys(process.env).filter(
-    (key) => key.startsWith('CODEX_PAIRED_MODEL') || key.startsWith('CODEX_PAIRED_REASONING'),
+    (key) => key.startsWith('CODEX_PAIRED_MODEL') || key.startsWith('CODEX_PAIRED_REASONING') || key.startsWith('CODEX_PAIRED_CLI'),
   );
   const original = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
   try {
@@ -64,7 +69,7 @@ test('resolveModelRoles defaults every field and source', () => {
     const result = resolveModelRoles({});
     assert.deepEqual(result.roles, MODEL_ROLE_DEFAULTS);
     for (const role of MODEL_ROLES) {
-      assert.deepEqual(result.sources[role], { model: 'default', effort: 'default' });
+      assert.deepEqual(result.sources[role], { cli: 'default', model: 'default', effort: 'default' });
     }
   } finally {
     Object.assign(process.env, original);
@@ -78,9 +83,173 @@ test('resolveModelRoles layers project partial overrides over defaults', () => {
   });
   try {
     const result = resolveModelRoles({ repoRoot: root, env: {} });
+    assert.equal(result.roles.implement.cli, 'codex');
     assert.equal(result.roles.implement.model, 'gpt-5.6-terra');
     assert.equal(result.roles.implement.effort, 'high');
-    assert.deepEqual(result.sources.implement, { model: 'project', effort: 'default' });
+    assert.deepEqual(result.sources.implement, { cli: 'default', model: 'project', effort: 'default' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project { review: { cli: "agy", model: "gemini-3.8-flash-high" } } derives effort and leaves others untouched', () => {
+  const root = makeRepo({
+    ...MIN_VALID,
+    models: { review: { cli: 'agy', model: 'gemini-3.8-flash-high' } },
+  });
+  try {
+    const result = resolveModelRoles({ repoRoot: root, env: {} });
+    assert.deepEqual(result.roles.review, {
+      cli: 'agy',
+      model: 'gemini-3.8-flash-high',
+      effort: 'high',
+    });
+    assert.deepEqual(result.sources.review, {
+      cli: 'project',
+      model: 'project',
+      effort: 'derived',
+    });
+    // other roles untouched
+    assert.deepEqual(result.roles.planning, MODEL_ROLE_DEFAULTS.planning);
+    assert.deepEqual(result.sources.planning, { cli: 'default', model: 'default', effort: 'default' });
+    assert.deepEqual(result.roles.implement, MODEL_ROLE_DEFAULTS.implement);
+    assert.deepEqual(result.roles.implement_fallback, MODEL_ROLE_DEFAULTS.implement_fallback);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('project { planning: { cli: "agy", model: "gemini-3.8-flash-high" } } works although default effort is xhigh', () => {
+  const root = makeRepo({
+    ...MIN_VALID,
+    models: { planning: { cli: 'agy', model: 'gemini-3.8-flash-high' } },
+  });
+  try {
+    const result = resolveModelRoles({ repoRoot: root, env: {} });
+    assert.deepEqual(result.roles.planning, {
+      cli: 'agy',
+      model: 'gemini-3.8-flash-high',
+      effort: 'high',
+    });
+    assert.deepEqual(result.sources.planning, {
+      cli: 'project',
+      model: 'project',
+      effort: 'derived',
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('same-layer mismatch { cli: "agy", model: "gemini-3.1-pro-low", effort: "high" } throws models-config-malformed naming both', () => {
+  const root = makeRepo({
+    ...MIN_VALID,
+    models: { review: { cli: 'agy', model: 'gemini-3.1-pro-low', effort: 'high' } },
+  });
+  try {
+    assert.throws(
+      () => resolveModelRoles({ repoRoot: root, env: {} }),
+      (err) => {
+        assert.ok(err instanceof ModelsConfigError);
+        assert.equal(err.code, 'models-config-malformed');
+        assert.match(err.detail, /gemini-3\.1-pro-low/);
+        assert.match(err.detail, /high/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('agy model without suffix throws error', () => {
+  const root = makeRepo({
+    ...MIN_VALID,
+    models: { review: { cli: 'agy', model: 'gemini-3.8-flash' } },
+  });
+  try {
+    assert.throws(
+      () => resolveModelRoles({ repoRoot: root, env: {} }),
+      (err) => {
+        assert.ok(err instanceof ModelsConfigError);
+        assert.equal(err.code, 'models-config-malformed');
+        return true;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cli: "gemini" throws error (only codex and agy are valid)', () => {
+  const root = makeRepo({
+    ...MIN_VALID,
+    models: { review: { cli: 'gemini', model: 'gemini-3.8-flash-high' } },
+  });
+  try {
+    assert.throws(
+      () => resolveModelRoles({ repoRoot: root, env: {} }),
+      (err) => {
+        assert.ok(err instanceof ModelsConfigError);
+        assert.equal(err.code, 'models-config-malformed');
+        assert.match(err.detail, /cli/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('global environment overrides CODEX_PAIRED_CLI=agy and CODEX_PAIRED_MODEL=gemini-3.8-flash-medium apply to all roles', () => {
+  const root = makeRepo();
+  try {
+    const result = resolveModelRoles({
+      repoRoot: root,
+      env: {
+        CODEX_PAIRED_CLI: 'agy',
+        CODEX_PAIRED_MODEL: 'gemini-3.8-flash-medium',
+      },
+    });
+    for (const role of MODEL_ROLES) {
+      assert.deepEqual(result.roles[role], {
+        cli: 'agy',
+        model: 'gemini-3.8-flash-medium',
+        effort: 'medium',
+      });
+      assert.deepEqual(result.sources[role], {
+        cli: 'env',
+        model: 'env',
+        effort: 'derived',
+      });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('per-role environment override CODEX_PAIRED_CLI_IMPLEMENT=codex beats global CODEX_PAIRED_CLI=agy', () => {
+  const root = makeRepo();
+  try {
+    const result = resolveModelRoles({
+      repoRoot: root,
+      env: {
+        CODEX_PAIRED_CLI: 'agy',
+        CODEX_PAIRED_MODEL: 'gemini-3.8-flash-medium',
+        CODEX_PAIRED_CLI_IMPLEMENT: 'codex',
+        CODEX_PAIRED_MODEL_IMPLEMENT: 'gpt-5.6-sol',
+      },
+    });
+    assert.equal(result.roles.implement.cli, 'codex');
+    assert.equal(result.roles.implement.model, 'gpt-5.6-sol');
+    assert.equal(result.roles.implement.effort, 'high');
+    assert.deepEqual(result.sources.implement, {
+      cli: 'env',
+      model: 'env',
+      effort: 'default',
+    });
+    assert.equal(result.roles.review.cli, 'agy');
+    assert.equal(result.sources.review.cli, 'env');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -94,8 +263,8 @@ test('global environment overrides apply to all roles', () => {
       env: { CODEX_PAIRED_MODEL: 'gpt-5.6-luna', CODEX_PAIRED_REASONING: 'max' },
     });
     for (const role of MODEL_ROLES) {
-      assert.deepEqual(result.roles[role], { model: 'gpt-5.6-luna', effort: 'max' });
-      assert.deepEqual(result.sources[role], { model: 'env', effort: 'env' });
+      assert.deepEqual(result.roles[role], { cli: 'codex', model: 'gpt-5.6-luna', effort: 'max' });
+      assert.deepEqual(result.sources[role], { cli: 'default', model: 'env', effort: 'env' });
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -161,7 +330,28 @@ test('validateModelsBlock rejects malformed blocks and accepts valid partial blo
   assert.equal(validateModelsBlock({ planning: { effort: 'ultra' }, implement: { model: 'gpt-5.6-terra' } }), null);
 });
 
-test('codexExecArgs returns exact flags and rejects unknown roles', () => {
+test('cliExecArgs returns the frozen shape for both codex and agy roles', () => {
+  // codex shape
+  assert.deepEqual(cliExecArgs('implement', MODEL_ROLE_DEFAULTS), {
+    cli: 'codex',
+    command: 'codex',
+    args: ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=high'],
+    insertAfter: 'exec',
+  });
+  // agy shape
+  const agyRoles = {
+    ...MODEL_ROLE_DEFAULTS,
+    review: { cli: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
+  };
+  assert.deepEqual(cliExecArgs('review', agyRoles), {
+    cli: 'agy',
+    command: 'agy',
+    args: ['--model', 'gemini-3.8-flash-high'],
+    insertAfter: null,
+  });
+});
+
+test('codexExecArgs returns exact flags for codex role, throws for agy role or unknown role', () => {
   assert.deepEqual(
     codexExecArgs('implement', MODEL_ROLE_DEFAULTS),
     ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=high'],
@@ -170,13 +360,40 @@ test('codexExecArgs returns exact flags and rejects unknown roles', () => {
     () => codexExecArgs('nope', MODEL_ROLE_DEFAULTS),
     (error) => error instanceof ModelsConfigError && error.code === 'models-config-malformed',
   );
+  const agyRoles = {
+    ...MODEL_ROLE_DEFAULTS,
+    review: { cli: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
+  };
+  assert.throws(
+    () => codexExecArgs('review', agyRoles),
+    (error) =>
+      error instanceof ModelsConfigError &&
+      error.code === 'models-config-malformed' &&
+      /uses agy/.test(error.detail),
+  );
 });
 
-test('mcpCallConfig returns the MCP call shape', () => {
+test('mcpCallConfig returns MCP shape for codex, throws frozen message for agy role', () => {
   assert.deepEqual(mcpCallConfig('planning', MODEL_ROLE_DEFAULTS), {
     model: 'gpt-6-astra',
     config: { model_reasoning_effort: 'xhigh' },
   });
+  const agyRoles = {
+    ...MODEL_ROLE_DEFAULTS,
+    planning: { cli: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
+  };
+  assert.throws(
+    () => mcpCallConfig('planning', agyRoles),
+    (error) => {
+      assert.ok(error instanceof ModelsConfigError);
+      assert.equal(error.code, 'models-config-malformed');
+      assert.equal(
+        error.detail,
+        'role planning uses agy; the Codex MCP tool cannot open an agy thread — use reviewer-thread-open',
+      );
+      return true;
+    },
+  );
 });
 
 test('roleForThread maps known thread keys and defaults unknown keys to planning', () => {
@@ -196,11 +413,24 @@ test('modelRoleForPhase implements every phase row and warns on unknown phases',
   assert.deepEqual(modelRoleForPhase(undefined), { role: 'review', warning: 'unknown phase "undefined"' });
 });
 
-test('harnessModelOptions uses precomputed roles', () => {
+test('harnessModelOptions uses precomputed roles and includes cli', () => {
   assert.deepEqual(harnessModelOptions('tdd-review', { roles: MODEL_ROLE_DEFAULTS }), {
     modelRole: 'planning',
+    cli: 'codex',
     model: 'gpt-6-astra',
     reasoningEffort: 'xhigh',
+    warning: null,
+  });
+
+  const agyRoles = {
+    ...MODEL_ROLE_DEFAULTS,
+    planning: { cli: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
+  };
+  assert.deepEqual(harnessModelOptions('tdd-review', { roles: agyRoles }), {
+    modelRole: 'planning',
+    cli: 'agy',
+    model: 'gemini-3.8-flash-high',
+    reasoningEffort: 'high',
     warning: null,
   });
 });
@@ -210,6 +440,7 @@ test('harnessModelOptions resolves roles when none are supplied', () => {
   try {
     assert.deepEqual(harnessModelOptions('x', { repoRoot: root, env: {} }), {
       modelRole: 'review',
+      cli: 'codex',
       model: 'gpt-6-astra',
       reasoningEffort: 'high',
       warning: 'unknown phase "x"',

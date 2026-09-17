@@ -83,7 +83,7 @@ test('ladder walk: full ladder unavailable → HARD HALT no-supported-cli-for-ro
 });
 
 test('variant resolution from preference ladder', () => {
-  // expert-ux ladder: claude → gemini → ollama{kimi-k2.6} → ollama{glm-5.1} → codex.
+  // expert-ux ladder: claude → agy → ollama{kimi-k2.6} → ollama{glm-5.1} → codex.
   // Only ollama is available; expect index 2 with variant kimi-k2.6.
   const result = resolveAdapter(
     'expert-ux',
@@ -93,7 +93,7 @@ test('variant resolution from preference ladder', () => {
   assert.equal(result.cli, 'ollama');
   assert.equal(result.variant, 'kimi-k2.6');
   assert.equal(result.preference_index, 2);
-  assert.deepEqual(result.unavailable_candidates, ['claude', 'gemini']);
+  assert.deepEqual(result.unavailable_candidates, ['claude', 'agy']);
   assert.equal(result.resolution_source, 'recommendation');
 });
 

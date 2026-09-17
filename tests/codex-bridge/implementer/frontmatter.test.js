@@ -412,6 +412,29 @@ test('parseImplementersBlock: unknown adapter throws implementer-directive-malfo
   );
 });
 
+test('parseImplementersBlock: adapter agy-cli throws implementer-directive-malformed', () => {
+  const plan = buildPlan();
+  const sliceSection = [
+    '## Slice 1: Test',
+    '',
+    '**Implementers:**',
+    '- member_id: expert-implementer@claude:kimi-k2.6:cloud#0',
+    "  adapter: 'agy-cli'",
+    '  model: kimi-k2.6:cloud',
+    '  required: true',
+    '  files:',
+    '    - lib/a.js',
+  ].join('\n');
+  assert.throws(
+    () => parseImplementersBlock(plan, sliceSection),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.code, 'implementer-directive-malformed');
+      return true;
+    }
+  );
+});
+
 test('parseImplementersBlock: claude member_id with codex adapter throws malformed', () => {
   const plan = buildPlan();
   const sliceSection = buildSliceSection([
