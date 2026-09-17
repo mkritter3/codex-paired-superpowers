@@ -717,6 +717,89 @@ test('orchestrator edge.concurrent abort-observation: required A throws, B polls
   assert.ok(result.cancelled.some((c) => c.memberId === implB.memberId), 'B should be classified cancelled');
 });
 
+test('orchestrator resume preparation failure is recorded and aborts a running sibling', async () => {
+  const { spec } = makeSpec('cps-orch-resume-prep-failure-');
+  const implA = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'prep-a', required: false });
+  const implB = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'prep-b', required: false });
+  const first = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementers: [implA, implB],
+    dispatchFn: async (input) => ({
+      memberId: input.memberId, outcome: 'halted', exitCode: null, headSha: null,
+      changedFiles: [], diffHash: null, haltEnvelope: { halt: 'test-halt' },
+    }),
+  });
+  implA.required = true;
+  implB.required = true;
+  let releasePrep;
+  const siblingStarted = new Promise((resolveStarted) => { releasePrep = resolveStarted; });
+  let siblingAborted = false;
+
+  const result = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementerRunId: first.implementerRunId, resumeInFlight: true,
+    implementers: [implA, implB],
+    readAttemptEvidence: async (input) => {
+      if (input.memberId === implA.memberId) {
+        await siblingStarted;
+        throw new SyntaxError('malformed attempt evidence');
+      }
+      return null;
+    },
+    dispatchFn: async (input) => {
+      if (input.memberId === implA.memberId) throw new Error('must not dispatch failed preparation');
+      releasePrep();
+      await new Promise((resolveAbort) => input.abortSignal.addEventListener('abort', resolveAbort, { once: true }));
+      siblingAborted = true;
+      return { memberId: input.memberId, outcome: 'cancelled', exitCode: null, headSha: null, changedFiles: [], diffHash: null, haltEnvelope: null };
+    },
+  });
+
+  assert.equal(siblingAborted, true);
+  assert.ok(result.failed.some((entry) => entry.memberId === implA.memberId));
+  assert.ok(result.cancelled.some((entry) => entry.memberId === implB.memberId));
+  const events = readImplementerRun(spec, 'slice-3').events.filter((event) => event.member_id === implA.memberId);
+  assert.equal(events.at(-1).event_type, 'failed');
+  assert.match(events.at(-1).payload.cause, /malformed attempt evidence/);
+});
+
+test('required failure aborts siblings even when its failed-event persistence fails', async () => {
+  const { spec } = makeSpec('cps-orch-failed-persist-');
+  const implA = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'persist-a' });
+  const implB = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#1', branchName: 'persist-b' });
+  let siblingStarted;
+  const siblingReady = new Promise((resolveStarted) => { siblingStarted = resolveStarted; });
+  let siblingAborted = false;
+
+  const result = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementers: [implA, implB],
+    dispatchFn: async (input) => {
+      if (input.memberId === implA.memberId) {
+        await siblingReady;
+        throw new Error('required member failed');
+      }
+      siblingStarted();
+      await new Promise((resolveAbort) => input.abortSignal.addEventListener('abort', resolveAbort, { once: true }));
+      siblingAborted = true;
+      return { memberId: input.memberId, outcome: 'cancelled', exitCode: null, headSha: null, changedFiles: [], diffHash: null, haltEnvelope: null };
+    },
+    _deps: {
+      appendImplementerEventLocked: async (...args) => {
+        const event = args[1];
+        if (event.member_id === implA.memberId && event.event_type === 'failed') {
+          throw new Error('failed-event persistence unavailable');
+        }
+        return appendImplementerEventLocked(...args);
+      },
+    },
+  });
+
+  assert.equal(siblingAborted, true);
+  assert.ok(result.failed.some((entry) => entry.memberId === implA.memberId));
+  assert.ok(result.cancelled.some((entry) => entry.memberId === implB.memberId));
+});
+
 test('orchestrator edge.concurrent optional-failure no-abort: optional B fails, A and C succeed, signal never aborted', async () => {
   const { spec } = makeSpec();
   const implA = makeOrchImpl({ memberId: 'expert-implementer@claude:kimi-k2.6:cloud#0', branchName: 'bA', required: true, adapter: 'claude' });
@@ -766,11 +849,11 @@ test('orchestrator edge.concurrent optional-failure no-abort: optional B fails, 
   }
 });
 
-test('orchestrator fail.dependency sidecar-append-failure K-of-N: N=3, second append fails → throws; only first started event persisted (K=1)', async () => {
+test('orchestrator fail.dependency sidecar-append-failure K-of-N: N=3, second append fails → all members fail; only first started event persisted (K=1)', async () => {
   // Critique 4 fix: use N=3 implementers. The injected appendImplementerEventLocked
   // succeeds for the first call (K=1 write) and fails on the second. This verifies
   // the K-of-N partial-write bound: persisted writes are bounded (K=1) and
-  // dispatchImplementers throws/halts. No later events leak from the remaining
+  // dispatchImplementers reports failures. No later events leak from the remaining
   // N-K=2 implementers.
   const { spec } = makeSpec();
 
@@ -807,25 +890,22 @@ test('orchestrator fail.dependency sidecar-append-failure K-of-N: N=3, second ap
   };
 
   // CREATE mode: omit implementerRunId. startImplementerRun runs normally.
-  await assert.rejects(
-    () => dispatchImplementers({
-      specPath: spec,
-      repoRoot: '/fake',
-      sliceId: 'slice-3',
-      baseSha: 'abc123',
-      implementers: [impl1, impl2, impl3],
-      dispatchFn: fakeFn,
-      _deps: { appendImplementerEventLocked: partiallyFailingAppend },
-    }),
-    /sidecar append failed/
-  );
+  const result = await dispatchImplementers({
+    specPath: spec,
+    repoRoot: '/fake',
+    sliceId: 'slice-3',
+    baseSha: 'abc123',
+    implementers: [impl1, impl2, impl3],
+    dispatchFn: fakeFn,
+    _deps: { appendImplementerEventLocked: partiallyFailingAppend },
+  });
+  assert.equal(result.failed.length, 3);
 
-  // Wait for the first async write to complete (it runs in background when
-  // Promise.all rejects on the second call's synchronous throw).
+  // Wait for the first async write to complete before inspecting the sidecar.
   await firstWriteDone;
 
   // K-of-N bound: exactly 1 started event was persisted (the first call succeeded;
-  // the second failed; the third was rejected before it ran).
+  // every later persistence attempt failed).
   const run = readImplementerRun(spec, 'slice-3');
   assert.ok(run, 'run should exist (startImplementerRun ran normally)');
   const startedEvents = run.events.filter((e) => e.event_type === 'started');
@@ -1367,6 +1447,68 @@ test('orchestrator resume observes latest started despite mailbox events and kee
   const run = readImplementerRun(spec, 'slice-3');
   assert.equal(run.events.at(-1).event_type, 'checkpoint');
   assert.equal(run.events.at(-1).payload.phase, 'observation-timeout');
+});
+
+test('orchestrator mixed resume reuses completed, observes recorded snapshot, and launches current snapshot', async () => {
+  const { spec } = makeSpec('cps-orch-resume-mixed-');
+  const implementers = ['completed', 'in-flight', 'new'].map((branchName, ordinal) => makeOrchImpl({
+    memberId: `expert-implementer@codex:gpt-5.5#${ordinal}`,
+    adapter: 'codex-cli', model: 'gpt-5.5', branchName,
+  }));
+  const recorded = { model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high' };
+  const first = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementers, modelSnapshot: recorded,
+    dispatchFn: async (input) => {
+      const base = {
+        memberId: input.memberId, exitCode: null, headSha: null, changedFiles: [], diffHash: null,
+        modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort },
+      };
+      if (input.memberId === implementers[0].memberId) {
+        return { ...base, outcome: 'completed', exitCode: 0, headSha: 'saved', haltEnvelope: null };
+      }
+      if (input.memberId === implementers[1].memberId) {
+        return { ...base, outcome: 'halted', haltEnvelope: { halt: 'implementer-attempt-timeout' }, attemptInFlight: true };
+      }
+      return { ...base, outcome: 'halted', haltEnvelope: { halt: 'test-halt' } };
+    },
+  });
+
+  const launched = [];
+  const observed = [];
+  const resumed = await dispatchImplementers({
+    specPath: spec, repoRoot: '/fake', sliceId: 'slice-3', baseSha: 'base',
+    implementerRunId: first.implementerRunId, resumeInFlight: true, implementers,
+    readAttemptEvidence: async () => null,
+    observeFn: async (input) => {
+      observed.push(input);
+      return {
+        memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: 'observed',
+        changedFiles: [], diffHash: 'sha256:observed', haltEnvelope: null,
+        modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort },
+      };
+    },
+    dispatchFn: async (input) => {
+      launched.push(input);
+      return {
+        memberId: input.memberId, outcome: 'completed', exitCode: 0, headSha: 'new',
+        changedFiles: [], diffHash: 'sha256:new', haltEnvelope: null,
+        modelSnapshot: { model_role: input.modelRole, model: input.model, effort: input.effort },
+      };
+    },
+    _deps: {
+      resolveModelRoles: () => ({ roles: { implement: { model: 'gpt-6-astra', effort: 'medium' } } }),
+    },
+  });
+
+  assert.equal(resumed.success.length, 3);
+  assert.equal(resumed.success.find((entry) => entry.memberId === implementers[0].memberId).result.headSha, 'saved');
+  assert.deepEqual(observed.map((input) => [input.memberId, input.model, input.effort]), [
+    [implementers[1].memberId, 'gpt-5.6-sol', 'high'],
+  ]);
+  assert.deepEqual(launched.map((input) => [input.memberId, input.model, input.effort]), [
+    [implementers[2].memberId, 'gpt-6-astra', 'medium'],
+  ]);
 });
 
 test('orchestrator resumeInFlight requires an implementerRunId', async () => {

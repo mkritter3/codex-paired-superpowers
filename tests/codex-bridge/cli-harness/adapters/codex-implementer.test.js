@@ -233,6 +233,36 @@ test('onSpawn receives the live child pid and is not called for spawn failure', 
   }
 });
 
+test('onSpawn failure reaps the spawned process group before reporting spawn failure', {
+  timeout: TEST_TIMEOUT_MS,
+}, async () => {
+  const dir = makeTmpDir('cps-impl-onspawn-failure-');
+  let pid = null;
+  try {
+    const script = makeFakeCli(dir, ["trap '' TERM", 'cat >/dev/null', 'sleep 3600 &', 'wait']);
+    const startedAt = Date.now();
+    const result = await dispatch('', '', {
+      command: script,
+      timeout_ms: 10_000,
+      onSpawn(childPid) {
+        pid = childPid;
+        throw new Error('running evidence publish failed');
+      },
+    });
+
+    assert.equal(result.exit, 1);
+    assert.deepEqual(result.warnings, ['spawn-failed']);
+    assert.match(result.adapterMeta.error, /running evidence publish failed/);
+    assert.ok(Date.now() - startedAt < 3_000, 'cleanup should finish within the SIGKILL grace');
+    assert.equal(isAlive(pid), false, 'the child must be reaped before dispatch returns');
+  } finally {
+    if (pid && isAlive(pid)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('external AbortSignal terminates a hanging process group as aborted', {
   timeout: TEST_TIMEOUT_MS,
 }, async () => {

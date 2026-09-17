@@ -2,12 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { memberIdSlug } from '../../../lib/codex-bridge/implementer/member-id.js';
 import { dispatchImplementers } from '../../../lib/codex-bridge/implementer/orchestrator.js';
-import { initSidecar, readImplementerRun } from '../../../lib/codex-bridge/sidecar.js';
+import {
+  appendImplementerEventLocked,
+  initSidecar,
+  readImplementerRun,
+} from '../../../lib/codex-bridge/sidecar.js';
 import {
   dispatchCodexCliImplementer,
   observeDirectCliAttempt,
@@ -70,6 +75,45 @@ test('direct Codex launcher records snapshot, argv, git result, and exited evide
   } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
 
+test('direct Codex launcher streams a diff larger than one MiB into its hash', async () => {
+  const f = repoFixture();
+  try {
+    writeFileSync(join(f.repoRoot, 'large.txt'), 'x'.repeat(2 * 1024 * 1024));
+    execFileSync('git', ['add', 'large.txt'], { cwd: f.repoRoot });
+    execFileSync('git', ['commit', '-qm', 'large diff'], { cwd: f.repoRoot });
+    f.input.env = {};
+
+    const result = await dispatchCodexCliImplementer(f.input, { command: f.command });
+
+    assert.equal(result.outcome, 'completed');
+    assert.deepEqual(result.changedFiles, ['large.txt']);
+    assert.match(result.diffHash, /^sha256:[0-9a-f]{64}$/);
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+test('successful CLI exit becomes failed evidence when git verification fails', async () => {
+  const f = repoFixture();
+  try {
+    f.input.env = {};
+    const gitError = Object.assign(new Error('git diff output exceeded buffer'), { code: 'ENOBUFS' });
+    const result = await dispatchCodexCliImplementer(f.input, {
+      command: f.command,
+      deps: {
+        execFileSync(command, args, options) {
+          if (args[0] === 'diff') throw gitError;
+          return execFileSync(command, args, options);
+        },
+      },
+    });
+
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.diffHash, null);
+    const evidence = await readDirectCliAttempt(f.input);
+    assert.equal(evidence.outcome, 'failed');
+    assert.match(evidence.error, /git diff output exceeded buffer/);
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
 test('direct Codex launcher gives haltEnvelope precedence over exit zero', async () => {
   const f = repoFixture();
   try {
@@ -123,21 +167,59 @@ test('observer times out without ending or killing a live attempt', { timeout: 1
   const waitFile = join(f.repoRoot, 'release');
   let launchPromise;
   try {
-    f.input.env = { FAKE_WAIT_FILE: waitFile };
-    launchPromise = dispatchCodexCliImplementer(f.input, { command: f.command });
+    const spec = join(f.repoRoot, 'timeout-spec.md');
+    writeFileSync(spec, '# timeout');
+    initSidecar(spec, { feature: 'slice-4', codexSession: 's', model: 'gpt-6-astra', reasoningEffort: 'high' });
+    const snapshot = { model_role: 'implement', model: 'gpt-5.6-terra', effort: 'high' };
+    const implementer = {
+      memberId: f.input.memberId, adapter: 'codex-cli', model: 'gpt-5.5', required: true,
+      worktreePath: f.repoRoot, branchName: 'timeout-member', claimedFiles: [],
+      env: { FAKE_WAIT_FILE: waitFile },
+    };
+    launchPromise = dispatchImplementers({
+      specPath: spec, repoRoot: f.repoRoot, sliceId: 'slice-4', baseSha: f.input.baseSha,
+      implementers: [implementer], modelSnapshot: snapshot,
+      dispatchFn: (input) => dispatchCodexCliImplementer(input, { command: f.command }),
+    });
+    let run;
+    while (!(run = readImplementerRun(spec, 'slice-4'))?.events?.some((event) => event.event_type === 'started')) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    const attemptInput = { ...f.input, implementerRunId: run.implementer_run_id };
     let attempt = null;
     const deadline = Date.now() + 3000;
     while ((!attempt || attempt.state !== 'running') && Date.now() < deadline) {
       await new Promise((resolveWait) => setTimeout(resolveWait, 25));
-      attempt = await readDirectCliAttempt(f.input);
+      attempt = await readDirectCliAttempt(attemptInput);
     }
-    const observed = await observeDirectCliAttempt(f.input, { timeout_ms: 150, poll_ms: 25 });
+    const observed = await observeDirectCliAttempt(attemptInput, { timeout_ms: 150, poll_ms: 25 });
     assert.equal(observed.outcome, 'halted');
     assert.equal(observed.attemptInFlight, true);
     assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-timeout');
-    assert.equal((await readDirectCliAttempt(f.input)).pidAlive, true);
+    assert.equal((await readDirectCliAttempt(attemptInput)).pidAlive, true);
+
+    const timedOutResume = await dispatchImplementers({
+      specPath: spec, repoRoot: f.repoRoot, sliceId: 'slice-4', baseSha: f.input.baseSha,
+      implementerRunId: run.implementer_run_id, resumeInFlight: true,
+      implementers: [implementer],
+      dispatchFn: async () => { throw new Error('must not relaunch a live attempt'); },
+      observeFn: (input) => observeDirectCliAttempt(input, { timeout_ms: 150, poll_ms: 25 }),
+    });
+    assert.equal(timedOutResume.failed[0].result.attemptInFlight, true);
+    assert.equal(readImplementerRun(spec, 'slice-4').events.at(-1).payload.phase, 'observation-timeout');
+
     writeFileSync(waitFile, 'go');
-    assert.equal((await launchPromise).outcome, 'completed');
+    const completed = await launchPromise;
+    assert.equal(completed.success[0].result.outcome, 'completed');
+    const finalResume = await dispatchImplementers({
+      specPath: spec, repoRoot: f.repoRoot, sliceId: 'slice-4', baseSha: f.input.baseSha,
+      implementerRunId: run.implementer_run_id, resumeInFlight: true,
+      implementers: [implementer],
+      dispatchFn: async () => { throw new Error('must not relaunch a completed attempt'); },
+    });
+    assert.equal(finalResume.success.length, 1);
+    assert.deepEqual(finalResume.success[0].result.modelSnapshot, snapshot);
+    assert.equal(readFileSync(f.argvFile, 'utf8').split('\n').filter((line) => line === 'exec').length, 1);
   } finally {
     if (launchPromise) writeFileSync(waitFile, 'go');
     await launchPromise?.catch(() => {});
@@ -159,6 +241,21 @@ test('observer reports missing and expired-launch evidence as lost', async () =>
     const expired = await observeDirectCliAttempt(f.input, { poll_ms: 10, launch_grace_ms: 10 });
     assert.equal(expired.haltEnvelope.halt, 'implementer-attempt-lost');
     assert.equal(expired.modelSnapshot.model, 'gpt-5.6-terra');
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+test('malformed attempt evidence is treated as missing and observes as lost', async () => {
+  const f = repoFixture();
+  try {
+    const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+    const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path, '{not-json');
+
+    assert.equal(readDirectCliAttempt(f.input), null);
+    const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10 });
+    assert.equal(observed.outcome, 'halted');
+    assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
   } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
 
@@ -206,7 +303,10 @@ test('observer declares a dead running attempt lost after finalization grace', {
 test('live observer joins one launcher and returns identical git evidence', { timeout: 10_000 }, async () => {
   const f = repoFixture();
   const release = join(f.repoRoot, 'release-live');
+  const unrelated = mkdtempSync(join(tmpdir(), 'cps-cli-observer-cwd-'));
+  const originalCwd = process.cwd();
   try {
+    process.chdir(unrelated);
     f.input.env = { FAKE_WAIT_FILE: release, FAKE_COMMIT: '1' };
     const launch = dispatchCodexCliImplementer(f.input, { command: f.command });
     let evidence;
@@ -222,7 +322,12 @@ test('live observer joins one launcher and returns identical git evidence', { ti
     assert.equal(observed.headSha, launched.headSha);
     assert.equal(observed.diffHash, launched.diffHash);
     assert.equal(readFileSync(f.argvFile, 'utf8').split('\n').filter((line) => line === 'exec').length, 1);
-  } finally { writeFileSync(release, 'go'); rmSync(f.repoRoot, { recursive: true, force: true }); }
+  } finally {
+    writeFileSync(release, 'go');
+    process.chdir(originalCwd);
+    rmSync(unrelated, { recursive: true, force: true });
+    rmSync(f.repoRoot, { recursive: true, force: true });
+  }
 });
 
 test('spawn failure publishes terminal failed evidence with the adapter error', async () => {
@@ -233,6 +338,8 @@ test('spawn failure publishes terminal failed evidence with the adapter error', 
     const evidence = await readDirectCliAttempt(f.input);
     assert.equal(evidence.state, 'exited');
     assert.equal(evidence.outcome, 'failed');
+    assert.equal(evidence.exit_code, null);
+    assert.equal(result.exitCode, null);
     assert.match(evidence.error, /ENOENT|no such file/i);
   } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
@@ -261,7 +368,55 @@ test('orchestrator launches two direct Codex members once and reuses both comple
       dispatchFn: async () => { throw new Error('must not relaunch'); },
     });
     assert.equal(resumed.success.length, 2);
-    assert.equal(readFileSync(f.argvFile, 'utf8').split('\n').filter((line) => line === 'exec').length, 2);
+    const launchCount = () => readFileSync(f.argvFile, 'utf8').split('\n').filter((line) => line === 'exec').length;
+    assert.equal(launchCount(), 2);
+
+    const member = implementers[0];
+    const attemptPath = join(
+      f.repoRoot, '.codex-paired', 'attempts', first.implementerRunId,
+      `${memberIdSlug(member.memberId)}.json`,
+    );
+    const appendStarted = async () => {
+      const payload = { phase: 'dispatch-start', model_role: 'implement', model: 'gpt-5.6-terra', effort: 'high' };
+      await appendImplementerEventLocked(spec, {
+        event_type: 'started', implementer_run_id: first.implementerRunId,
+        slice_id: 'slice-4', member_id: member.memberId,
+        runtime_kind: 'codex-cli', worktree_id: member.branchName,
+        payload_hash: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+        payload,
+      });
+    };
+
+    const completedEvidence = JSON.parse(readFileSync(attemptPath, 'utf8'));
+    writeFileSync(attemptPath, JSON.stringify({
+      ...completedEvidence, state: 'running', pid: 2_147_483_647,
+      completed_at: null, exit_code: null, outcome: null,
+    }));
+    await appendStarted();
+    const deadPidResume = await dispatchImplementers({
+      specPath: spec, repoRoot: f.repoRoot, sliceId: 'slice-4', baseSha: f.input.baseSha,
+      implementerRunId: first.implementerRunId, resumeInFlight: true, implementers: [member],
+      dispatchFn: async () => { throw new Error('must not invoke CLI for a lost attempt'); },
+      observeFn: (input) => observeDirectCliAttempt(input, { poll_ms: 10, finalize_grace_ms: 20 }),
+    });
+    assert.equal(deadPidResume.failed[0].result.outcome, 'halted');
+    assert.equal(deadPidResume.failed[0].result.haltEnvelope.halt, 'implementer-attempt-lost');
+    assert.equal(launchCount(), 2);
+
+    writeFileSync(attemptPath, JSON.stringify({
+      ...completedEvidence, state: 'launching', pid: null,
+      launched_at: '2000-01-01T00:00:00.000Z', spawned_at: null,
+      completed_at: null, exit_code: null, outcome: null,
+    }));
+    await appendStarted();
+    const expiredLaunchResume = await dispatchImplementers({
+      specPath: spec, repoRoot: f.repoRoot, sliceId: 'slice-4', baseSha: f.input.baseSha,
+      implementerRunId: first.implementerRunId, resumeInFlight: true, implementers: [member],
+      dispatchFn: async () => { throw new Error('must not invoke CLI for an expired launch'); },
+      observeFn: (input) => observeDirectCliAttempt(input, { poll_ms: 10, launch_grace_ms: 20 }),
+    });
+    assert.equal(expiredLaunchResume.failed[0].result.haltEnvelope.halt, 'implementer-attempt-lost');
+    assert.equal(launchCount(), 2);
   } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
 
