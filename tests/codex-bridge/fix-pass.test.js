@@ -142,3 +142,25 @@ test('reset failure throws fix-pass-reset-failed with halt detail', async () => 
   );
   rmSync(repoRoot, { recursive: true, force: true });
 });
+
+// v0.16.0 fix (Codex review-slice:slice-3 round 1): a pre-existing untracked file that the failed
+// pass staged/committed must survive the rollback with its original contents.
+test('failed pass that committed a pre-existing untracked file: rollback keeps the file and its contents', async () => {
+  const { repoRoot, specPath, implementationSha } = makeRepo();
+  writeFileSync(join(repoRoot, 'notes.txt'), 'my notes\n'); // untracked before the pass
+  const result = await runFixPass({
+    specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => {
+      git(repoRoot, 'add', 'notes.txt');
+      git(repoRoot, 'commit', '-qm', 'wip'); // non-conforming subject → failed pass
+      return { statusFile: { exit_code: 0 } };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'non-conforming-commits');
+  assert.equal(git(repoRoot, 'rev-parse', 'HEAD'), implementationSha);
+  assert.ok(existsSync(join(repoRoot, 'notes.txt')), 'pre-existing untracked file must survive rollback');
+  assert.equal(readFileSync(join(repoRoot, 'notes.txt'), 'utf8'), 'my notes\n');
+  assert.match(git(repoRoot, 'status', '--porcelain'), /\?\? notes\.txt/);
+  rmSync(repoRoot, { recursive: true, force: true });
+});

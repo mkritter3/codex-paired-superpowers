@@ -353,3 +353,45 @@ test('cli atomic append also forwards --headSha', () => {
   assert.match(r.stderr, /headSha.*reviewed_sha|reviewed_sha.*headSha/i);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── v0.16.0 fix (Codex review-slice:slice-3 round 1): superseded audits + REVISE rounds ──
+
+for (const kind of ['separate', 'atomic']) {
+  test(`${kind} reviewed_sha: a superseded verification at SHA A plus qualifying verifications at B (headSha=B) is ACCEPTED`, async () => {
+    const { dir, spec } = makeSpec();
+    await appendReviewPath(kind, spec, [
+      reviewAudit('claude', SHA_A),           // C0 verification before the fix pass
+      reviewAudit('claude', SHA_B),           // re-verification after the fix
+      reviewAudit('codex', SHA_B),
+    ], { headSha: SHA_B });
+    assert.equal(loadSidecar(spec).rounds.length, 1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: verification at A + inspection-only at B with headSha=B is still rejected`, async () => {
+    const { dir, spec } = makeSpec();
+    await assert.rejects(
+      () => appendReviewPath(kind, spec, [
+        reviewAudit('claude', SHA_A),
+        reviewAudit('claude', SHA_B, [insp()]),
+        reviewAudit('codex', SHA_B),
+      ], { headSha: SHA_B }),
+      /reviewed_sha.*headSha|headSha.*reviewed_sha/i,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${kind} reviewed_sha: a REVISE/REVISE round with SHA-bearing audits needs no headSha`, async () => {
+    const { dir, spec } = makeSpec();
+    const round = { phase: 'review-slice:slice-1', round: 1, claude: 'REVISE', codex: 'REVISE' };
+    const audits = [reviewAudit('claude', SHA_A), reviewAudit('codex', SHA_A)];
+    if (kind === 'separate') {
+      for (const a of audits) appendAuditLog(spec, a);
+      appendRound(spec, round, { enforceShipAudits: true });
+    } else {
+      await appendRoundWithAudits(spec, { audits, round }, {});
+    }
+    assert.equal(loadSidecar(spec).rounds.length, 1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
