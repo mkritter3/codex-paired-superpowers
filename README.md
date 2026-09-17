@@ -1,6 +1,24 @@
 # codex-paired-superpowers
 
-Fork of six [superpowers](https://github.com/obra/superpowers) skills paired with Codex (GPT-5.5 high reasoning) as an L11 engineering partner.
+Fork of six [superpowers](https://github.com/obra/superpowers) skills paired with Codex as an L11 engineering partner. **Codex writes the code (GPT-5.6 Sol, high), Claude reviews it, planning runs on GPT-6 Astra at extra-high effort, and both must agree before anything ships.**
+
+## v0.16.0 — Model roles for the GPT-6 era (latest)
+
+Every Codex invocation now runs on a **model role** resolved from one place (`lib/codex-bridge/models.js`) instead of a hard-coded `gpt-5.5` (which OpenAI retires on 2026-10-14):
+
+| Role | Default | Used for |
+|---|---|---|
+| `planning` | GPT-6 Astra, `xhigh` | spec drafting, plan review, per-slice plan review, debugging, test-list review |
+| `review` | GPT-6 Astra, `high` | slice code review, docs-update, post-implementation reviewer panels |
+| `implement` | GPT-5.6 Sol, `high` | every `codex exec` implementer attempt |
+| `implement_fallback` | GPT-6 Astra, `medium` | the automatic second Codex attempt before the Claude subagent |
+
+- **Codex writes the code.** The dispatcher registry prefers Codex in every domain; single-implementer work climbs `implement` → `implement_fallback` → Sonnet subagent. Config errors (wrapper exit 78) halt instead of falling back.
+- **Claude reviews first.** Before Codex's review round, Claude reads the diff, runs verification, writes findings, and may run at most two checkpointed fix passes (`runFixPass`); both sides then SHIP the **same commit** (`reviewed_sha`, enforced by the sidecar).
+- **Two threads per feature.** Planning on `paired-reviewer` (xhigh); slice reviews on the cheaper `execution-reviewer` thread (high) seeded with the spec and plan.
+- **Durable attempts.** The wrapper writes the resolved model into the status file before spawning; fan-out attempts leave evidence under `.codex-paired/attempts/` so a resume observes a live attempt instead of launching a second writer.
+- **Doctor** warns about missing/retiring catalog models, unsupported efforts, a stale catalog, an older-than-validated Codex CLI (`0.153.4`), and a Codex build without `mcp-server`.
+- Legacy plans and sidecars that name `gpt-5.5` in member ids keep working: the model segment is a label; the effective model is the role.
 
 ## v0.9.0 — Model-routed dev team (latest)
 
@@ -47,7 +65,7 @@ For the one-page mental model of drivers, splits, and review, see
 
 ## Prerequisites
 
-- **`codex` CLI v0.128.0+** on PATH, authenticated against an account with GPT-5.5 access. Install:
+- **`codex` CLI** on PATH (v0.16.0 was validated against `0.153.4`; `doctor` warns on older builds), authenticated against an account with access to GPT-6 Astra and GPT-5.6. Install:
   ```bash
   # macOS / Linux (Homebrew):
   brew install openai/codex/codex
@@ -160,17 +178,39 @@ Per-feature state lives in `.superpowers-codex-paired/` at the repo root; the CL
 
 ## Configuration
 
-Defaults (no config needed):
+Defaults (no config needed) — the four model roles:
 
-- Model: `gpt-5.5`
-- Reasoning: `high`
-- Max rounds: 7
+| Role | Model | Effort |
+|---|---|---|
+| `planning` | `gpt-6-astra` | `xhigh` |
+| `review` | `gpt-6-astra` | `high` |
+| `implement` | `gpt-5.6-sol` | `high` |
+| `implement_fallback` | `gpt-6-astra` | `medium` |
 
-Overrides (env var, per-invocation):
+Max rounds: 7 per phase.
+
+Overrides, later wins: defaults ← `.codex-paired/project.json` `models` ← env.
+
+```json
+// .codex-paired/project.json (fragment — the file still needs version/app/live_verification)
+{ "models": { "implement": { "model": "gpt-5.6-terra" }, "planning": { "effort": "max" } } }
+```
 
 ```bash
-CODEX_PAIRED_MODEL=gpt-5.5 CODEX_PAIRED_REASONING=high claude
+# all roles
+CODEX_PAIRED_MODEL=gpt-6-astra CODEX_PAIRED_REASONING=high claude
+# one role (beats the global form)
+CODEX_PAIRED_MODEL_IMPLEMENT=gpt-5.6-terra CODEX_PAIRED_REASONING_REVIEW=medium claude
 ```
+
+Inspect what will actually run (and where each value came from):
+
+```bash
+node lib/codex-bridge/cli.js model-roles
+codex-paired-doctor      # the "models" check prints role: model effort (source)
+```
+
+Why Sol: the Codex model catalog names `gpt-5.6-sol` as the migration target for the retired `gpt-5.5`. Switch to `gpt-5.6-terra` with the one-line override above if it suits your code better.
 
 ## Autopilot (v0.3.0+)
 
@@ -292,12 +332,33 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.15.0 — reliability release driven by transcript/sidecar replay of ten days of real usage: honest-reporting hook false-positive surgery (message-wide evidence, quoted-mention stripping, stop-loop guard, marker lifecycle), hang detection for Codex dispatches (auth-aware availability probe, bounded cli-harness rule, stall watchdog + empty-reply protocol), sink-side round validation (shape/sequence/budget/SHIP-audit gates moved out of the fail-open hook regex), and stale-run surfacing (`sidecar-scan-stale`).
+v0.16.0 — model roles for the GPT-6 era: Codex writes the code (GPT-5.6 Sol high → GPT-6 Astra medium → Sonnet), Claude reviews first, both SHIP the same commit; planning on GPT-6 Astra xhigh; two threads per feature; durable attempt evidence + resume; doctor model/transport checks. Built by dogfooding the pipeline itself (spec: 5 rounds, plan: 7 rounds, slices implemented by Codex on GPT-5.6 Sol and reviewed by Claude then Codex).
+
+Prior: v0.15.0 — reliability release driven by transcript/sidecar replay of ten days of real usage: honest-reporting hook false-positive surgery (message-wide evidence, quoted-mention stripping, stop-loop guard, marker lifecycle), hang detection for Codex dispatches (auth-aware availability probe, bounded cli-harness rule, stall watchdog + empty-reply protocol), sink-side round validation (shape/sequence/budget/SHIP-audit gates moved out of the fail-open hook regex), and stale-run surfacing (`sidecar-scan-stale`).
 
 Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook architecture intact, release-gate INCONCLUSIVE in Claude Code 2.1.138 (Task tool lacks the `cwd` parameter the hook design relies on; doesn't invalidate the architecture — see `docs/verification/v0.7.3.1-hook-fires.md`).
 
 ### Changelog
 
+- **v0.16.0** — model roles for the GPT-6 era.
+  - **One source of truth** (`lib/codex-bridge/models.js`, `model-role` / `model-roles` CLI verbs,
+    `models` block in `project.json`, `CODEX_PAIRED_*` env): four roles, atomic resolution, no literals
+    on any live path; the MCP server pin is a default only — skills pass the resolved role.
+  - **Codex writes the code:** dispatcher registry prefers Codex everywhere; three-rung ladder
+    (`implement` → `implement_fallback` → Sonnet); wrapper `--model-role` resolves flags, writes the
+    snapshot into the status file before spawning, and exits 78 (terminal, no reset/fallback) on a
+    config error or a conflicting `-m`; `--add-dir <repo>/.git` so sandboxed Codex can commit in a
+    worktree.
+  - **Claude reviews first:** Step C0 findings, at most two `runFixPass` passes checkpointed at
+    `fix_start_sha`, `reviewed_sha` on audits with `--headSha` enforced by one consolidated SHIP gate.
+  - **Two threads per feature** (`paired-reviewer` at planning, `execution-reviewer` at review) with
+    `thread_config`; recovery re-seeds at the lost thread's config; seed prompts tell Codex to read
+    the spec and plan.
+  - **Status + attempts:** `classifyStatusFile` / `decideImplementAction` / `applyImplementDecision`;
+    `dispatchCodexCliImplementer` + `observeDirectCliAttempt` with attempt evidence files, terminal
+    member events, `onLaunched` checkpoints, and in-flight-safe resume; `dispatchReviewerViaHarness`
+    picks the model role by phase for every non-Claude reviewer.
+  - **Doctor:** `models` and `codex-transport` checks.
 - **v0.15.0** — reliability: hook false-positive surgery + hang detection.
   Driven by replaying 10 days of session transcripts, 106 Codex session
   logs, and 24 sidecars from real plugin usage.

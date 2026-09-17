@@ -81,8 +81,19 @@ for (const cli of ['codex', 'claude']) {     // reviewer-test ladder (cli names,
   const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
   dispatchFns.set(`reviewer-test@${cli}`, {
     fn: async (req) => {
-      const responseText = await /* adapter dispatch */;
-      return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
+      // v0.16.0 — non-claude panelists go through dispatchReviewerViaHarness, which picks the
+      // model role by phase ('tdd-review' → planning) and assembles the real prompt.
+      let responseText, requestForTurn = { ...req, adapter };
+      if (cli === 'claude') {
+        responseText = await /* dispatch via the Agent tool (Task) */;
+      } else {
+        const { dispatchReviewerViaHarness } =
+          await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
+        const out = await dispatchReviewerViaHarness(req, { cli, repoRoot });
+        responseText = out.responseText;
+        requestForTurn = out.requestForTurn;
+      }
+      return runTurnWithDeps(requestForTurn, { agentDispatch: async () => responseText });
     },
     runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });

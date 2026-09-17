@@ -3,6 +3,39 @@
 This is the one canonical description of how implementation work runs. Other docs and
 skills link here instead of repeating the matrix, so there is a single source of truth.
 
+## Who writes, who reviews (v0.16.0)
+
+Codex writes the code; Claude reviews it first; Codex reviews it second; both must SHIP the
+same commit. Every Codex invocation runs on a **model role** resolved from one place
+(`lib/codex-bridge/models.js`; override in `.codex-paired/project.json` `models` or the
+`CODEX_PAIRED_*` env — see the README "Configuration" section):
+
+| Role | Default | Used for |
+| --- | --- | --- |
+| `planning` | GPT-6 Astra, `xhigh` | spec drafting, plan review, per-slice plan review, debugging hypotheses, test-list review — the `paired-reviewer` thread |
+| `review` | GPT-6 Astra, `high` | slice code review, docs-update, post-implementation reviewer panels — the `execution-reviewer` thread |
+| `implement` | GPT-5.6 Sol, `high` | every `codex exec` implementer attempt (first rung) |
+| `implement_fallback` | GPT-6 Astra, `medium` | the automatic second Codex attempt after an implement failure |
+
+Single-implementer work climbs a three-rung ladder: Codex at `implement` → Codex at
+`implement_fallback` → the Claude subagent → halt `implementer-unavailable`. A configuration
+error (the wrapper's exit code 78) halts immediately and never descends the ladder.
+
+Before Codex's review round, Claude reads the committed diff, runs the verification, and writes a
+findings list (`## Claude review findings`); at most two fix passes (`runFixPass`, checkpointed at
+`fix_start_sha`, never reset to the slice start) may run before the diff goes to Codex with
+`reviewed_sha`. The sidecar refuses a double-SHIP whose two sides reviewed different commits.
+
+Per-transport scope of the ladder and the Claude-first rule:
+
+| Transport | Model role | Ladder | Claude-first review |
+| --- | --- | --- | --- |
+| single implementer (`codex-background-bash` via the wrapper) | `implement` / `implement_fallback` | yes | yes |
+| two-disjoint members (`codex-cli` direct adapter) | `implement` | no — fan-out aborts required siblings as before | **no** — the post-merge two-member panel runs concurrently (both must SHIP) |
+| hybrid `codex-backend` (`codex-background-bash`) | `implement` | no — hybrid halts as before | n/a (UI half is Claude by construction) |
+
+Those two "no" cells are stated exceptions, not omissions.
+
 Choose three independent things before running implementation work:
 
 1. Driver: who keeps the work moving.

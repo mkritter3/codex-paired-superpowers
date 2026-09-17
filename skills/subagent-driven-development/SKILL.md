@@ -23,8 +23,24 @@ The marker has an 8-hour TTL and auto-expires; no cleanup needed.
 
 ## Per-slice flow
 
-### Step A: dispatch implementing subagent
-Same as upstream — dispatch a subagent for slice N with the slice's tasks. Wait for completion + tests passing.
+### Step A: dispatch the implementer (Codex writes the code — v0.16.0)
+Interactive execution uses the **same dispatcher registry and ladder as autopilot** (not an upstream
+subagent). Resolve the slice's domain (autopilot Phase B.0 rules), then climb the single-implementer
+ladder from `agents/dispatchers.json` (Codex is `preferred` in every domain since v0.16.0):
+
+```
+rung 1  codex @ implement           — scripts/codex-exec-with-status.sh <status> --model-role implement -- codex exec --skip-git-repo-check -s workspace-write -C <worktree> --add-dir <repo>/.git "<prompt>" </dev/null
+rung 2  codex @ implement_fallback  — same, with --model-role implement_fallback
+rung 3  sonnet subagent             — Task tool, subagent_type slice-implementer-sonnet
+        halt implementer-unavailable
+```
+
+A plan `**Implementer:**` directive means "start at this rung" (`codex` → 1, `sonnet` → 3). The
+wrapper resolves the model/effort for the role and writes them into the status file; never pass
+`-m` yourself. Classify the status file with `classifyStatusFile` → `decideImplementAction` →
+`applyImplementDecision` from `lib/codex-bridge/dispatch-status.js` (same as autopilot B.4/B.6):
+`exit_code: 78` (model-role resolution failed / conflicting args) is **terminal** — no reset, no
+next rung, no Claude fallback; `blocked` / `needs-context` halt too. Wait for completion + tests passing.
 
 ### Step B: capture slice artifacts
 
@@ -40,8 +56,34 @@ Collect:
 - Diff: `git diff <slice-start-sha>..HEAD -- <files-this-slice-was-meant-to-touch>`
 - Test output: pasted verbatim from the subagent's last test run.
 
+### Step C0: Claude's independent review (v0.16.0 — before Codex sees the diff)
+Claude reviews first; Codex second; both must SHIP the **same commit**. Bounded and ordered:
+
+1. Read the committed diff (`slice_start_sha..HEAD`) in full. Run the slice's verification command
+   yourself and record it as the `claude` side's `kind: "verification"` audit for this round with
+   `"reviewed_sha": "<git rev-parse HEAD>"`.
+2. Write a findings list — `blocking[]` and `non_blocking[]`, each `file:line` + a one-sentence
+   reason, each verified against the code before you list it.
+3. If `blocking[]` is non-empty, run **at most two** fix passes with `runFixPass` from
+   `lib/codex-bridge/fix-pass.js` (`{ specPath, sliceId, repoRoot, pass: 1|2, execFn }`): it
+   checkpoints `fix_start_sha = HEAD` on the sidecar first; `execFn` runs the fix (Codex at
+   `implement` for pass 1, `implement_fallback` for pass 2, via the wrapper with `--model-role`; in
+   interactive mode you may fix in the foreground instead) and returns `{ statusFile }`; a failed
+   pass is reset to **`fix_start_sha`** (never to the slice start — the implementation stays
+   intact); `exit_code: 78` is terminal (no reset). Commits must use `fix(slice:N):` subjects. After
+   each pass: commit, re-run verification, re-review. If blockers remain after pass 2, continue to
+   Step C anyway with them listed — Codex gets to see and push back; the 7-round loop arbitrates.
+   Never hold a slice in C0 indefinitely.
+4. Proceed to Step C with the findings and `reviewed_sha = HEAD`.
+
 ### Step C: open Codex slice review
-Resume the session. Build the prompt from `slice-review-prompt.md` (in this skill folder), substituting `{{SLICE_ID}}`, `{{ROUND}}`, `{{SLICE_TASKS}}`, `{{SLICE_DIFF}}`, `{{TEST_OUTPUT}}`, and (rounds 2+) `{{PRIOR_CRITIQUES}}`.
+Use the **execution thread** (`role_sessions["execution-reviewer"]`, opened at execution entry —
+see `skills/brainstorming/codex-pairing.md` "Two threads per feature"). Build the prompt from
+`slice-review-prompt.md` (in this skill folder), substituting `{{SLICE_ID}}`, `{{ROUND}}`,
+`{{SLICE_TASKS}}`, `{{SLICE_DIFF}}`, `{{TEST_OUTPUT}}`, and (rounds 2+) `{{PRIOR_CRITIQUES}}`, and
+append a `## Claude review findings` block (both lists from Step C0, verbatim) plus the line
+`reviewed_sha: <sha>`. Codex may agree, extend, or push back on Claude's findings; the anti-yes-man
+discipline applies in both directions.
 
 The prompt explicitly states:
 > Review only what is in this slice's scope. Out-of-slice issues = note for later in `## Deferred`, do not block on them. If you find an out-of-slice critical bug, name it in `## Deferred` with severity, but ship the slice.
@@ -49,14 +91,14 @@ The prompt explicitly states:
 Look up the threadId and send the prompt via the bundled MCP `codex-reply` tool:
 
 ```bash
-THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>")
+THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id --specPath "<spec-path>" --role execution-reviewer)
 ```
 
 Invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is Codex's review + verdict block.
 
 **If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old> --newThreadId <new> --reason session-not-found`). Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
 
-For slice-review specifically, you may pass `config: { model_reasoning_effort: "medium" }` to speed up small-diff reviews; reserve `high` for slices that touch core architecture.
+Effort is fixed per thread (`codex-reply` has no config parameter): the execution thread runs at the `review` role (GPT-6 Astra, `high` by default; override via `.codex-paired/project.json` `models.review` or `CODEX_PAIRED_REASONING_REVIEW`).
 
 ### Step D: 7-round loop
 Same as brainstorming. Both must SHIP. Sidecar phase is `review-slice:<slice-id>` (e.g.,
@@ -73,6 +115,7 @@ printf '%s' '{
   "phase": "review-slice:<slice-id>",
   "round": N,
   "side": "<claude|codex>",
+  "reviewed_sha": "<git rev-parse HEAD — full 40-hex>",
   "commands": [
     {"cmd": "npm test", "summary": "42 passed", "kind": "verification", "exit_code": 0}
   ],
@@ -82,6 +125,12 @@ printf '%s' '{
 
 If the slice's tests were not executed (or did not pass with `exit_code: 0`), the gate refuses the
 SHIP — run the tests and record the result, or emit REVISE.
+
+**Same-commit rule (v0.16.0).** Append review-slice rounds with `--headSha "$(git rev-parse HEAD)"`
+(`sidecar-append-round` / `sidecar-append-round-with-audits`). When the audits carry `reviewed_sha`,
+the sink requires every SHIP side's verification audit to carry the same SHA, requires `--headSha`,
+and requires it to equal that SHA — two SHIPs on different commits, or a stale SHA, are refused.
+Any fix after a Codex verdict starts a new round with fresh verification on both sides.
 
 **Faster verification via test-impact analysis (optional).** Instead of the full suite you MAY run
 `npm run test:affected` (coverage-based selection — see `scripts/tia.mjs`). It writes a review-grade
@@ -261,9 +310,20 @@ for (const { identity, resolved, adapter } of resolutions) {
   };
   const unreadMessages = await readUnreadMessages(repoRoot, identity.id);
   const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
-  // ... orchestrator dispatches via resolved.cli (Task tool for 'claude'; cli-harness for others)
-  //     and captures responseText ...
-  const turnResult = await runTurnWithDeps(request, {
+  // v0.16.0 — 'claude' reviewers: dispatch the Task tool with `prompt` and capture responseText.
+  // Every other CLI goes through the production helper, which resolves the model role BY PHASE
+  // ('post-implementation-review' → review), assembles the real prompt, and bounds the run:
+  let responseText, requestForTurn = request;
+  if (resolved.cli === 'claude') {
+    responseText = await /* Task tool with `prompt` */;
+  } else {
+    const { dispatchReviewerViaHarness } =
+      await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
+    const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, repoRoot });
+    responseText = out.responseText;
+    requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning) for the turn record
+  }
+  const turnResult = await runTurnWithDeps(requestForTurn, {
     agentDispatch: async () => responseText,
   });
   // turnResult: { ok: true, result } | { ok: false, reason }

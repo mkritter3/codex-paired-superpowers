@@ -12,36 +12,56 @@ v0.7.2 removes the subagent wrapper. The orchestrator (Claude in autopilot) invo
 
 Because the dispatch is no longer via a subagent, this file does not have YAML frontmatter and is not loaded by Claude Code's plugin runtime.
 
-## Locked invocation
+## Locked invocation (v0.16.0)
 
-The orchestrator runs codex via the `scripts/codex-exec-with-status.sh` wrapper:
+The orchestrator runs codex via the `scripts/codex-exec-with-status.sh` wrapper. The wrapper — not
+the orchestrator — resolves the model and effort for the attempt's **model role** and inserts the
+flags; the orchestrator never writes `-m` itself.
 
 ```bash
 scripts/codex-exec-with-status.sh \
   <status-file-path> \
+  --model-role implement \
   -- \
   codex exec \
     --skip-git-repo-check \
     -s workspace-write \
     -C <worktree-absolute-path> \
-    -m gpt-5.5 \
-    -c model_reasoning_effort=high \
+    --add-dir <repo-root>/.git \
     "<implementation prompt>" \
   </dev/null
 ```
 
-The wrapper script captures exit code + timestamps + signal in a durable status file. See `scripts/codex-exec-with-status.sh` for details.
+The second rung of the ladder passes `--model-role implement_fallback`. See
+[docs/execution-model.md](execution-model.md) for the ladder.
 
 Mandatory flags:
 
+- `--model-role <implement|implement_fallback>` (wrapper option, before `--`) — the wrapper resolves
+  the role through `lib/codex-bridge/cli.js model-role`, writes the resolved `model_role` / `model` /
+  `effort` into the status file **before** spawning, and inserts `-m <model> -c model_reasoning_effort=<effort>`
+  right after `codex exec`. If resolution fails, or the wrapped command already carries `-m`,
+  `--model`, or a `model_reasoning_effort` override, the wrapper writes a status file with
+  `exit_code: 78` and `error: "model-role-resolution-failed" | "model-role-conflicting-args"` and
+  exits 78 without starting codex. Exit 78 is **terminal** for the orchestrator: no worktree reset, no
+  next rung, no Claude fallback (halt reasons of the same names).
 - `--skip-git-repo-check` — worktree git detection is unreliable in unattended runs.
-- `-s workspace-write` — sandbox writes scoped to the worktree cwd. Sufficient for unattended commits without approval prompts.
-- `-C <worktree>` — pin cwd to the slice's isolated worktree.
-- `-m gpt-5.5` — locked model.
-- `-c model_reasoning_effort=high` — locked reasoning effort.
+- `-s workspace-write` — sandbox writes scoped to the worktree cwd.
+- `--add-dir <repo-root>/.git` — a git worktree's metadata lives under the main repo's
+  `.git/worktrees/<id>`, outside the worktree cwd; without this the sandbox blocks `git commit`
+  (observed in the v0.16.0 dogfood run: the implementer finished but could not commit).
 - `</dev/null` redirect — prevents codex from inheriting the parent shell's stdin and hanging under bash backgrounding.
 
 **Do not use** `--dangerously-bypass-approvals-and-sandbox` — it bypasses the sandbox and would allow codex to escape the worktree.
+
+### Member ids and the effective model
+
+For Codex members in an `**Implementers:**` block (`adapter: codex-cli` or
+`codex-background-bash`), the model segment of the `member_id` and the `model:` field are
+**identity only** — a label that keeps existing plans, sidecars, worktrees and mailboxes valid. The
+model that actually runs is the `implement` role, recorded on the attempt evidence
+(`model_role`, `model`, `effort` on the dispatch record or the `started` event). Legacy plans whose
+member ids name the retired previous-generation model keep working unchanged. Claude-cli / ollama members still use their `model:` field.
 
 ## Implementation prompt template
 
@@ -82,31 +102,51 @@ Rules:
 
 Codex must leave all changes committed before its process exits. Uncommitted edits will be detected by the reconciler as zero-commit output and will trigger fallback.
 
-## Status file schema
+## Status file schema (v0.16.0 lifecycle)
 
-The `scripts/codex-exec-with-status.sh` wrapper writes a JSON status file when codex exits:
+The `scripts/codex-exec-with-status.sh` wrapper writes the status file **twice** when
+`--model-role` is used: once before spawning (nonterminal) and once on exit (terminal).
+
+Initial, nonterminal (`exit_code` is `null`):
 
 ```json
 {
+  "state": "started",
+  "exit_code": null,
+  "signal": null,
+  "started_at": "2026-09-17T12:30:01.000Z",
+  "completed_at": null,
+  "model_role": "implement",
+  "model": "gpt-5.6-sol",
+  "effort": "high"
+}
+```
+
+Terminal (the snapshot fields are preserved):
+
+```json
+{
+  "state": "exited",
   "exit_code": 0,
-  "started_at": "2026-05-09T12:30:01.000Z",
-  "completed_at": "2026-05-09T12:34:56.000Z",
-  "signal": null
+  "signal": null,
+  "started_at": "2026-09-17T12:30:01.000Z",
+  "completed_at": "2026-09-17T12:34:56.000Z",
+  "model_role": "implement",
+  "model": "gpt-5.6-sol",
+  "effort": "high"
 }
 ```
 
-On signal-killed exit (e.g., orchestrator's max_runtime_ms timeout):
+On signal-killed exit (e.g., the orchestrator's max_runtime_ms timeout) `exit_code` is
+`128 + signal` and `signal` is e.g. `"SIGTERM"`. A configuration failure writes `exit_code: 78`
+plus `error`.
 
-```json
-{
-  "exit_code": 143,
-  "started_at": "2026-05-09T12:30:01.000Z",
-  "completed_at": "2026-05-09T14:30:01.000Z",
-  "signal": "SIGTERM"
-}
-```
-
-Atomic write via temp+rename guarantees the orchestrator never reads partial JSON during polling.
+Readers classify the file with `classifyStatusFile` (`lib/codex-bridge/dispatch-status.js`): a
+nonterminal file is polled only while the Bash task is known alive; otherwise it falls through to
+the existing task-lost halt — a wrapper that dies after the initial write cannot hide task loss
+until the timeout. Atomic write via temp+rename guarantees the orchestrator never reads partial
+JSON during polling. The orchestrator copies `model_role` / `model` / `effort` from the status
+file into the dispatch record; it never resolves them itself for this transport.
 
 ## Output file
 
@@ -135,9 +175,10 @@ Per-project configuration:
 | Condition | Halt or fallback | Behavior |
 |---|---|---|
 | Codex exits 0 with conforming commits | success | Reconciler ships; orchestrator integrates. |
-| Codex exits 0 with zero commits | fallback trigger | Reset worktree; try Sonnet if domain policy allows. |
-| Codex exits 0 with non-conforming commits | fallback trigger | Cite SHA; reset worktree; try Sonnet. |
-| Codex exits non-zero | fallback trigger | Reset worktree; try Sonnet. |
+| Codex exits 0 with zero commits | fallback trigger | Reset worktree; next rung. |
+| Codex exits 0 with non-conforming commits | fallback trigger | Cite SHA; reset worktree; next rung. |
+| Codex exits non-zero (other than 78) | fallback trigger | Reset worktree; next rung (`implement_fallback`, then Sonnet). |
+| Status file `exit_code: 78` (model-role resolution failed / conflicting args) | **halt** (terminal) | No reset, no next rung. Fix `.codex-paired/project.json` `models` or the `CODEX_PAIRED_*` env, re-run. |
 | Codex exceeds `max_runtime_ms` | `codex-background-timeout` | Orchestrator SIGTERM + SIGKILL after 5s; treat as fallback. |
 | Status file missing AND Bash task lost (after orchestrator crash) | `codex-background-task-lost` | Halt with output_file path for forensics. User investigates. |
 | Status file shows non-zero exit BEFORE orchestrator-side timeout fires | normal failure path | Reconcile; trigger fallback per outcome. |

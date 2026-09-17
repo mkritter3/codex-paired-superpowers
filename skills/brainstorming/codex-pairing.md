@@ -9,15 +9,63 @@ This plugin bundles `codex mcp-server` as an MCP server (registered in `plugin.j
 | `mcp__plugin_codex-paired-superpowers_codex__codex` | `{ prompt, model, cwd?, sandbox?, config?, ... }` | `{ threadId, content }` |
 | `mcp__plugin_codex-paired-superpowers_codex__codex-reply` | `{ threadId, prompt }` | `{ threadId, content }` |
 
-### ⚠️ Model handling — read before every `__codex` call
+### ⚠️ Model handling — read before every `__codex` call (v0.16.0)
 
-**Do NOT pass a per-call `model` to the codex MCP tool.** As of v0.13.0 the model is pinned to `gpt-5.5` by the plugin's MCP server config (`.claude-plugin/plugin.json` launches `codex mcp-server` with `-c model="gpt-5.5"`), and a thread inherits it automatically. The tool schema's description field still shows `gpt-5.2` and `gpt-5.2-codex` as *examples* — those are stale upstream-CLI references and must NOT be passed. A per-call `model` overrides the server pin: empirically (2026-05-10) Claude once silently used `gpt-5.2-codex` from the schema example and the thread ran on the wrong model (the thread cannot be model-changed after creation; it has to be re-started). Omitting the field entirely is what guarantees the pinned `gpt-5.5`.
+Models and reasoning efforts come from **model roles**, never from literals. Resolve the role
+for the thread you are opening with the bridge CLI and spread the result into the call:
 
-**For reasoning effort, pass `config: { model_reasoning_effort: "high" }`** for spec / plan / debug phases. For slice review and TDD review, `medium` is acceptable (and faster). Reasoning effort is not the model id and remains a per-call field.
+```bash
+# planning thread (brainstorming, writing-plans, plan-slice review, debugging, TDD review)
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role planning --format mcp --repoRoot "$REPO_ROOT"
+#  → {"model":"gpt-6-astra","config":{"model_reasoning_effort":"xhigh"}}
 
-**For `codex-reply` calls there is no model parameter** — the model is locked at thread-creation time and inherited.
+# execution thread (slice reviews, docs-update)
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role review --format mcp --repoRoot "$REPO_ROOT"
+```
 
-The first call (`codex`) opens a thread; capture `threadId` and persist it via `sidecar-init`. Every subsequent call in the same feature uses `codex-reply` with that same threadId — that's how the conversation continues across all phases (brainstorm -> plan -> slice reviews) on one Codex thread.
+Pass **exactly** that object's `model` and `config` on the `codex` (thread-opening) call. Rules:
+
+- **Never type a model id by hand.** The tool schema's description still lists `gpt-5.2` /
+  `gpt-5.2-codex` as *examples* — those are stale upstream references and must NOT be passed
+  (empirically, 2026-05-10, a thread once ran on the wrong model that way and had to be re-created).
+- **If `model-role` fails (exit 2), stop and report** the error to the user. Never open a thread
+  with a guessed model. A failure means `.codex-paired/project.json` `models` or a `CODEX_PAIRED_*`
+  env value is invalid.
+- The MCP server itself is pinned to the `planning` defaults (`gpt-6-astra`, `xhigh`) in
+  `.claude-plugin/plugin.json` as a safety default only; passing the resolved role is what makes a
+  project or env override actually reach the thread.
+- **`codex-reply` has no model or config parameter** — a thread's model and effort are fixed when it
+  is created. That is why there are two threads per feature (below), not one thread at two efforts.
+- Overrides: `.codex-paired/project.json` `{"models": {"planning": {"effort": "max"}}}` or env
+  `CODEX_PAIRED_MODEL_PLANNING=...` / `CODEX_PAIRED_REASONING_REVIEW=...` (global
+  `CODEX_PAIRED_MODEL` / `CODEX_PAIRED_REASONING` apply to every role).
+
+### Two threads per feature (v0.16.0)
+
+| `role_sessions` key | Model role | Opened by | Used by |
+|---|---|---|---|
+| `paired-reviewer` | `planning` | brainstorming Phase 2 | spec rounds, plan review, autopilot Phase A, debugging, TDD review |
+| `execution-reviewer` | `review` | first execution-phase turn (`execution` skill hand-off / autopilot run start / SDD entry) | slice reviews (Phase C / Step C), docs-update (Phase D), post-merge Codex member |
+
+The sidecar records what each thread actually runs in `thread_config[key] = { role, model, effort, opened_at }`.
+Opening the execution thread (once per feature; skip if the key already exists):
+
+```bash
+REPLAY=$(node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-replay-context --specPath "<spec-path>")
+MCP=$(node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role review --format mcp --repoRoot "$REPO_ROOT")
+# seed prompt: composeSeedPrompt(replay, { reason: 'execution-thread', specPath, planPath, pendingPrompt })
+#   from lib/codex-bridge/thread-recovery.js — it tells Codex to READ the spec and plan from disk first.
+# Prepend system-rubric.md + verdict-format.md, call `codex` with MCP's model + config, then:
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-rotate-thread-id --specPath "<spec-path>" \
+  --role execution-reviewer --newThreadId "<threadId>" --reason execution-thread --phase execution \
+  --threadConfig '{"role":"review","model":"<model>","effort":"<effort>"}'
+```
+
+Thread loss ("Session not found") on either thread re-seeds at the **lost thread's** recorded
+`thread_config` (the one exception to "resolve the current role"), so the same context is judged at
+the same depth. See `lib/codex-bridge/thread-recovery.js` `recoverStaleThread`.
+
+The first call (`codex`) opens a thread; capture `threadId` and persist it via `sidecar-init`. Every subsequent call in the same phase uses `codex-reply` with that same threadId.
 
 ### Empty replies and slow turns (v0.15.0)
 
@@ -41,7 +89,9 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js <subcommand> --<flag> <value>
 
 | Subcommand | Effect |
 |---|---|
-| `sidecar-init --specPath <p> --feature <name> --threadId <id>` | write sidecar at `<p>.codex.json` with model gpt-5.5, reasoning high (overridable via `--model`, `--reasoning`) |
+| `sidecar-init --specPath <p> --feature <name> --threadId <id>` | write the sidecar with the `planning` role's model/effort (overridable via `--model`, `--reasoning`) and `thread_config["paired-reviewer"]` |
+| `model-role --role <r> [--format json\|flags\|mcp] [--repoRoot <r>]` | resolve one model role (v0.16.0) |
+| `model-roles [--repoRoot <r>]` | all roles + sources + `validated_cli_version` |
 | `sidecar-show --specPath <p>` | print full sidecar JSON |
 | `sidecar-thread-id --specPath <p>` | print just the threadId (for shell `$(...)` capture) |
 | `sidecar-path --specPath <p>` | print the sidecar file path |

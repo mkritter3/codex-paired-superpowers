@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: Use when starting any creative work — features, components, behavior changes. Pairs Claude with Codex (GPT-5.5 high) to draft and harden a spec through a 7-round revision loop. Product questions go to the user; technical questions go to Codex.
+description: Use when starting any creative work — features, components, behavior changes. Pairs Claude with Codex (GPT-6 Astra, extra-high reasoning — the `planning` model role) to draft and harden a spec through a 7-round revision loop. Product questions go to the user; technical questions go to Codex.
 ---
 
 # Brainstorming with Codex (paired)
@@ -80,16 +80,26 @@ Compose the initial Codex prompt by concatenating, in order:
 
 > **v0.12.0 — codex has workspace-write.** The MCP server is now launched with `-c sandbox_mode=workspace-write`, so Codex can write the spec file itself. Don't ask Codex to return the spec body to Claude and then have Claude write it — that double-handling wasted tokens and lost detail. Instead, instruct Codex (as shown in step 4 above) to write `<spec-path>` directly, then Claude just verifies the file exists.
 
-Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with these EXACT parameters:
+Resolve the `planning` model role first (v0.16.0 — never type a model id):
+
+```bash
+MCP=$(node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role planning --format mcp --repoRoot "$REPO_ROOT")
+# → {"model":"gpt-6-astra","config":{"model_reasoning_effort":"xhigh"}}   (defaults; project/env overrides apply)
+```
+
+If that command exits non-zero, stop and show the user its stderr — do not open a thread with a guessed model.
+
+Then invoke the bundled Codex MCP tool **`mcp__plugin_codex-paired-superpowers_codex__codex`** with EXACTLY the resolved `model` and `config` from `model-role` plus the prompt:
 
 ```json
 {
   "prompt": "<the composed prompt>",
-  "config": { "model_reasoning_effort": "high" }
+  "model": "<model from model-role>",
+  "config": { "model_reasoning_effort": "<effort from model-role>" }
 }
 ```
 
-**Critical — do NOT pass a per-call `model`.** As of v0.13.0 the model is pinned to `gpt-5.5` by the MCP server config (`.claude-plugin/plugin.json`), so omitting the field is what guarantees the correct model. A per-call `model` overrides that pin: the MCP tool's schema docstring shows `gpt-5.2`/`gpt-5.2-codex` as stale upstream examples and those must NOT be passed (the thread would run on the wrong model and `codex-reply` calls inherit it — you'd need to re-create the thread to recover). `config.model_reasoning_effort` is not the model id and remains allowed. See `codex-pairing.md` for the canonical invocation form.
+**Critical — the model and effort come from `model-role`, nothing else.** The MCP server is pinned to the `planning` defaults in `.claude-plugin/plugin.json` as a safety net, but only the resolved role makes a project/env override reach the thread. The MCP tool's schema docstring shows `gpt-5.2`/`gpt-5.2-codex` as stale upstream examples and those must NOT be passed (the thread would run on the wrong model and `codex-reply` calls inherit it — you'd need to re-create the thread to recover). See `codex-pairing.md` for the canonical invocation form and the two-thread model.
 
 The response is `{ threadId, content }`. `content` is Codex's reply (which includes the verdict block and the `Wrote spec to <spec-path>` confirmation line). The actual spec body lives on disk at `<spec-path>` — Codex wrote it directly via workspace-write.
 

@@ -262,27 +262,25 @@ for (const cli of ['codex', 'claude']) {
   dispatchFns.set(`reviewer-test@${cli}`, {
     fn: async (req) => {
       let responseText;
+      let requestForTurn = { ...req, adapter };
       if (cli === 'claude') {
         responseText = await /* dispatch via the Agent tool (Task) */;
       } else {
-        // v0.15.0 — NON-claude panelists go through the cli-harness
-        // dispatcher, NEVER a hand-rolled `codex exec` in background Bash.
-        // The harness owns the timeout, SIGTERM→SIGKILL escalation,
-        // process-group reaping, and stderr capture. A raw background
-        // `codex exec` with stderr suppressed parks invisibly on auth
-        // prompts (observed: 25min and 3h24m panelist hangs, both caught
-        // by the USER, not the orchestrator).
-        const { dispatch } =
-          await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli-harness/harness.js');
-        const result = await dispatch(
-          { cli, variant: 'read-only' },
-          req.systemPrompt,
-          req.userPrompt,
-          { timeout_ms: 15 * 60 * 1000 },  // review turns: 15min hard cap
-        );
-        responseText = result.responseText;
+        // v0.16.0 — NON-claude panelists go through the production helper
+        // dispatchReviewerViaHarness (lib/codex-bridge/reviewer-dispatch.js), NEVER a
+        // hand-rolled `codex exec` in background Bash. The helper resolves the model role BY
+        // PHASE ('tdd-review' → planning, i.e. GPT-6 Astra xhigh by default), assembles the
+        // real reviewer prompt, and delegates to cli-harness/harness.js which owns the 15min
+        // timeout, SIGTERM→SIGKILL escalation, process-group reaping, and stderr capture. A
+        // raw background `codex exec` with stderr suppressed parks invisibly on auth prompts
+        // (observed: 25min and 3h24m panelist hangs, both caught by the USER).
+        const { dispatchReviewerViaHarness } =
+          await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
+        const out = await dispatchReviewerViaHarness(req, { cli, repoRoot });
+        responseText = out.responseText;
+        requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning) for the turn record
       }
-      return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
+      return runTurnWithDeps(requestForTurn, { agentDispatch: async () => responseText });
     },
     runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });
@@ -290,8 +288,8 @@ for (const cli of ['codex', 'claude']) {
 ```
 
 **Hard rule (v0.15.0): no unsupervised background `codex exec`.** Reviewer/panelist
-work is synchronous and bounded — it goes through `cli-harness/harness.js` `dispatch`
-with an explicit `timeout_ms` as above. Background Bash is reserved for the
+work is synchronous and bounded — it goes through `dispatchReviewerViaHarness` (which wraps
+`cli-harness/harness.js` with an explicit `timeout_ms`, 15min by default) as above. Background Bash is reserved for the
 implementer path, and ONLY via `scripts/codex-exec-with-status.sh` (status file +
 `codex_dispatch.max_runtime_ms` kill semantics). Never pipe a codex dispatch through
 `tail`, never send stderr to `/dev/null`, and never wait on a background codex task
@@ -380,9 +378,9 @@ Frontmatter example:
   required: true
   files:
     - lib/codex-bridge/foo.js
-- member_id: expert-implementer@codex:gpt-5.5#0
-  adapter: codex
-  model: gpt-5.5
+- member_id: expert-implementer@codex:gpt-5.6-sol#0
+  adapter: codex-cli
+  model: gpt-5.6-sol   # identity label only — the effective model is the `implement` role
   required: true
   files:
     - tests/foo.test.js
@@ -413,10 +411,10 @@ To turn it on, add `**Orchestration:** hybrid` to the slice and declare exactly 
   files:
     - app/settings/SettingsScreen.tsx
     - app/settings/__hybrid_contracts__/account-preferences.ts
-- member_id: hybrid-backend@codex:gpt-5.5#0
+- member_id: hybrid-backend@codex:gpt-5.6-sol#0
   owner: codex-backend
   adapter: codex-background-bash
-  model: gpt-5.5
+  model: gpt-5.6-sol   # identity label only — the effective model is the `implement` role
   required: true
   files:
     - lib/server/routes/account-preferences.ts

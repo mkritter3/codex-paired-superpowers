@@ -129,8 +129,20 @@ for (const identity of result.selected) {
     task:                    'Critique the root-cause hypothesis. Is this the ' +
                              'simplest explanation? What did Claude miss?',
   };
-  // ... orchestrator dispatches via resolved.cli, captures responseText ...
-  const turnResult = await runTurnWithDeps(request, {
+  // v0.16.0 — non-claude reviewers go through the production helper, which resolves the
+  // model role BY PHASE ('hypothesis-review' → planning), assembles the real prompt, and
+  // bounds the run. Claude reviewers are dispatched via the Agent tool as before.
+  let responseText, requestForTurn = request;
+  if (resolved.cli === 'claude') {
+    responseText = await /* dispatch via the Agent tool (Task) with assembleSpawnPrompt(request) */;
+  } else {
+    const { dispatchReviewerViaHarness } =
+      await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
+    const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, repoRoot });
+    responseText = out.responseText;
+    requestForTurn = out.requestForTurn; // carries adapter + modelRole (+ warning) for the turn record
+  }
+  const turnResult = await runTurnWithDeps(requestForTurn, {
     agentDispatch: async () => responseText,
   });
 }
@@ -174,7 +186,7 @@ The fix is a slice (even a one-task slice). Run it through `subagent-driven-deve
 ## Sidecar usage
 If this debug session belongs to an in-flight feature, reuse that feature's sidecar (its threadId is the same Codex thread that drafted the spec and approved the plan — Codex remembers all prior context). If the bug is standalone, create a new spec stub at `docs/specs/YYYY-MM-DD-debug-<bug-id>.md`, open a fresh Codex thread by invoking `mcp__plugin_codex-paired-superpowers_codex__codex` (with the L11 rubric + verdict-format prompts prepended), and persist the threadId via `sidecar-init`. Either way, all hypothesis rounds get logged in the sidecar.
 
-**Model handling.** When opening a fresh codex thread for a standalone bug, do NOT pass a per-call `model` — as of v0.13.0 it is pinned to `gpt-5.5` by the MCP server config (`.claude-plugin/plugin.json`). Pass only `config: { model_reasoning_effort: "high" }`. The codex MCP tool's schema description shows `gpt-5.2`/`gpt-5.2-codex` as stale upstream examples; those must NOT be passed (a per-call model overrides the server pin). See `skills/brainstorming/codex-pairing.md` for the canonical invocation form.
+**Model handling (v0.16.0).** When opening a fresh codex thread for a standalone bug, resolve the `planning` role and pass its `model` + `config` on the `codex` call — `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role planning --format mcp --repoRoot "$REPO_ROOT"` — exactly as `skills/brainstorming/codex-pairing.md` describes. Never type a model id; if `model-role` fails, stop and report. The codex MCP tool's schema description shows `gpt-5.2`/`gpt-5.2-codex` as stale upstream examples; those must NOT be passed.
 
 ## Troubleshooting setup errors
 

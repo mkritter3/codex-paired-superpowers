@@ -93,6 +93,14 @@ If any of these are missing, halt with a clear error message. Do NOT try to brai
    }
    ```
    Atomic write via `sidecar-set-autopilot`.
+3.5. **Open the execution thread (v0.16.0)** if `role_sessions["execution-reviewer"]` is absent from
+   the sidecar (resumes skip this): follow the five steps in `skills/execution/SKILL.md`
+   "Execution thread" (`model-role --role review --format mcp` → `sidecar-replay-context` →
+   `composeSeedPrompt(replay, { reason: 'execution-thread', specPath, planPath })` → `codex` MCP
+   call with that model + config → `sidecar-rotate-thread-id --role execution-reviewer
+   --reason execution-thread --threadConfig ...`). Phase A keeps using the `paired-reviewer`
+   (planning) thread; Phases C and D use this one. Never type a model id; if `model-role` fails,
+   halt `model-role-resolution-failed`.
 4. Proceed to the main loop.
 
 ### Main loop (one tick = one phase progression)
@@ -182,7 +190,7 @@ Three artifacts reviewed in one phase: the task list, the test list, AND the val
      <test list>
      Critique with L11 rigor. Apply the validation rubric. SHIP only if every Tier-1 subcategory has an explicit entry in your verdict's critique array AND every Tier-2 trigger is stated as fired-or-not. If validation tier is `critical`, also answer Tier 3.
      ```
-5. Send via `codex-reply`. Run the standard 7-round loop. Append rounds to sidecar via `sidecar-append-round` with phase `plan-slice:<slice-N>`.
+5. Send via `codex-reply` on the **planning** thread (`sidecar-thread-id --specPath <spec> --role paired-reviewer` — GPT-6 Astra at `xhigh` by default; per-slice plan review is planning-grade work). Run the standard 7-round loop. Append rounds to sidecar via `sidecar-append-round` with phase `plan-slice:<slice-N>`.
 6. **On double-SHIP, parse and validate structured rubric coverage via the bridge CLI, then persist.** The verdict's `critique` array contains the rubric coverage bullets. Pipe it as JSON to the `validation-parse` subcommand and dispatch on the exit code:
 
    ```bash
@@ -467,13 +475,26 @@ Use the resolved domain from Phase B.0 and the candidate preferred implementer f
 | Directive selected `codex` or `sonnet` | `forbidden` | halt `domain-policy-violation` |
 | Directive selected `codex` or `sonnet` | `allowed` or `preferred` | preferred = directive value |
 
-For the v0.7.1 registry shipped in `agents/dispatchers.json`:
-- `Domain: ui` → registry-default preferred = `sonnet`. Codex is `forbidden`.
-- `Domain: ai-harness` → registry-default preferred = `sonnet`. Codex is `forbidden`.
-- `Domain: backend` → registry-default preferred = `codex`. Sonnet is `allowed`.
-- `Domain: general` → registry-default preferred = `sonnet`. Codex is `allowed`.
+For the v0.16.0 registry shipped in `agents/dispatchers.json`, **Codex writes the code**: `codex` is
+`preferred` in every domain (`ui`, `ai-harness`, `backend`, `general`) and `sonnet` is `allowed` in
+every domain as the last-resort fallback. Registry-default selection therefore always starts with
+Codex.
 
-**Fallback implementer** is the other one of {codex, sonnet} — but only if the registry permits the fallback for this domain. If the only fallback is `forbidden` for the resolved domain and the preferred dispatch fails, halt `implementer-unavailable` (NOT `domain-policy-violation` — the user didn't pick the forbidden combo; policy blocked the fallback after the preferred-fail).
+**The single-implementer ladder (v0.16.0).** Dispatch climbs three rungs; each rung uses the same
+failure triggers (B.6):
+
+```
+rung 1  codex @ implement           (--model-role implement;          GPT-5.6 Sol, high by default)
+rung 2  codex @ implement_fallback  (--model-role implement_fallback; GPT-6 Astra, medium by default)
+rung 3  sonnet subagent             (Task tool, slice-implementer-sonnet)
+        halt implementer-unavailable
+```
+
+A `**Implementer:**` directive means "start the ladder at this rung": `codex` → rung 1, `sonnet` →
+rung 3. Record the starting rung as `preferred_implementer` and the next rung as
+`fallback_implementer` in the B.7 implement meta. If the registry ever marks the fallback rung
+`forbidden` for the resolved domain, skip it and halt `implementer-unavailable` when the ladder is
+exhausted (NOT `domain-policy-violation` — the user didn't pick the forbidden combo).
 
 **Files block (only validated when this slice is a parallel candidate):**
 
@@ -706,18 +727,26 @@ Locked invocation (orchestrator constructs and runs):
 ```bash
 <plugin>/scripts/codex-exec-with-status.sh \
   <status-file-path> \
+  --model-role implement \
   -- \
   codex exec \
     --skip-git-repo-check \
     -s workspace-write \
     -C <worktree-absolute-path> \
-    -m gpt-5.5 \
-    -c model_reasoning_effort=high \
+    --add-dir <repo-root>/.git \
     "<implementation prompt>" \
   </dev/null
 ```
 
-The wrapper at `scripts/codex-exec-with-status.sh` captures exit code + timestamps + signal in a JSON status file. This is durable evidence — the on-disk status file survives orchestrator session termination, unlike Claude Code's in-memory Bash task registry.
+Rung 2 passes `--model-role implement_fallback`. **Never write `-m` or `model_reasoning_effort`
+yourself** — the wrapper resolves the role (project/env overrides included), writes `model_role` /
+`model` / `effort` into the status file before spawning, and inserts the flags after `codex exec`;
+a caller-supplied model flag makes the wrapper exit 78 (`model-role-conflicting-args`). `--add-dir
+<repo-root>/.git` is required so the sandboxed codex can commit inside a git worktree (the worktree's
+metadata lives under the main repo's `.git/`).
+
+The wrapper at `scripts/codex-exec-with-status.sh` captures exit code + timestamps + signal (and the
+model snapshot) in a JSON status file. This is durable evidence — the on-disk status file survives orchestrator session termination, unlike Claude Code's in-memory Bash task registry.
 
 Per-dispatch path generation (orchestrator computes):
 
@@ -750,12 +779,23 @@ The Sonnet subagent's final message ends with a fenced JSON block. Read its `sta
 
 The codex background task completes asynchronously. Claude Code emits a task-notification when the Bash task exits. The orchestrator handles this notification — possibly across multiple assistant turns from when dispatch happened — by:
 
-1. Reading the status file at `<status-file-path>` (see schema in `docs/codex-implementer-contract.md`).
-2. Inspecting `exit_code`:
-   - `0` → proceed to Phase B.5 reconciler.
-   - non-zero → fallback trigger; route to Phase B.6.
-   - missing status file (orchestrator crashed mid-dispatch and Bash task entry is gone) → halt `codex-background-task-lost`.
-3. Calling `finalizeImplementDispatch(specPath, sliceId, taskId, terminal)` to promote the in-progress dispatch entry to its terminal outcome (Phase B.7).
+1. Reading the status file at `<status-file-path>` (see schema + lifecycle in `docs/codex-implementer-contract.md`).
+2. Classifying it with `classifyStatusFile` from `lib/codex-bridge/dispatch-status.js`
+   (`{ statusFile, taskAlive, runtimeMs, maxRuntimeMs, halts: { timeout: 'codex-background-timeout', lost: 'codex-background-task-lost', failed: null } }`),
+   then `decideImplementAction({ classification, rung, reconciled })` and
+   `applyImplementDecision(decision, { poll, reconcile, ship, reset, dispatchNextRung, halt })`:
+   - `completed` → `reconcile` (run the Phase B.5 reconciler), then call `decideImplementAction`
+     again with `reconciled` → `ship` or `fallback`.
+   - `failed`, or reconciled zero / non-conforming commits → `fallback` (Phase B.6: reset, then
+     the next rung).
+   - `config-error` (status `exit_code: 78`) → `halt` with the file's `error`
+     (`model-role-resolution-failed` / `model-role-conflicting-args`) — **terminal: no reset, no
+     next rung, no Sonnet fallback**.
+   - `blocked` / `needs-context` → `halt` (`codex-blocked` / `codex-needs-context`) — never fallback.
+   - nonterminal status (`exit_code: null`) while the Bash task is alive → keep polling; with the
+     task gone → halt `codex-background-task-lost` (the pre-launch status write cannot hide task loss).
+   - missing status file → transient while the task is alive, else halt `codex-background-task-lost`.
+3. Calling `finalizeImplementDispatch(specPath, sliceId, taskId, terminal)` to promote the in-progress dispatch entry to its terminal outcome (Phase B.7), copying `model_role` / `model` / `effort` from the status file — the orchestrator never resolves them itself for this transport.
 
 If the in-progress codex task exceeds `codex_dispatch.max_runtime_ms`, the orchestrator MUST kill it (best-effort SIGTERM via `kill <pid>`, then SIGKILL after 5s grace) and halt `codex-background-timeout`. The wrapper script writes a status file on signal-kill recording `signal: "SIGTERM"` and `exit_code: 143`.
 
@@ -1041,16 +1081,23 @@ const drainResult = await drainPeerDMs(
       };
       const unreadMessages = await readUnreadMessages(repoRoot, expert.id);
       const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
-      // YOU (Claude) dispatch the appropriate transport (Task tool for
-      // 'claude'; cli-harness for everything else), capture taskResponseText,
-      // then below. v0.15.0 hard rule: "cli-harness for everything else"
-      // means lib/codex-bridge/cli-harness/harness.js `dispatch(...)` with
-      // an explicit timeout_ms (15min for review turns) — NEVER a hand-
-      // rolled `codex exec` in background Bash. The harness owns timeout,
-      // SIGTERM→SIGKILL escalation, and stderr capture; a raw background
-      // exec with stderr suppressed parks invisibly on auth prompts
-      // (observed: 25min + 3h24m panelist hangs, both user-detected).
-      return await runTurnWithDeps(request, {
+      // YOU (Claude) dispatch the appropriate transport: the Task tool for
+      // 'claude' (with `prompt`), and for EVERY other CLI the production helper
+      // dispatchReviewerViaHarness (lib/codex-bridge/reviewer-dispatch.js) —
+      // v0.16.0: it resolves the model role BY PHASE ('post-implementation-review'
+      // → review), assembles the real prompt, and delegates to the cli-harness
+      // with an explicit timeout_ms (15min). NEVER a hand-rolled `codex exec` in
+      // background Bash — a raw background exec with stderr suppressed parks
+      // invisibly on auth prompts (observed: 25min + 3h24m panelist hangs).
+      let requestForTurn = request;
+      if (resolved.cli !== 'claude') {
+        const { dispatchReviewerViaHarness } =
+          await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
+        const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, repoRoot });
+        taskResponseText = out.responseText;
+        requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning)
+      }
+      return await runTurnWithDeps(requestForTurn, {
         agentDispatch: async () => taskResponseText,
       });
     },
@@ -1123,23 +1170,30 @@ Claude rubber-stamping a product/UX/business override (i.e., applying `technical
 The routing sequence is:
 
 ```text
-preferred implementer
-  -> fallback implementer on implementation-dispatch failure
-  -> halt with implementer-unavailable only if both fail
+rung 1: codex @ implement
+  -> rung 2: codex @ implement_fallback   on an implementation-dispatch failure
+  -> rung 3: sonnet subagent              on another failure
+  -> halt implementer-unavailable         only when the ladder is exhausted
 ```
 
-**Failure triggers fallback** (any one of these from the preferred dispatch):
+The decision is made by `decideImplementAction` / `applyImplementDecision`
+(`lib/codex-bridge/dispatch-status.js`); the rules below are what they encode.
 
-1. Codex `codex exec` exits non-zero (read from status file `exit_code`) — for `transport: codex-background-bash`.
-2. Codex background task exceeds `codex_dispatch.max_runtime_ms` — orchestrator kills + halts `codex-background-timeout`.
-3. Codex background task lost — orchestrator crashed and there's no status file evidence; halts `codex-background-task-lost`.
-4. Sonnet subagent dispatch error (the `Task` tool call itself failed) — for `transport: claude-subagent`.
-5. Zero commits produced (`commit_count == 0`).
-6. Non-conforming commits emitted (`non_conforming_subjects` non-empty).
-7. Missing or malformed final-message JSON (Sonnet path only), when there is no clear blocker signal.
+**Failure triggers fallback** (any one of these from the current rung):
 
-**NOT fallback triggers** (these halt without trying the other implementer):
+1. Codex `codex exec` exits non-zero **other than 78** (read from status file `exit_code`) — for `transport: codex-background-bash`.
+2. Sonnet subagent dispatch error (the `Task` tool call itself failed) — for `transport: claude-subagent`.
+3. Zero commits produced (`commit_count == 0`).
+4. Non-conforming commits emitted (`non_conforming_subjects` non-empty).
+5. Missing or malformed final-message JSON (Sonnet path only), when there is no clear blocker signal.
 
+**NOT fallback triggers** (these halt without descending the ladder):
+
+- Status file `exit_code: 78` — `model-role-resolution-failed` / `model-role-conflicting-args`
+  (v0.16.0). **Terminal: no worktree reset, no next rung, no Sonnet fallback.** Fix
+  `.codex-paired/project.json` `models` or the `CODEX_PAIRED_*` env, then re-run.
+- Codex background task exceeds `codex_dispatch.max_runtime_ms` — orchestrator kills + halts `codex-background-timeout`.
+- Codex background task lost — orchestrator crashed and there's no status file evidence; halts `codex-background-task-lost`.
 - `BLOCKED` (real blocker — spec is unclear, missing dependency, etc.).
 - `NEEDS_CONTEXT` (real blocker — agent needs information the orchestrator does not have).
 
@@ -1153,10 +1207,10 @@ preferred implementer
    ```
    On halt, surface `worktree-reset-failed`.
 3. Re-run worktree bootstrap (`bootstrap(repoRoot, worktreePath, symlinks)`), update sidecar bootstrap marker, re-verify with `verifyBootstrap`. Halt with `worktree-bootstrap-failed` or `worktree-bootstrap-stale` on tier failure.
-4. Dispatch the fallback subagent fresh. Do not salvage partial work. Do not pass any context from the failed attempt other than the slice section, worktree path, and sha.
-5. Reconcile only the fallback's commits (range is still `slice_start_sha..HEAD` because the reset moved HEAD back).
+4. Dispatch the next rung fresh (`applyImplementDecision` awaits the reset first and halts `worktree-reset-failed` if it fails — it never dispatches after a failed reset). Do not salvage partial work. Do not pass any context from the failed attempt other than the slice section, worktree path, and sha.
+5. Reconcile only the new rung's commits (range is still `slice_start_sha..HEAD` because the reset moved HEAD back).
 
-**Both implementers fail** → halt `implementer-unavailable`. Record both dispatch failures in the sidecar. Leave the worktree in place for inspection.
+**Ladder exhausted** (all three rungs failed) → halt `implementer-unavailable`. Record every dispatch failure in the sidecar (one record per rung, each with its `model_role` / `model` / `effort` / `rung`). Leave the worktree in place for inspection.
 
 For parallel batches, fallback is per-slice. One slice failing the preferred implementer does not trigger fallback or halt for the other slice in the batch. Each slice's reconcile/fallback/halt decision is independent.
 
@@ -1218,10 +1272,13 @@ Use the slice-3 implement-phase persistence CLI/methods (sidecar.js):
     "status_file":"<absolute path to .status.json>",
     "dispatched_at":"<ISO>",
     "worktree":"<absolute worktree path>",
-    "outcome":"in-progress"
+    "outcome":"in-progress",
+    "rung":1,
+    "model_role":"implement"
   }'
   ```
-  This is durable evidence — if the orchestrator crashes between dispatch and completion, the next session reads `status_file` to determine codex's terminal state.
+  (`rung` 1..3 and `model_role` are v0.16.0 fields; `model` / `effort` are copied from the wrapper's
+  status file once it exists — never resolved by the orchestrator.) This is durable evidence — if the orchestrator crashes between dispatch and completion, the next session reads `status_file` to determine codex's terminal state.
 
 - **At codex completion** (after the Bash task notification arrives + you've read the status file + run reconciler), promote the in-progress entry to its terminal outcome via `finalizeImplementDispatch`:
   ```js
@@ -1231,6 +1288,7 @@ Use the slice-3 implement-phase persistence CLI/methods (sidecar.js):
     head_sha: reconciler.head_sha,
     commit_count: reconciler.commit_count,
     completed_at: <ISO now>,
+    model_role: statusFile.model_role, model: statusFile.model, effort: statusFile.effort, // v0.16.0 snapshot from the status file
     concerns: [...]  // optional
   });
   ```
@@ -1355,12 +1413,30 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
    node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-show --specPath "<spec-path>" \
      | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const sc=JSON.parse(d);console.log(JSON.stringify(sc.slice_reviews['slice-<N>'].phases['plan-slice'].validation_coverage,null,2))})"
    ```
-3. Compose the prompt: prepend `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/validation-rubric.md` (and verdict-format.md) so Codex applies the rubric to the implementation, not just the plan. Send to Codex via `codex-reply` (or via background subagent if the orchestrator has unrelated prep to do):
+2.5. **Step C0 — Claude's independent review (v0.16.0).** Claude reviews first; Codex second; both
+   SHIP the same commit. Read the diff in full, run the slice's verification yourself and record it as
+   the `claude` side's `kind: "verification"` audit with `"reviewed_sha": "<git rev-parse HEAD>"`.
+   Write `blocking[]` / `non_blocking[]` findings (`file:line` + one sentence, each verified against
+   the code). If `blocking[]` is non-empty, run **at most two** fix passes with `runFixPass`
+   (`lib/codex-bridge/fix-pass.js`, `{ specPath, sliceId, repoRoot, pass, execFn }`): it persists
+   `fix_start_sha = HEAD` on the sidecar before `execFn` runs; the fix runs in the integration
+   checkout (the slice worktree is gone after B.8) via the wrapper — `--model-role implement` on
+   pass 1, `implement_fallback` on pass 2 — with `fix(slice:<N>):` subjects; a failed pass (non-zero
+   exit, zero commits, non-`fix(slice:N):` subjects, thrown exec) is reset to **`fix_start_sha`**,
+   never to `slice_start_sha` (the implementation and other integrated slices stay intact); status
+   `exit_code: 78` is terminal (no reset — halt as in B.6). After each pass: commit, re-run
+   verification, re-review. Blockers still open after pass 2 go to Codex as listed findings; the
+   7-round loop arbitrates. Never hold a slice in C0 indefinitely. This is not the B.6 ladder.
+3. Compose the prompt: prepend `${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/prompts/validation-rubric.md` (and verdict-format.md) so Codex applies the rubric to the implementation, not just the plan. Send to Codex via `codex-reply` on the **execution** thread (`sidecar-thread-id --specPath <spec> --role execution-reviewer` — the `review` role, GPT-6 Astra `high` by default; or via background subagent if the orchestrator has unrelated prep to do):
    ```
    Phase: review-slice
    Round: <N>
    Slice: <slice-N>
    Validation tier: <light|standard|critical>
+   reviewed_sha: <git rev-parse HEAD>
+   ## Claude review findings
+   blocking: [...]
+   non_blocking: [...]
    ## Slice scope
    <task list from Phase A>
    ## Phase A's structured validation coverage (the contract you are verifying)
@@ -1376,11 +1452,15 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
    b. For accepted critiques, dispatch a fix-subagent (foreground) with: the slice's task list, the slice scope, the accepted critiques, and the Commit Conventions. The subagent makes the fixes, runs the tests, and commits using `fix(slice:<N>):` subjects (one commit per logical fix).
    c. After the fix-subagent returns, reconcile sidecar with git per the same rules as Phase B step 3 (walk `last_commit_sha..HEAD`, verify all conform, update `last_commit_sha = HEAD`).
    d. Recompute the slice diff (it now includes the fixes) and send to Codex with the next round's prompt.
-4. On double-SHIP, write phase state via `sidecar-set-phase`, advance to Phase D.
+4. Log each round with `sidecar-append-round-with-audits --headSha "$(git rev-parse HEAD)"`; both
+   sides' verification audits carry `reviewed_sha`, and the sink refuses a double-SHIP whose SHAs
+   differ or do not equal `--headSha` (same-commit rule, v0.16.0). Any fix after a Codex verdict
+   starts a new round with fresh verification on both sides. On double-SHIP, write phase state via
+   `sidecar-set-phase`, advance to Phase D.
 
 ### Phase D: docs-update
 1. Compute the slice's diff again: `git diff <slice_start_sha>..HEAD`.
-2. Ask Codex via `codex-reply` (round 1 prompt):
+2. Ask Codex via `codex-reply` on the execution thread (`--role execution-reviewer`; round 1 prompt):
    ```
    Phase: docs-update
    Round: 1
@@ -1820,8 +1900,26 @@ path. The orchestrator handles:
 
 - worktree fan-out per member
 - shared abortSignal for cancellation
-- sidecar `started` events
+- sidecar `started` / `checkpoint` / terminal events
 - runtime_kind translation (claude → claude-cli)
+- **(v0.16.0)** resolving the `implement` model role **once per attempt** for `codex-cli` members
+  (`modelRole` / `model` / `effort` on the dispatch input and the `started` payload; Claude members
+  keep their own `model:`); pass `repoRoot` so launch and resume find the same attempt evidence.
+
+The production `dispatchFn` for `codex-cli` members is `dispatchCodexCliImplementer` from
+`lib/codex-bridge/implementer/codex-cli-dispatch.js`: it requires the complete snapshot (throws before
+spawning otherwise), writes attempt evidence at `.codex-paired/attempts/<run>/<member>.json`
+(`launching` → `running` with the child pid → `exited`), honors the shared abort signal, and returns
+the full result (`haltEnvelope` beats exit 0; `modelSnapshot` attached). For `claude-cli` members keep
+the existing Task/claude-cli dispatch.
+
+**Resume (v0.16.0).** On a session resume with an in-progress run, call
+`dispatchImplementers({ ..., implementerRunId, resumeInFlight: true })`: members whose latest
+lifecycle event is `completed` are reused (no launch); members still `started`/`checkpoint` are
+**observed** with `observeDirectCliAttempt` (never relaunched — an observation timeout is recorded as
+a `checkpoint`, not a terminal event, and the attempt stays in flight); only members whose evidence
+shows no live attempt get a new attempt at the current configuration. Never launch a second writer
+into a member's worktree.
 
 After all implementers complete:
 - `mergeImplementerBranches` (slice 7) integrates branches in member-ID order
@@ -1839,7 +1937,7 @@ Some slices declare `**Orchestration:** hybrid` with exactly two owners — a `c
 What `runHybridSlice` does, in order:
 
 1. **Preflight + worktrees.** Validates the two-owner block (ownership and claimed-file partition), confirms the registry offers both transports, and creates a worktree per owner from the slice-start SHA. In autopilot both halves run in their own worktrees (unlike interactive, where the UI half edits the foreground checkout).
-2. **Concurrent dispatch.** Starts both owners at the same time: the UI half as a Claude subagent (runtime kind `claude-subagent`) and the backend half as a background Codex run (transport `codex-background-bash`). They run in parallel, not one after the other.
+2. **Concurrent dispatch.** Starts both owners at the same time: the UI half as a Claude subagent (runtime kind `claude-subagent`) and the backend half as a background Codex run (transport `codex-background-bash`, launched by YOUR dispatch fn through `scripts/codex-exec-with-status.sh ... --model-role implement -- codex exec ... --add-dir <repo>/.git` — v0.16.0). They run in parallel, not one after the other. Your backend dispatch fn must (a) call `input.onLaunched({ model_role, model, effort, status_file })` as soon as the wrapper's initial status file exists (the runner records a `checkpoint` `launched` event so the effective model is durable even if this session dies), (b) poll the status file with `classifyStatusFile` (a `config-error` — exit 78 — halts with the file's reason), and (c) return `modelSnapshot` read from the final status file.
 3. **Contract wait.** The UI half builds against its local `__hybrid_contracts__` stand-in while the backend half writes the real route/types and **publishes the contract**. The runner waits for the backend to publish; if the backend exits without publishing, it halts (`hybrid-contract-not-published`).
 4. **Contract-change resync.** If the backend publishes a newer contract hash after the UI half already consumed an earlier one, the runner marks the UI owner `needs-contract-resync`, surfaces the changed-contract state (sidecar + mailbox), and refuses to let the UI half complete or integrate until it consumes the latest hash. This is the in-progress `hybrid-contract-changed` state — not terminal while the UI owner is still working. It only becomes terminal if the UI half completes while still stale: `hybrid-contract-stale-at-completion` (consumed an older hash) or `hybrid-contract-not-consumed` (never consumed the latest).
 5. **Background-Codex recovery.** The background run is monitored by its status file. A lost or vanished run surfaces as `hybrid-codex-background-lost` (and a stalled one as `hybrid-codex-background-timeout`); these route through the existing halt-envelope path and the per-phase Codex thread-loss recovery already documented for Phase B (detect the stale-thread response, replay, rotate the thread id).

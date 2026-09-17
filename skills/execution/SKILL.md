@@ -56,6 +56,21 @@ plan:   docs/plans/<plan>.md | omitted-for-resume
    otherwise indistinguishable from one running in another session, and replay found one sitting
    silently resumable for 11 days.
 
+## Execution thread (v0.16.0 — do this once per feature at hand-off)
+
+Planning ran on the `paired-reviewer` thread at the `planning` model role (GPT-6 Astra, `xhigh`).
+Slice reviews run on a second, cheaper thread at the `review` role. Before delegating to either
+driver, open it if `role_sessions["execution-reviewer"]` is absent from the sidecar (resume paths
+skip this):
+
+1. `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" model-role --role review --format mcp --repoRoot <repo>` → `{ model, config }`. Exit 2 → stop and show the error.
+2. `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-replay-context --specPath <spec>` → replay JSON.
+3. Seed prompt = `composeSeedPrompt(replay, { reason: 'execution-thread', specPath, planPath, pendingPrompt })` from `lib/codex-bridge/thread-recovery.js`, prefixed with `system-rubric.md` + `verdict-format.md`. The seed tells Codex to read the spec and plan from disk.
+4. Call the `codex` MCP tool with that prompt and the `model` + `config` from step 1.
+5. `sidecar-rotate-thread-id --specPath <spec> --role execution-reviewer --newThreadId <id> --reason execution-thread --phase execution --threadConfig '{"role":"review","model":"<model>","effort":"<effort>"}'`.
+
+See `skills/brainstorming/codex-pairing.md` "Two threads per feature" for the rationale.
+
 ## What this delegates to
 
 - `driver: interactive` → `codex-paired-superpowers:subagent-driven-development` (the step-by-step,
@@ -85,14 +100,16 @@ For each work item in the plan:
    paths: `single`, `two-disjoint`, or `hybrid-ui-backend`.
 2. **Run the corresponding split path** (see below).
 3. **Run the domain reviewers** for the work item using the reviewer-named APIs.
-4. **Run the Codex paired review** for the work item.
+4. **Claude reviews first** (SDD Step C0: findings list, at most two `runFixPass` fix passes), then
+   **the Codex paired review** on the execution thread; both SHIP the same `reviewed_sha`.
 5. **Show plain-English progress and blockers** to the user, pausing for review between steps.
 
 Split-specific behavior (interactive uses the same split it would under autopilot):
 
-- **`single`** → `runSplit` returns a `dispatch-single` directive. Act on it by running the existing
-  Step A implementing-subagent dispatch from `subagent-driven-development` (one implementing subagent /
-  foreground implementer), then the reviewer checks and Codex review.
+- **`single`** → `runSplit` returns a `dispatch-single` directive. Act on it by running Step A of
+  `subagent-driven-development` — the implementer ladder (Codex at `implement`, then Codex at
+  `implement_fallback`, then the Sonnet subagent), then the reviewer checks, Claude's review, and the
+  Codex review.
 - **`two-disjoint`** → use the existing implementer worktree fan-out and `dispatchImplementers`, then
   the existing merge coordinator and post-merge review. The interactive driver may pause between
   dispatch, merge, and review, but it is the same split reachable under autopilot.

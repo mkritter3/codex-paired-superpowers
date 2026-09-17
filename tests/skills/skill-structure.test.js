@@ -418,7 +418,8 @@ for (const skill of SKILLS_WITH_PANEL_DISPATCH_WRAPPERS) {
     // MUST spread `adapter` into the request before calling runTurnWithDeps,
     // otherwise codex panelists are audited as claude (round-1 critique fix).
     assert.ok(
-      content.includes('runTurnWithDeps({ ...req, adapter }'),
+      content.includes('runTurnWithDeps({ ...req, adapter }') ||
+        (content.includes('requestForTurn = { ...req, adapter }') && content.includes('runTurnWithDeps(requestForTurn')),
       `${skill}/SKILL.md panel wrappers must call runTurnWithDeps({ ...req, adapter }, ...) ` +
         `— a bare runTurnWithDeps(req, ...) leaves the sidecar adapter audit field defaulted ` +
         `to 'claude-task' regardless of the actual transport`,
@@ -597,18 +598,24 @@ function collectSkillMarkdown(dir) {
 }
 
 function forbiddenPerCallModelLines(text) {
-  return text.split('\n').reduce((acc, line, i) => {
-    // A line is a violation if it instructs USE of a per-call model for the codex MCP tool.
+  const lines = text.split('\n');
+  return lines.reduce((acc, line, i) => {
+    // A line is a violation if it instructs USE of a per-call model for the codex MCP tool
+    // WITHOUT deriving it from the model-role CLI (v0.16.0: the model comes from the resolved
+    // role, never from a literal typed into the skill).
     const setsModel =
       /"model"\s*:\s*"gpt-/.test(line) ||                 // JSON snippet field: "model": "gpt-..."
       /\bmust pass\b[^.]*\bmodel\b[^.]*gpt-5/i.test(line) || // prose: "you MUST pass `model: gpt-5.5`"
       /MODEL INVARIANT/.test(line);                       // the old invariant banner itself
-    // Exemptions: explicit prohibitions, implementer-adapter frontmatter, sidecar bookkeeping.
-    // (Hazard mentions of "stale"/"examples" alone do NOT exempt — an instruction can co-mention them.)
+    // Exemptions: explicit prohibitions, implementer-adapter frontmatter, sidecar bookkeeping,
+    // and (v0.16.0) a snippet within 3 lines of a `model-role` resolution — that is the sanctioned
+    // form (the literal is the CLI's example output, not a hand-typed pin).
+    const window = lines.slice(Math.max(0, i - 3), i + 4).join('\n');
     const isExempt =
       /\bmust NOT\b|\bdo NOT\b|never pass|don't pass|\bomit\b/i.test(line) ||
       /sidecar-init/.test(line) ||
-      /adapter:|member_id:|expert-implementer/.test(line);
+      /adapter:|member_id:|expert-implementer/.test(line) ||
+      /model-role/.test(window);
     if (setsModel && !isExempt) acc.push({ line: i + 1, text: line.trim() });
     return acc;
   }, []);
@@ -625,8 +632,8 @@ test('no plugin-authored skill passes a per-call model to the codex MCP tool (Go
   assert.deepEqual(
     violations,
     [],
-    `Found plugin-authored per-call model directive(s) for the codex MCP tool. The model is ` +
-      `pinned to gpt-5.5 by .claude-plugin/plugin.json; skills must omit per-call model.\n` +
+    `Found a hand-typed per-call model for the codex MCP tool. Skills must obtain the model via ` +
+      `\`model-role --format mcp\` (v0.16.0); a literal is allowed only as that command's example output.\n` +
       violations.join('\n'),
   );
 });
@@ -1172,4 +1179,137 @@ test('Plan 4: no duplicate full matrix outside the canonical doc (grep guard)', 
     `Found a full driver/split matrix outside ${EXECUTION_MODEL_DOC_REL} without a link back to it: ` +
       `${violations.join(', ')}. Link to the canonical doc instead of copying the matrix.`,
   );
+});
+
+// ── v0.16.0 — model roles: no literals on live paths, wiring present ──────────
+//
+// Spec: docs/specs/2026-09-17-v0.16.0-model-roles-design.md (Tests section).
+// Plan: docs/plans/2026-09-17-v0.16.0-model-roles.md slice 6 task 1.
+
+function collectFiles(dir, exts) {
+  const out = [];
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') && entry.name !== '.claude-plugin') continue;
+    if (entry.name === 'node_modules') continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...collectFiles(full, exts));
+    else if (entry.isFile() && exts.some((e) => entry.name.endsWith(e))) out.push(full);
+  }
+  return out;
+}
+
+const LIVE_PATH_DIRS = ['skills', 'lib', 'hooks', 'bin', 'scripts', 'agents', '.claude-plugin'];
+const LIVE_EXTS = ['.md', '.js', '.mjs', '.sh', '.json', ''];
+
+test('v0.16.0: no retired gpt-5.5 literal on any live path (skills/lib/hooks/bin/scripts/agents/.claude-plugin/docs/*.md)', () => {
+  const files = [];
+  for (const d of LIVE_PATH_DIRS) files.push(...collectFiles(join(PLUGIN_ROOT, d), LIVE_EXTS));
+  // top-level docs only — docs/plans and docs/specs are historical records
+  for (const entry of readdirSync(join(PLUGIN_ROOT, 'docs'), { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.md')) files.push(join(PLUGIN_ROOT, 'docs', entry.name));
+  }
+  const violations = [];
+  for (const f of files) {
+    if (f.endsWith('role-prompts.lock.json')) continue;
+    const text = readFileSync(f, 'utf8');
+    text.split('\n').forEach((line, i) => {
+      if (/gpt-5\.5/.test(line)) violations.push(`${f.replace(PLUGIN_ROOT + '/', '')}:${i + 1}  ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(violations, [], `retired model literal on a live path:\n${violations.join('\n')}`);
+});
+
+function fencedBlocks(text) {
+  const blocks = [];
+  const lines = text.split('\n');
+  let inBlock = false; let start = 0; let buf = [];
+  lines.forEach((line, i) => {
+    if (/^\s*```/.test(line)) {
+      if (inBlock) { blocks.push({ start: start + 1, text: buf.join('\n') }); buf = []; inBlock = false; }
+      else { inBlock = true; start = i; }
+      return;
+    }
+    if (inBlock) buf.push(line);
+  });
+  return blocks;
+}
+
+test('v0.16.0: no hand-written -m gpt- inside a codex exec block; every wrapper block carries --model-role', () => {
+  const files = [...collectSkillMarkdown(join(PLUGIN_ROOT, 'skills'))];
+  for (const entry of readdirSync(join(PLUGIN_ROOT, 'docs'), { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.md')) files.push(join(PLUGIN_ROOT, 'docs', entry.name));
+  }
+  const violations = [];
+  for (const f of files) {
+    for (const b of fencedBlocks(readFileSync(f, 'utf8'))) {
+      const rel = `${f.replace(PLUGIN_ROOT + '/', '')}:${b.start}`;
+      if (/codex exec/.test(b.text) && /-m gpt-/.test(b.text)) violations.push(`${rel} hand-written -m gpt- in a codex exec block`);
+      if (/codex-exec-with-status\.sh/.test(b.text) && !/--model-role/.test(b.text)) violations.push(`${rel} wrapper block without --model-role`);
+    }
+  }
+  assert.deepEqual(violations, [], violations.join('\n'));
+});
+
+test('v0.16.0: an MCP "model": field in a skill snippet appears only next to model-role', () => {
+  const violations = [];
+  for (const f of collectSkillMarkdown(join(PLUGIN_ROOT, 'skills'))) {
+    const lines = readFileSync(f, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (!/"model"\s*:\s*"gpt-/.test(line)) return; // literal model ids only
+      const window = lines.slice(Math.max(0, i - 3), i + 4).join('\n');
+      if (!/model-role/.test(window)) violations.push(`${f.replace(PLUGIN_ROOT + '/', '')}:${i + 1}  ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(violations, [], `"model": without model-role nearby:\n${violations.join('\n')}`);
+});
+
+test('v0.16.0: non-Claude reviewer dispatch goes through dispatchReviewerViaHarness, never a raw harness import, in every codex-using skill', () => {
+  for (const skill of ['writing-plans', 'subagent-driven-development', 'autopilot', 'systematic-debugging', 'test-driven-development']) {
+    const content = readSkill(skill);
+    assert.ok(content.includes('reviewer-dispatch.js') && content.includes('dispatchReviewerViaHarness'),
+      `${skill}/SKILL.md must dispatch non-Claude reviewers via dispatchReviewerViaHarness`);
+    assert.ok(!content.includes("lib/codex-bridge/cli-harness/harness.js'"),
+      `${skill}/SKILL.md must not import cli-harness/harness.js directly`);
+  }
+});
+
+test('v0.16.0: Claude-first review (C0), fix-pass checkpoint, and same-commit rule are documented', () => {
+  for (const skill of ['autopilot', 'subagent-driven-development']) {
+    const content = readSkill(skill);
+    for (const marker of ['Claude review findings', 'reviewed_sha', '--headSha', 'at most two', 'fix_start_sha', 'runFixPass']) {
+      assert.ok(content.includes(marker), `${skill}/SKILL.md must contain ${JSON.stringify(marker)}`);
+    }
+  }
+});
+
+test('v0.16.0: autopilot B.6 treats exit 78 as terminal with no reset, in the same paragraph', () => {
+  const lines = readSkill('autopilot').split('\n');
+  const hit = lines.some((line, i) => {
+    const window = lines.slice(i, i + 6).join('\n');
+    return /78/.test(window) && /model-role-resolution-failed/.test(window) && /no worktree reset|no reset/i.test(window);
+  });
+  assert.ok(hit, 'autopilot B.6 must state that exit 78 (model-role-resolution-failed) halts with no reset and no next rung');
+});
+
+test('v0.16.0: SDD Step A dispatches through the implementer ladder with --model-role', () => {
+  const content = readSkill('subagent-driven-development');
+  const stepA = content.slice(content.indexOf('### Step A'), content.indexOf('### Step B'));
+  assert.ok(/ladder/.test(stepA) && stepA.includes('--model-role'), 'Step A must describe the ladder and --model-role');
+});
+
+test('v0.16.0: docs/execution-model.md names who writes and who reviews, plus the concurrent-panel exception', () => {
+  const doc = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
+  assert.ok(doc.includes('Who writes, who reviews'));
+  assert.ok(/concurrent/.test(doc), 'must name the concurrent post-merge panel exception');
+  assert.ok(doc.includes('implement_fallback'));
+});
+
+test('v0.16.0: every thread-opening MCP call in skills resolves the role via model-role --format mcp', () => {
+  for (const skill of ['brainstorming', 'systematic-debugging', 'execution']) {
+    const content = readSkill(skill);
+    assert.ok(content.includes('model-role --role') && content.includes('--format mcp'),
+      `${skill}/SKILL.md must resolve the thread model via model-role --format mcp`);
+  }
 });

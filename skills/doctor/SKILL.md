@@ -58,12 +58,14 @@ Exit code: 0 if all PASS or only WARN; 1 if any FAIL.
 The full check list lives in `bin/codex-paired-doctor` (the source of truth). Current set:
 
 1. **node** — Node v20+ on PATH (required for `lib/codex-bridge/*` modules + the bundled MCP server).
-2. **codex-cli** — `codex` v0.128.0+ on PATH (required for the Claude↔Codex 7-round loop via MCP).
+2. **codex-cli** — `codex` on PATH (required for the Claude↔Codex 7-round loop via MCP).
 3. **codex-auth** — codex credentials present (login state).
 4. **git** — git v2.5+ (worktree support required by autopilot's parallel slice dispatch).
 5. **vendored-deps** — `proper-lockfile` + transitive pure-JS deps present at `node_modules/` (mailbox lockfile requirement).
 6. **bridge-cli** — `lib/codex-bridge/cli.js` loads cleanly (catches corruption / missing deps that the vendored-deps check missed).
 7. **hooks** — PostToolUse hooks present and executable.
 8. **project-state-dir** — `.codex-paired/` in cwd is writable (informational; auto-created by autopilot when first needed).
+9. **models** (v0.16.0) — resolves the four model roles (`planning`, `review`, `implement`, `implement_fallback`) and prints `role: model effort (source)`; FAILs only on a malformed `models` config; WARNs when the Codex model catalog (`~/.codex/models_cache.json`) lacks a configured model, lists a retirement date for it, does not support the configured effort, is unreadable, or is older than seven days. An absent catalog is not an error.
+10. **codex-transport** (v0.16.0) — WARNs when `codex --version` is older than the version this release was validated against (`0.153.4`), and when this Codex build no longer offers `codex mcp-server` (the transport the plugin uses).
 
 Adding a new prerequisite? Update the script — the skill auto-tracks because it just runs the script verbatim.

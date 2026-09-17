@@ -40,6 +40,7 @@ const {
 } = await import(join(REPO, 'lib/codex-bridge/sidecar.js'));
 const { composeExperts } = await import(join(REPO, 'lib/codex-bridge/role-composer.js'));
 const { resolveAdapter } = await import(join(REPO, 'lib/codex-bridge/role-routing/resolver.js'));
+const { resolveModelRoles } = await import(join(REPO, 'lib/codex-bridge/models.js'));
 const { detectAvailableCLIs, availableCLISet } = await import(
   join(REPO, 'lib/codex-bridge/availability/detector.js')
 );
@@ -94,11 +95,12 @@ async function main() {
       '- Rate-limit 5 attempts per IP per minute',
     ].join('\n'),
   );
+  const planning = resolveModelRoles({ repoRoot: harnessRoot, env: {} }).roles.planning;
   initSidecar(specPath, {
     feature: 'gate-harness',
     codexSession: 'sess-gate-harness',
-    model: 'gpt-5.5',
-    reasoningEffort: 'high',
+    model: planning.model,
+    reasoningEffort: planning.effort,
   });
 
   // Write a minimal role-prompt file for each expert we use, so

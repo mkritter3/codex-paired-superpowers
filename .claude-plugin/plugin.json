@@ -1,19 +1,31 @@
 {
   "name": "codex-paired-superpowers",
-  "description": "Fork of six superpowers skills paired with Codex (GPT-5.5) as an L11 engineering partner. One persistent Codex thread per feature; 7-round revision loop with structured verdict protocol. v0.10.0: implementer experts — parallel N-way fanout into isolated worktrees with locked sidecar audit, merger agent + double-SHIP gate, canary redaction. v0.10.1: codex independently audits codebase against goals before SHIP — goals block + audit log + machine-enforced gate. v0.11.0: app-autopilot (experimental opt-in) — multi-plan rollout via Claude's /goal. v0.12.0: codex MCP runs with workspace-write sandbox so codex can write specs/plans directly; brainstorming defaults back to autopilot continuation (app-autopilot remains available as opt-in). v0.13.0: reliability fixes from real-usage retrospective — Codex MCP pinned to gpt-5.5 with danger-full-access so reviews run real verification; audit log gains kind/exit_code with a code-bearing verification floor; Codex thread-loss (Session not found) auto-recovers with replay; atomic round+audit logging removes the audit-gate hook error; edit-retry discipline. v0.14.0: hybrid dev mode (Claude builds the UI inline while a background Codex builds the backend, joined by a published contract); a single unified `execution` entry point — one skill / `/execute` with an explicit driver (interactive|autopilot) and a per-slice split (single|two-disjoint|hybrid-ui-backend), with `/autopilot` kept as a thin compatibility alias; reviewer-naming migration (the review sense of \"expert\" becomes \"reviewer\": composeReviewers, reviewer-* roles, **Reviewers:** directive, reviewer_teammates sidecar) with full one-window back-compat for existing plans/sidecars; canonical docs/execution-model.md as the single driver/split/review mental model.",
+  "description": "Codex-paired superpowers for Claude Code. v0.16.0: model roles for the GPT-6 era — Codex writes the code (GPT-5.6 Sol high → GPT-6 Astra medium → Sonnet subagent), Claude reviews first, both must SHIP the same commit; planning on GPT-6 Astra xhigh; two Codex threads per feature (planning + execution); durable attempt evidence + in-flight-safe resume; doctor model/transport checks; one config source (`models` in project.json / CODEX_PAIRED_* env). Prior: v0.15.0 reliability (hook false-positive surgery, hang detection, sink-side round validation); v0.14.0 hybrid dev mode + unified `execution` entry point + reviewer naming; v0.13.0 verification floor + thread-loss recovery; v0.10.x implementer experts + goals audit; v0.9.0 model-routed dev team. One persistent Codex thread per feature; 7-round revision loop with structured verdict protocol.",
   "version": "0.16.0",
-  "author": { "name": "mkr" },
+  "author": {
+    "name": "mkr"
+  },
   "license": "MIT",
-  "keywords": ["skills", "codex", "pair-programming", "tdd", "code-review"],
+  "keywords": [
+    "skills",
+    "codex",
+    "pair-programming",
+    "tdd",
+    "code-review"
+  ],
   "mcpServers": {
     "codex": {
       "command": "codex",
       "args": [
         "mcp-server",
-        "-c", "sandbox_mode=\"danger-full-access\"",
-        "-c", "approval_policy=\"never\"",
-        "-c", "model=\"gpt-6-astra\"",
-        "-c", "model_reasoning_effort=\"xhigh\""
+        "-c",
+        "sandbox_mode=\"danger-full-access\"",
+        "-c",
+        "approval_policy=\"never\"",
+        "-c",
+        "model=\"gpt-6-astra\"",
+        "-c",
+        "model_reasoning_effort=\"xhigh\""
       ]
     }
   }
