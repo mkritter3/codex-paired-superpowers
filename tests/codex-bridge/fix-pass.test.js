@@ -164,3 +164,42 @@ test('failed pass that committed a pre-existing untracked file: rollback keeps t
   assert.match(git(repoRoot, 'status', '--porcelain'), /\?\? notes\.txt/);
   rmSync(repoRoot, { recursive: true, force: true });
 });
+
+// Codex review-slice:slice-3 round 2: contents must be captured BEFORE the pass runs.
+test('failed pass that modified and staged a pre-existing untracked file: rollback restores the ORIGINAL contents', async () => {
+  const { repoRoot, specPath, implementationSha } = makeRepo();
+  writeFileSync(join(repoRoot, 'notes.txt'), 'original user notes\n');
+  const result = await runFixPass({
+    specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => {
+      writeFileSync(join(repoRoot, 'notes.txt'), 'failed pass replacement\n');
+      git(repoRoot, 'add', 'notes.txt');
+      git(repoRoot, 'commit', '-qm', 'wip');
+      return { statusFile: { exit_code: 0 } };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(git(repoRoot, 'rev-parse', 'HEAD'), implementationSha);
+  assert.equal(readFileSync(join(repoRoot, 'notes.txt'), 'utf8'), 'original user notes\n');
+  assert.match(git(repoRoot, 'status', '--porcelain'), /\?\? notes\.txt/);
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('failed pass that modified (unstaged) or deleted pre-existing untracked files: rollback restores both', async () => {
+  const { repoRoot, specPath } = makeRepo();
+  writeFileSync(join(repoRoot, 'notes.txt'), 'original\n');
+  writeFileSync(join(repoRoot, 'scratch.txt'), 'keep me\n');
+  const result = await runFixPass({
+    specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => {
+      writeFileSync(join(repoRoot, 'notes.txt'), 'mutated without staging\n');
+      rmSync(join(repoRoot, 'scratch.txt'));
+      throw new Error('boom');
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'exec-failed');
+  assert.equal(readFileSync(join(repoRoot, 'notes.txt'), 'utf8'), 'original\n');
+  assert.equal(readFileSync(join(repoRoot, 'scratch.txt'), 'utf8'), 'keep me\n');
+  rmSync(repoRoot, { recursive: true, force: true });
+});
