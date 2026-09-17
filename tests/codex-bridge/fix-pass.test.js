@@ -203,3 +203,34 @@ test('failed pass that modified (unstaged) or deleted pre-existing untracked fil
   assert.equal(readFileSync(join(repoRoot, 'scratch.txt'), 'utf8'), 'keep me\n');
   rmSync(repoRoot, { recursive: true, force: true });
 });
+
+// Codex review-slice:slice-3 round 3: no size cap — a large file is preserved too, and many files
+// do not accumulate in memory (disk-backed copies).
+test('failed pass: a >8 MiB pre-existing untracked file and 100 small ones are all restored', async () => {
+  const { repoRoot, specPath } = makeRepo();
+  const big = Buffer.alloc(8 * 1024 * 1024 + 1, 0x41);
+  writeFileSync(join(repoRoot, 'big.bin'), big);
+  for (let i = 0; i < 100; i += 1) writeFileSync(join(repoRoot, `n${i}.txt`), `note ${i}\n`);
+  const before = process.memoryUsage().heapUsed;
+  const result = await runFixPass({
+    specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => {
+      writeFileSync(join(repoRoot, 'big.bin'), 'clobbered');
+      git(repoRoot, 'add', 'big.bin', 'n0.txt');
+      git(repoRoot, 'commit', '-qm', 'wip');
+      for (let i = 1; i < 100; i += 1) rmSync(join(repoRoot, `n${i}.txt`));
+      return { statusFile: { exit_code: 0 } };
+    },
+  });
+  assert.equal(result.ok, false);
+  const restored = readFileSync(join(repoRoot, 'big.bin'));
+  assert.equal(restored.length, big.length);
+  assert.ok(restored.equals(big), 'large file restored byte-for-byte');
+  for (let i = 0; i < 100; i += 1) {
+    assert.equal(readFileSync(join(repoRoot, `n${i}.txt`), 'utf8'), `note ${i}\n`);
+  }
+  const grew = process.memoryUsage().heapUsed - before;
+  assert.ok(grew < 8 * 1024 * 1024, `snapshot must not buffer file contents on the heap (heap grew ${grew} bytes)`);
+  assert.equal('preserve_skipped' in fixEntries(specPath)[0], false);
+  rmSync(repoRoot, { recursive: true, force: true });
+});
