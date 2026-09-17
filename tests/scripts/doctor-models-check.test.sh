@@ -12,6 +12,8 @@ unset CODEX_PAIRED_MODEL_PLANNING CODEX_PAIRED_REASONING_PLANNING
 unset CODEX_PAIRED_MODEL_REVIEW CODEX_PAIRED_REASONING_REVIEW
 unset CODEX_PAIRED_MODEL_IMPLEMENT CODEX_PAIRED_REASONING_IMPLEMENT
 unset CODEX_PAIRED_MODEL_IMPLEMENT_FALLBACK CODEX_PAIRED_REASONING_IMPLEMENT_FALLBACK
+unset CODEX_PAIRED_CLI CODEX_PAIRED_CLI_PLANNING CODEX_PAIRED_CLI_REVIEW
+unset CODEX_PAIRED_CLI_IMPLEMENT CODEX_PAIRED_CLI_IMPLEMENT_FALLBACK
 
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN"
@@ -27,6 +29,19 @@ apply_fake_codex() {
   chmod +x "$target"
 }
 apply_fake_codex
+
+apply_fake_agy() {
+  local target="$FAKE_BIN/agy"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'case "${1-}" in' \
+    '  models) printf "%b\\n" "${FAKE_AGY_MODELS_OUTPUT:-gemini-3.8-flash-high\\ngemini-3.1-pro-high}" ;;' \
+    '  *) exit 0 ;;' \
+    'esac' > "$target"
+  chmod +x "$target"
+}
+
+PATH_WITHOUT_AGY=$(echo "$BASE_PATH" | tr ':' '\n' | while read -r d; do [ -n "$d" ] && [ ! -x "$d/agy" ] && echo "$d"; done | paste -sd: -)
 
 new_case() {
   CASE_ROOT="$TEST_ROOT/$1"
@@ -79,7 +94,7 @@ run_doctor() {
     HOME="$CASE_ROOT/home" \
       CODEX_HOME="$CASE_ROOT/codex" \
       CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
-      PATH="$FAKE_BIN:$BASE_PATH" \
+      PATH="${TEST_PATH:-$FAKE_BIN:$BASE_PATH}" \
       "$PLUGIN_ROOT/bin/codex-paired-doctor" --json
   ) > "$output"
   printf '%s' "$output"
@@ -203,4 +218,25 @@ node -e '
 ' "$null_output"
 echo "  PASS: malformed entry keeps summary accounting valid"
 
-echo "All 16 doctor model/catalog and transport checks passed."
+new_case agy_role_model_listed
+apply_fake_agy
+write_catalog good
+agy_listed_output=$(CODEX_PAIRED_CLI_REVIEW=agy CODEX_PAIRED_MODEL_REVIEW=gemini-3.8-flash-high run_doctor)
+assert_check "$agy_listed_output" models pass "review: agy gemini-3.8-flash-high high (env" \
+  "agy role with listed model passes"
+
+new_case agy_role_model_missing
+apply_fake_agy
+write_catalog good
+agy_missing_output=$(CODEX_PAIRED_CLI_REVIEW=agy CODEX_PAIRED_MODEL_REVIEW=gemini-3.8-flash-high FAKE_AGY_MODELS_OUTPUT="gemini-3.1-pro-high" run_doctor)
+assert_check "$agy_missing_output" models warn "gemini-3.8-flash-high is missing" \
+  "agy role with missing model warns"
+
+new_case agy_role_no_agy
+rm -f "$FAKE_BIN/agy"
+write_catalog good
+agy_no_bin_output=$(TEST_PATH="$FAKE_BIN:$PATH_WITHOUT_AGY" CODEX_PAIRED_CLI_REVIEW=agy CODEX_PAIRED_MODEL_REVIEW=gemini-3.8-flash-high run_doctor)
+assert_check "$agy_no_bin_output" models warn "role review uses agy but agy is not installed" \
+  "agy role with no agy binary warns"
+
+echo "All 19 doctor model/catalog and transport checks passed."

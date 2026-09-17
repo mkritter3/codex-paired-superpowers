@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -122,4 +123,64 @@ test('reviewer dispatch returns the turn request audit fields and injects unread
     assert.equal(result.requestForTurn.modelRoleWarning, null);
     assert.match(readFileSync(f.stdinPath, 'utf8'), /MAIL CONTENT/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('reviewer dispatch with agy wraps harness call in withReviewCheckout with overlaid spec', async () => {
+  const f = fixture('post-implementation-review');
+  try {
+    // Initialize git repository so withReviewCheckout can create a detached worktree
+    execFileSync('git', ['init'], { cwd: f.dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: f.dir });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: f.dir });
+    writeFileSync(join(f.dir, '.gitignore'), '.git-worktrees/\n');
+    execFileSync('git', ['add', '.gitignore'], { cwd: f.dir });
+    execFileSync('git', ['commit', '-m', 'initial commit'], { cwd: f.dir });
+
+    // Write an uncommitted spec in the repo
+    writeFileSync(f.request.specPath, '# Uncommitted Spec Content\nCheck this.\n');
+
+    const seenCwdPath = join(f.dir, 'seen-cwd.txt');
+    const copiedSpecPath = join(f.dir, 'copied-spec.txt');
+    const fakeAgyScript = join(f.dir, 'fake-agy');
+    writeFileSync(
+      fakeAgyScript,
+      [
+        '#!/usr/bin/env bash',
+        `pwd > '${seenCwdPath}'`,
+        `if [ -f spec.md ]; then cp spec.md '${copiedSpecPath}'; fi`,
+        `printf '{"conversation_id":"conv-agy-1","status":"SUCCESS","response":"agy review response","usage":{},"denied_actions":[]}\\n'`,
+      ].join('\n'),
+    );
+    chmodSync(fakeAgyScript, 0o755);
+
+    const env = {
+      CODEX_PAIRED_CLI_REVIEW: 'agy',
+      CODEX_PAIRED_MODEL_REVIEW: 'gemini-3.8-flash-high',
+    };
+
+    const result = await dispatchReviewerViaHarness(f.request, {
+      repoRoot: f.dir,
+      env,
+      harnessOptions: { command: fakeAgyScript },
+      deps: { readUnreadMessages: async () => [] },
+    });
+
+    assert.equal(result.responseText, 'agy review response');
+    assert.equal(result.cli, 'agy');
+    assert.equal(result.model, 'gemini-3.8-flash-high');
+    assert.equal(result.requestForTurn.adapter, 'cli-harness:agy');
+
+    const seenCwd = readFileSync(seenCwdPath, 'utf8').trim();
+    assert.ok(seenCwd !== f.dir, 'agy should have run in a review checkout, not repoRoot');
+    assert.ok(!existsSync(seenCwd), 'review checkout should be removed afterwards');
+
+    const copiedContent = readFileSync(copiedSpecPath, 'utf8');
+    assert.equal(copiedContent, '# Uncommitted Spec Content\nCheck this.\n');
+
+    // Verify git status of f.dir: spec.md is still uncommitted, repo clean of worktree state
+    const gitStatus = execFileSync('git', ['status', '--porcelain', 'spec.md'], { cwd: f.dir, encoding: 'utf8' });
+    assert.ok(gitStatus.includes('?? spec.md') || gitStatus.includes('A  spec.md'));
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
 });

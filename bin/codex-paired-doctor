@@ -159,84 +159,154 @@ if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js
   if MODELS_JSON=$(node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" model-roles 2>&1); then
     CODEX_MODELS_HOME="${CODEX_HOME:-$HOME/.codex}"
     MODELS_CATALOG="$CODEX_MODELS_HOME/models_cache.json"
+    AGY_INSTALLED=0
+    if command -v agy >/dev/null 2>&1; then
+      AGY_INSTALLED=1
+    fi
     MODELS_CHECK=$(node -e '
       const fs = require("node:fs");
+      const { execFileSync } = require("node:child_process");
 
       const catalogPath = process.argv[1];
       const resolved = JSON.parse(process.argv[2]);
+      const agyInstalled = process.argv[3] === "1";
+
       const roleEntries = Object.entries(resolved.roles);
       const roleDetails = roleEntries.map(([role, config]) => {
         const source = resolved.sources[role];
         const sourceLabel = source.model === source.effort
           ? source.model
           : `${source.model}/${source.effort}`;
-        return `${role}: ${config.model} ${config.effort} (${sourceLabel})`;
+        const cliPrefix = config.cli === "agy" ? "agy " : "";
+        return `${role}: ${cliPrefix}${config.model} ${config.effort} (${sourceLabel})`;
       });
 
-      if (!fs.existsSync(catalogPath)) {
-        process.stdout.write(`pass|catalog not cached; model checks skipped; ${roleDetails.join("; ")}`);
-        process.exit(0);
-      }
-
-      let catalog;
-      try {
-        catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
-        if (!Array.isArray(catalog.models)) throw new Error("models[] is missing");
-      } catch (error) {
-        process.stdout.write(`warn|catalog unreadable: ${error.message}; ${roleDetails.join("; ")}`);
-        process.exit(0);
-      }
+      const codexRoles = roleEntries.filter(([, config]) => (config.cli || "codex") === "codex");
+      const agyRoles = roleEntries.filter(([, config]) => config.cli === "agy");
 
       const warnings = [];
-      try {
-        // Compare elapsed milliseconds, not the floored day count (Codex review): a catalog
-        // 7 days + 1 hour old must warn; the displayed age is floored for readability.
-        const fetchedAt = Date.parse(catalog.fetched_at);
-        if (Number.isFinite(fetchedAt)) {
-          const ageMs = Date.now() - fetchedAt;
-          if (ageMs > 7 * 86400000) warnings.push(`catalog is ${Math.floor(ageMs / 86400000)} days old`);
-        }
+      const notes = [];
 
-        const catalogBySlug = new Map();
-        for (const model of catalog.models) {
-          if (!model || typeof model !== "object" || typeof model.slug !== "string") {
-            throw new Error("models[] contains an entry without a string slug");
+      // ── Codex catalog checks (apply only to codex roles) ──
+      if (codexRoles.length > 0) {
+        if (!fs.existsSync(catalogPath)) {
+          notes.push("catalog not cached; model checks skipped");
+        } else {
+          let catalog = null;
+          try {
+            catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+            if (!Array.isArray(catalog.models)) throw new Error("models[] is missing");
+          } catch (error) {
+            warnings.push(`catalog unreadable: ${error.message}`);
           }
-          catalogBySlug.set(model.slug, model);
-        }
-        const configuredModels = new Set(roleEntries.map(([, config]) => config.model));
-        for (const modelName of configuredModels) {
-          const model = catalogBySlug.get(modelName);
-          if (!model) {
-            warnings.push(`${modelName} is missing from the catalog`);
-            continue;
-          }
-          if (model.upgrade && typeof model.upgrade === "object" && model.upgrade.retirement_at) {
-            warnings.push(`${modelName} retires on ${model.upgrade.retirement_at}`);
-          }
-        }
 
-        for (const [role, config] of roleEntries) {
-          const model = catalogBySlug.get(config.model);
-          if (!model) continue;
-          const supported = Array.isArray(model.supported_reasoning_levels)
-            ? model.supported_reasoning_levels.map((level) => level?.effort)
-            : [];
-          if (!supported.includes(config.effort)) {
-            warnings.push(`${role}: ${config.model} does not support effort ${config.effort}`);
+          if (catalog) {
+            try {
+              const fetchedAt = Date.parse(catalog.fetched_at);
+              if (Number.isFinite(fetchedAt)) {
+                const ageMs = Date.now() - fetchedAt;
+                if (ageMs > 7 * 86400000) warnings.push(`catalog is ${Math.floor(ageMs / 86400000)} days old`);
+              }
+
+              const catalogBySlug = new Map();
+              for (const model of catalog.models) {
+                if (!model || typeof model !== "object" || typeof model.slug !== "string") {
+                  throw new Error("models[] contains an entry without a string slug");
+                }
+                catalogBySlug.set(model.slug, model);
+              }
+              const configuredModels = new Set(codexRoles.map(([, config]) => config.model));
+              for (const modelName of configuredModels) {
+                const model = catalogBySlug.get(modelName);
+                if (!model) {
+                  warnings.push(`${modelName} is missing from the catalog`);
+                  continue;
+                }
+                if (model.upgrade && typeof model.upgrade === "object" && model.upgrade.retirement_at) {
+                  warnings.push(`${modelName} retires on ${model.upgrade.retirement_at}`);
+                }
+              }
+
+              for (const [role, config] of codexRoles) {
+                const model = catalogBySlug.get(config.model);
+                if (!model) continue;
+                const supported = Array.isArray(model.supported_reasoning_levels)
+                  ? model.supported_reasoning_levels.map((level) => level?.effort)
+                  : [];
+                if (!supported.includes(config.effort)) {
+                  warnings.push(`${role}: ${config.model} does not support effort ${config.effort}`);
+                }
+              }
+            } catch (error) {
+              warnings.push(`catalog unreadable: ${error.message}`);
+            }
           }
+
+          notes.push("catalog presence does not prove account access");
         }
-      } catch (error) {
-        // Any analysis failure after a successful parse is still "unreadable" — a warning, never
-        // an invalid status line (Codex review: models:[null] used to escape as raw stderr).
-        process.stdout.write(`warn|catalog unreadable: ${error.message}; ${roleDetails.join("; ")}`);
-        process.exit(0);
       }
 
-      const note = "catalog presence does not prove account access";
-      const detail = [...roleDetails, ...warnings, note].join("; ");
+      // ── Antigravity (agy) checks ──
+      if (agyRoles.length > 0) {
+        if (!agyInstalled) {
+          for (const [role] of agyRoles) {
+            warnings.push(`role ${role} uses agy but agy is not installed`);
+          }
+        } else {
+          let agyModelsList = null;
+          const agyCachePath = ".codex-paired/agy-models-cache.json";
+          if (fs.existsSync(agyCachePath)) {
+            try {
+              const cached = JSON.parse(fs.readFileSync(agyCachePath, "utf8"));
+              const fetchedAt = Date.parse(cached.cached_at);
+              if (Number.isFinite(fetchedAt) && Date.now() - fetchedAt < 3600000 && Array.isArray(cached.models)) {
+                agyModelsList = cached.models;
+              }
+            } catch {
+              // Ignore cache parse error
+            }
+          }
+          if (!agyModelsList) {
+            try {
+              const stdout = execFileSync("agy", ["models"], {
+                stdio: ["ignore", "pipe", "pipe"],
+                encoding: "utf8",
+                timeout: 15000,
+              });
+              const models = stdout
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .map((l) => l.split(/\s+/)[0])
+                .filter(Boolean);
+              agyModelsList = models;
+              try {
+                if (!fs.existsSync(".codex-paired")) fs.mkdirSync(".codex-paired", { recursive: true });
+                fs.writeFileSync(agyCachePath, JSON.stringify({ cached_at: new Date().toISOString(), models }), "utf8");
+              } catch {
+                // Ignore cache write error
+              }
+            } catch (err) {
+              warnings.push(`could not query agy models: ${err.message}`);
+            }
+          }
+
+          if (agyModelsList) {
+            const agyConfiguredModels = new Set(agyRoles.map(([, config]) => config.model));
+            for (const modelId of agyConfiguredModels) {
+              if (!agyModelsList.includes(modelId)) {
+                warnings.push(`${modelId} is missing from agy models`);
+              }
+            }
+          }
+        }
+      } else if (!agyInstalled) {
+        notes.push("agy not installed; Gemini roles unverified");
+      }
+
+      const detail = [...roleDetails, ...warnings, ...notes].filter(Boolean).join("; ");
       process.stdout.write(`${warnings.length ? "warn" : "pass"}|${detail}`);
-    ' "$MODELS_CATALOG" "$MODELS_JSON" 2>&1)
+    ' "$MODELS_CATALOG" "$MODELS_JSON" "$AGY_INSTALLED" 2>&1)
     IFS='|' read -r MODELS_STATUS MODELS_DETAIL <<< "$MODELS_CHECK"
     case "$MODELS_STATUS" in
       pass|warn|fail) ;;
