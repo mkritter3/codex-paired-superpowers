@@ -26,6 +26,7 @@ make_fake_codex() {
   cat > "$root/bin/codex" <<'EOF'
 #!/usr/bin/env bash
 if [ -n "${FAKE_ARGS_FILE:-}" ]; then printf '%s\n' "$@" > "$FAKE_ARGS_FILE"; fi
+if [ -n "${FAKE_CWD_FILE:-}" ]; then printf '%s\n' "$PWD" > "$FAKE_CWD_FILE"; fi
 if [ -n "${FAKE_WAIT_FILE:-}" ]; then
   cp "$FAKE_STATUS_FILE" "$FAKE_SEEN_STATUS"
   while [ ! -e "$FAKE_WAIT_FILE" ]; do sleep 0.05; done
@@ -37,6 +38,26 @@ fi
 exit "${FAKE_EXIT_CODE:-0}"
 EOF
   chmod +x "$root/bin/codex"
+}
+
+make_fake_agy() {
+  local root="$1"
+  mkdir -p "$root/bin"
+  cat > "$root/bin/agy" <<'EOF'
+#!/usr/bin/env bash
+if [ -n "${FAKE_ARGS_FILE:-}" ]; then printf '%s\n' "$@" > "$FAKE_ARGS_FILE"; fi
+if [ -n "${FAKE_CWD_FILE:-}" ]; then printf '%s\n' "$PWD" > "$FAKE_CWD_FILE"; fi
+if [ -n "${FAKE_WAIT_FILE:-}" ]; then
+  cp "$FAKE_STATUS_FILE" "$FAKE_SEEN_STATUS"
+  while [ ! -e "$FAKE_WAIT_FILE" ]; do sleep 0.05; done
+fi
+if [ -n "${FAKE_BREAK_STATUS_DIR:-}" ]; then
+  rm -rf "$FAKE_BREAK_STATUS_DIR"
+  : > "$FAKE_BREAK_STATUS_DIR"
+fi
+exit "${FAKE_EXIT_CODE:-0}"
+EOF
+  chmod +x "$root/bin/agy"
 }
 
 echo "[1] model role inserts frozen flags and writes terminal snapshot"
@@ -198,6 +219,169 @@ RC=$?
 if [ "$RC" -eq 74 ] && [ -e "$ARGS" ] && grep -q 'child exit code: 7' "$ERR"; then
   pass "terminal publication failure returns 74 and reports child exit"
 else fail "terminal publication failure was hidden (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[16] agy model role inserts frozen flags and writes terminal snapshot"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  agy -p "prompt" --sandbox --output-format json
+RC=$?
+EXPECTED=$(printf '%s\n' --model gemini-3.8-flash-high -p prompt --sandbox --output-format json)
+if [ "$RC" -eq 0 ] && [ "$(cat "$ARGS")" = "$EXPECTED" ] && \
+   assert_fields "$STATUS" state exited exit_code 0 model_role implement model gemini-3.8-flash-high effort high cli agy; then
+  pass "agy model-role flags and terminal snapshot"
+else fail "agy model-role success case failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[17] --cwd changes directory and writes cwd to status file"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"; CWD_FILE="$TMP/cwd"
+TARGET_CWD="$TMP/subworktree"
+mkdir -p "$TARGET_CWD"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" FAKE_CWD_FILE="$CWD_FILE" \
+  "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" --cwd "$TARGET_CWD" -- \
+  agy -p "prompt" --sandbox --output-format json
+RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$CWD_FILE" ] && [ "$(cat "$CWD_FILE")" = "$TARGET_CWD" ] && \
+   assert_fields "$STATUS" state exited exit_code 0 cwd "$TARGET_CWD" cli agy; then
+  pass "--cwd changes directory and records in status"
+else fail "--cwd handling failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[18] --cwd with relative status file path preserves status location"
+TMP=$(mktmp); make_fake_agy "$TMP"; CWD_FILE="$TMP/cwd"
+TARGET_CWD="$TMP/subworktree"
+mkdir -p "$TARGET_CWD"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+(
+  cd "$TMP"
+  PATH="$TMP/bin:$PATH" FAKE_CWD_FILE="$CWD_FILE" \
+    "$WRAPPER" "rel-status.json" --model-role implement --repo-root "$TMP" --cwd "$TARGET_CWD" -- \
+    agy -p "prompt" --sandbox --output-format json
+)
+RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$TMP/rel-status.json" ] && [ ! -f "$TARGET_CWD/rel-status.json" ] && \
+   assert_fields "$TMP/rel-status.json" state exited exit_code 0 cwd "$TARGET_CWD" cli agy; then
+  pass "--cwd with relative status file writes to caller directory"
+else fail "--cwd with relative status file failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[19] full path to agy matches command token"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  "$TMP/bin/agy" -p "prompt" --sandbox --output-format json
+RC=$?
+EXPECTED=$(printf '%s\n' --model gemini-3.8-flash-high -p prompt --sandbox --output-format json)
+if [ "$RC" -eq 0 ] && [ "$(cat "$ARGS")" = "$EXPECTED" ]; then
+  pass "full path to agy matches command"
+else fail "full path to agy failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[20] env prefix skips to agy command token"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  env FOO=1 agy -p "prompt" --sandbox --output-format json
+RC=$?
+EXPECTED=$(printf '%s\n' --model gemini-3.8-flash-high -p prompt --sandbox --output-format json)
+if [ "$RC" -eq 0 ] && [ "$(cat "$ARGS")" = "$EXPECTED" ]; then
+  pass "env prefix skips to agy command"
+else fail "env prefix to agy failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[21] codex exec under agy role is rejected with mismatch detail"
+TMP=$(mktmp); make_fake_codex "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"; ERR="$TMP/stderr"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  codex exec p >/dev/null 2>"$ERR"
+RC=$?
+if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && \
+   assert_fields "$STATUS" state exited exit_code 78 error model-role-conflicting-args cli agy && \
+   grep -q "config says agy, command runs codex" "$ERR"; then
+  pass "mismatch between agy config and codex command rejected with detail"
+else fail "mismatch rejection failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[22] agy under codex role is rejected with mismatch detail"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"; ERR="$TMP/stderr"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- \
+  agy -p prompt >/dev/null 2>"$ERR"
+RC=$?
+if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && \
+   assert_fields "$STATUS" state exited exit_code 78 error model-role-conflicting-args cli codex && \
+   grep -q "config says codex, command runs agy" "$ERR"; then
+  pass "mismatch between codex config and agy command rejected with detail"
+else fail "reverse mismatch rejection failed (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[23] agy conflicting model and effort flags are rejected"
+for conflict in model_space model_eq effort_space effort_eq; do
+  TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+  mkdir -p "$TMP/.codex-paired"
+  cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+  case "$conflict" in
+    model_space) EXTRA=(--model gemini-1.5-pro) ;;
+    model_eq) EXTRA=(--model=gemini-1.5-pro) ;;
+    effort_space) EXTRA=(--effort low) ;;
+    effort_eq) EXTRA=(--effort=low) ;;
+  esac
+  PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+    agy "${EXTRA[@]}" -p prompt >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && assert_fields "$STATUS" exit_code 78 error model-role-conflicting-args; then
+    pass "agy $conflict conflict rejected"
+  else fail "agy $conflict conflict was not rejected (rc=$RC)"; fi
+  rm -rf "$TMP"
+done
+
+echo "[24] prompt text containing --model inside -p value is NOT a conflict"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  agy -p "Implement --model handling in agy and --effort too" --sandbox --output-format json >/dev/null 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && [ -e "$ARGS" ] && grep -q -- "--model" "$ARGS"; then
+  pass "prompt text containing --model inside -p value is not a conflict"
+else fail "prompt text inside -p value was misread as a conflict (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[25] agy conflict scan stops at option terminator --"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"
+cat > "$TMP/.codex-paired/project.json" <<'EOF'
+{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}
+EOF
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  agy -p prompt --sandbox -- --model --effort >/dev/null 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && [ -e "$ARGS" ] && grep -qx -- '--' "$ARGS"; then
+  pass "agy conflict scan stops at --"
+else fail "agy conflict scan did not stop at -- (rc=$RC)"; fi
 rm -rf "$TMP"
 
 echo
