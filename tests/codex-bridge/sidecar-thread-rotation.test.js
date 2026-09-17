@@ -28,6 +28,7 @@ import {
   recoverStaleThread,
   composeRecoveryPrompt,
   composeSeedPrompt,
+  isStaleAgyResponse,
 } from '../../lib/codex-bridge/thread-recovery.js';
 
 function makeSpec(specBody = '# spec') {
@@ -323,5 +324,173 @@ test('recoverStaleThread resolves legacy thread config from environment and reco
   assert.equal(call.model, 'gpt-5.6-terra');
   assert.deepEqual(call.config, { model_reasoning_effort: 'high' });
   assert.equal(loadSidecar(spec).thread_config['execution-reviewer'].model, 'gpt-5.6-terra');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── v0.17.0 agy recovery ──
+
+test('isStaleAgyResponse: detects missing conversation errors in agy response', () => {
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'ERROR', stderr: 'Conversation 123 not found' },
+    }),
+    true,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'FAILED' },
+      stderr: 'conversation does not exist',
+    }),
+    true,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'UNKNOWN' },
+      warnings: ['stderr:unknown conversation conv-xyz'],
+    }),
+    true,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'ERROR', error: 'conversation id unknown' },
+    }),
+    true,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      status: 'FAILED',
+      stderr: 'conversation not found',
+    }),
+    true,
+  );
+});
+
+test('isStaleAgyResponse: returns false for SUCCESS, non-conversation errors, or non-objects', () => {
+  assert.equal(isStaleAgyResponse(null), false);
+  assert.equal(isStaleAgyResponse(undefined), false);
+  assert.equal(isStaleAgyResponse({}), false);
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'SUCCESS', stderr: 'conversation not found' },
+    }),
+    false,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'ERROR', stderr: 'rate limit exceeded' },
+    }),
+    false,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'ERROR', stderr: 'file not found' },
+    }),
+    false,
+  );
+  assert.equal(
+    isStaleAgyResponse({
+      adapterMeta: { status: 'ERROR', stderr: 'conversation is currently active' },
+    }),
+    false,
+  );
+});
+
+test('recoverStaleThread with agy thread calls openFn once with recorded model and rotates carrying cli: "agy"', async () => {
+  const { dir, spec } = makeSpec(`# spec\n${GOALS_BLOCK}`);
+  await setCodexThreadId(spec, {
+    role: 'execution-reviewer',
+    newThreadId: 'agy-old-id',
+    reason: 'execution-thread',
+    threadConfig: {
+      role: 'review',
+      cli: 'agy',
+      model: 'gemini-3.8-flash-high',
+      effort: 'high',
+    },
+  });
+
+  let openFnCalls = 0;
+  let capturedArgs = null;
+  const deps = {
+    openFn: async (args) => {
+      openFnCalls++;
+      capturedArgs = args;
+      return {
+        threadId: 'fresh-agy-tid',
+        content: '...recovered agy review...',
+      };
+    },
+  };
+
+  const staleResponse = {
+    adapterMeta: {
+      status: 'ERROR',
+      stderr: 'Conversation agy-old-id not found',
+    },
+  };
+
+  const result = await recoverStaleThread(
+    spec,
+    {
+      staleResponse,
+      role: 'execution-reviewer',
+      pendingPrompt: 'Pending agy review prompt',
+      phase: 'review-slice:slice-4',
+      round: 1,
+      repoRoot: dir,
+    },
+    deps,
+  );
+
+  assert.equal(openFnCalls, 1);
+  assert.equal(capturedArgs.model, 'gemini-3.8-flash-high');
+  assert.match(capturedArgs.prompt, /<<<GOALS>>>/);
+  assert.match(capturedArgs.prompt, /Pending agy review prompt/);
+  assert.equal(result.recovered, true);
+  assert.equal(result.newThreadId, 'fresh-agy-tid');
+  assert.equal(result.content, '...recovered agy review...');
+
+  const sc = loadSidecar(spec);
+  assert.equal(sc.role_sessions['execution-reviewer'], 'fresh-agy-tid');
+  assert.equal(sc.thread_config['execution-reviewer'].cli, 'agy');
+  assert.equal(sc.thread_config['execution-reviewer'].model, 'gemini-3.8-flash-high');
+  assert.equal(sc.thread_config['execution-reviewer'].effort, 'high');
+  const lastRot = sc.thread_rotations[sc.thread_rotations.length - 1];
+  assert.equal(lastRot.reason, 'session-not-found');
+  assert.equal(lastRot.new_thread_id, 'fresh-agy-tid');
+  assert.equal(lastRot.old_thread_id, 'agy-old-id');
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('recoverStaleThread: sidecar without cli still uses codexFn', async () => {
+  const { dir, spec } = makeSpec();
+  const legacy = loadSidecar(spec);
+  delete legacy.thread_config;
+  writeFileSync(`${spec}.codex.json`, JSON.stringify(legacy));
+
+  let codexCalls = 0;
+  let callArgs = null;
+  const deps = {
+    codexFn: async (args) => {
+      codexCalls++;
+      callArgs = args;
+      return { threadId: 'fresh-codex-id', content: 'codex recovered' };
+    },
+  };
+
+  const stale = { isError: true, content: 'Session not found for thread_id: old-tid' };
+  const result = await recoverStaleThread(
+    spec,
+    { staleResponse: stale, pendingPrompt: 'hello', repoRoot: dir },
+    deps,
+  );
+
+  assert.equal(codexCalls, 1);
+  assert.equal(result.recovered, true);
+  assert.equal(result.newThreadId, 'fresh-codex-id');
+  const sc = loadSidecar(spec);
+  assert.equal(sc.thread_config['paired-reviewer'].cli, 'codex');
+
   rmSync(dir, { recursive: true, force: true });
 });
