@@ -4,10 +4,10 @@
     "contract": "docs/codex-implementer-contract.md",
     "tools": ["Bash"],
     "domains": {
-      "ui": "forbidden",
-      "ai-harness": "forbidden",
+      "ui": "preferred",
+      "ai-harness": "preferred",
       "backend": "preferred",
-      "general": "allowed"
+      "general": "preferred"
     }
   },
   "sonnet": {
@@ -15,10 +15,10 @@
     "agent": "slice-implementer-sonnet",
     "tools": ["Read", "Edit", "Write", "Bash"],
     "domains": {
-      "ui": "preferred",
-      "ai-harness": "preferred",
+      "ui": "allowed",
+      "ai-harness": "allowed",
       "backend": "allowed",
-      "general": "preferred"
+      "general": "allowed"
     }
   },
   "experts": {

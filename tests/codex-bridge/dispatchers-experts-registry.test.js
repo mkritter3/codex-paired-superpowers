@@ -48,32 +48,32 @@ test('top-level keys include experts (alongside codex and sonnet)', () => {
   assert.ok(!Array.isArray(reg.experts), 'experts is an object map, not an array');
 });
 
-test('existing codex entry is unchanged (no regression)', () => {
+test('codex is preferred for every implementation domain', () => {
   const reg = loadRegistry();
   assert.deepEqual(reg.codex, {
     transport: 'codex-background-bash',
     contract: 'docs/codex-implementer-contract.md',
     tools: ['Bash'],
     domains: {
-      ui: 'forbidden',
-      'ai-harness': 'forbidden',
+      ui: 'preferred',
+      'ai-harness': 'preferred',
       backend: 'preferred',
-      general: 'allowed',
+      general: 'preferred',
     },
   });
 });
 
-test('existing sonnet entry is unchanged (no regression)', () => {
+test('sonnet is allowed as the fallback for every implementation domain', () => {
   const reg = loadRegistry();
   assert.deepEqual(reg.sonnet, {
     transport: 'claude-subagent',
     agent: 'slice-implementer-sonnet',
     tools: ['Read', 'Edit', 'Write', 'Bash'],
     domains: {
-      ui: 'preferred',
-      'ai-harness': 'preferred',
+      ui: 'allowed',
+      'ai-harness': 'allowed',
       backend: 'allowed',
-      general: 'preferred',
+      general: 'allowed',
     },
   });
 });

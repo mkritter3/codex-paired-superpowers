@@ -40,8 +40,8 @@
     "permissions": "read-only"
   },
   "implementer": {
-    "preference": ["claude", "codex"],
-    "rationale": "Code writing; claude default fits Claude Code session",
+    "preference": ["codex", "claude"],
+    "rationale": "Codex writes the code by default (v0.16.0); the Claude subagent is the last-resort fallback",
     "permissions": "write-allowed"
   }
 }

@@ -3,9 +3,8 @@
 #
 # Proves that lib/codex-bridge/dispatchers.js + agents/dispatchers.json
 # enforce the user-stated policy:
-#   - UI / UX work → Claude (Codex forbidden)
-#   - AI harness work → Claude (Codex forbidden)
-#   - Backend / general → Codex acceptable
+#   - Codex is preferred in every domain
+#   - Sonnet is allowed in every domain as the fallback
 #
 # This smoke runs against the actual production registry. It is the
 # orthogonal acceptance check to the unit tests in
@@ -43,20 +42,20 @@ echo "Production domain policy smoke (agents/dispatchers.json)"
 echo
 
 echo "== UI domain enforcement =="
-run_check "codex on ui is forbidden"          "codex"  "ui"          "forbidden"
-run_check "sonnet on ui is preferred"          "sonnet" "ui"          "preferred"
+run_check "codex on ui is preferred"           "codex"  "ui"          "preferred"
+run_check "sonnet on ui is allowed"             "sonnet" "ui"          "allowed"
 
 echo "== AI-harness domain enforcement =="
-run_check "codex on ai-harness is forbidden"   "codex"  "ai-harness"  "forbidden"
-run_check "sonnet on ai-harness is preferred"  "sonnet" "ai-harness"  "preferred"
+run_check "codex on ai-harness is preferred"   "codex"  "ai-harness"  "preferred"
+run_check "sonnet on ai-harness is allowed"     "sonnet" "ai-harness"  "allowed"
 
 echo "== Backend domain enforcement =="
 run_check "codex on backend is preferred"      "codex"  "backend"     "preferred"
 run_check "sonnet on backend is allowed"       "sonnet" "backend"     "allowed"
 
 echo "== General domain enforcement =="
-run_check "codex on general is allowed"        "codex"  "general"     "allowed"
-run_check "sonnet on general is preferred"     "sonnet" "general"     "preferred"
+run_check "codex on general is preferred"      "codex"  "general"     "preferred"
+run_check "sonnet on general is allowed"        "sonnet" "general"     "allowed"
 
 echo "== Error paths =="
 run_check "unknown implementer throws"         "opus"   "backend"     "THROWS:implementer-directive-malformed"

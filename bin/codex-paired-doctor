@@ -151,7 +151,138 @@ else
   record pass "project-state-dir" "no .codex-paired/ in cwd (informational; created lazily by autopilot)" ""
 fi
 
-# ── Output ────────────────────────────────────────────────────────────────
+# ── Check 9: configured model roles against the local Codex catalog ────────
+# Spec §8: configuration errors are fatal because every role-aware skill would stop.
+# Catalog problems are warnings only: a cache is advisory and never proves account access.
+MODELS_JSON=""
+if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js" ]; then
+  if MODELS_JSON=$(node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" model-roles 2>&1); then
+    CODEX_MODELS_HOME="${CODEX_HOME:-$HOME/.codex}"
+    MODELS_CATALOG="$CODEX_MODELS_HOME/models_cache.json"
+    MODELS_CHECK=$(node -e '
+      const fs = require("node:fs");
+
+      const catalogPath = process.argv[1];
+      const resolved = JSON.parse(process.argv[2]);
+      const roleEntries = Object.entries(resolved.roles);
+      const roleDetails = roleEntries.map(([role, config]) => {
+        const source = resolved.sources[role];
+        const sourceLabel = source.model === source.effort
+          ? source.model
+          : `${source.model}/${source.effort}`;
+        return `${role}: ${config.model} ${config.effort} (${sourceLabel})`;
+      });
+
+      if (!fs.existsSync(catalogPath)) {
+        process.stdout.write(`pass|catalog not cached; model checks skipped; ${roleDetails.join("; ")}`);
+        process.exit(0);
+      }
+
+      let catalog;
+      try {
+        catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+        if (!Array.isArray(catalog.models)) throw new Error("models[] is missing");
+      } catch (error) {
+        process.stdout.write(`warn|catalog unreadable: ${error.message}; ${roleDetails.join("; ")}`);
+        process.exit(0);
+      }
+
+      const warnings = [];
+      const fetchedAt = Date.parse(catalog.fetched_at);
+      if (Number.isFinite(fetchedAt)) {
+        const ageDays = Math.max(0, Math.floor((Date.now() - fetchedAt) / 86400000));
+        if (ageDays > 7) warnings.push(`catalog is ${ageDays} days old`);
+      }
+
+      const catalogBySlug = new Map(catalog.models.map((model) => [model.slug, model]));
+      const configuredModels = new Set(roleEntries.map(([, config]) => config.model));
+      for (const modelName of configuredModels) {
+        const model = catalogBySlug.get(modelName);
+        if (!model) {
+          warnings.push(`${modelName} is missing from the catalog`);
+          continue;
+        }
+        if (model.upgrade?.retirement_at) {
+          warnings.push(`${modelName} retires on ${model.upgrade.retirement_at}`);
+        }
+      }
+
+      for (const [role, config] of roleEntries) {
+        const model = catalogBySlug.get(config.model);
+        if (!model) continue;
+        const supported = Array.isArray(model.supported_reasoning_levels)
+          ? model.supported_reasoning_levels.map((level) => level?.effort)
+          : [];
+        if (!supported.includes(config.effort)) {
+          warnings.push(`${role}: ${config.model} does not support effort ${config.effort}`);
+        }
+      }
+
+      const note = "catalog presence does not prove account access";
+      const detail = [...roleDetails, ...warnings, note].join("; ");
+      process.stdout.write(`${warnings.length ? "warn" : "pass"}|${detail}`);
+    ' "$MODELS_CATALOG" "$MODELS_JSON" 2>&1)
+    IFS='|' read -r MODELS_STATUS MODELS_DETAIL <<< "$MODELS_CHECK"
+    record "$MODELS_STATUS" "models" "$MODELS_DETAIL" ""
+  else
+    MODELS_ERROR=$(printf '%s' "$MODELS_JSON" | tr '\n' ' ')
+    record fail "models" "model role resolution failed: $MODELS_ERROR" \
+      "Fix .codex-paired/project.json models or CODEX_PAIRED_MODEL*/CODEX_PAIRED_REASONING* overrides"
+    MODELS_JSON=""
+  fi
+else
+  record fail "models" "model role resolution unavailable because node or the bridge CLI is missing" \
+    "Resolve the node or bridge-cli FAIL above"
+fi
+
+# ── Check 10: Codex CLI version and MCP server transport ───────────────
+# Spec §8: these compatibility probes are warn-only.
+if command -v codex >/dev/null 2>&1; then
+  CODEX_VERSION_OUTPUT=$(codex --version 2>&1 | head -1)
+  if codex mcp-server --help >/dev/null 2>&1; then
+    MCP_SERVER_AVAILABLE=1
+  else
+    MCP_SERVER_AVAILABLE=0
+  fi
+
+  if [ -n "$MODELS_JSON" ]; then
+    TRANSPORT_CHECK=$(node --input-type=module -e '
+      import { pathToFileURL } from "node:url";
+      const { compareVersions } = await import(pathToFileURL(process.argv[1]).href);
+      const installedOutput = process.argv[2];
+      const validated = JSON.parse(process.argv[3]).validated_cli_version;
+      const mcpAvailable = process.argv[4] === "1";
+      const installed = installedOutput.match(/\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?/)?.[0];
+      const warnings = [];
+      if (!installed) {
+        warnings.push(`could not parse Codex version from ${JSON.stringify(installedOutput)}`);
+      } else if (compareVersions(installed, validated) < 0) {
+        warnings.push(`Codex ${installed} is older than the version v0.16.0 was validated against (${validated})`);
+      }
+      if (!mcpAvailable) {
+        warnings.push("this Codex build does not offer the MCP server transport the plugin uses; pin an older Codex or wait for a plugin release that moves transports");
+      }
+      const confirmations = [];
+      if (installed && compareVersions(installed, validated) >= 0) {
+        confirmations.push(`Codex ${installed} is at or above validated ${validated}`);
+      }
+      if (mcpAvailable) confirmations.push("MCP server transport available");
+      process.stdout.write(`${warnings.length ? "warn" : "pass"}|${[...warnings, ...confirmations].join("; ")}`);
+    ' "$PLUGIN_ROOT/lib/codex-bridge/models.js" "$CODEX_VERSION_OUTPUT" "$MODELS_JSON" "$MCP_SERVER_AVAILABLE" 2>&1)
+    IFS='|' read -r TRANSPORT_STATUS TRANSPORT_DETAIL <<< "$TRANSPORT_CHECK"
+    record "$TRANSPORT_STATUS" "codex-transport" "$TRANSPORT_DETAIL" ""
+  else
+    TRANSPORT_DETAIL="validated CLI version unavailable because model-role resolution failed"
+    if [ "$MCP_SERVER_AVAILABLE" -eq 0 ]; then
+      TRANSPORT_DETAIL="$TRANSPORT_DETAIL; this Codex build does not offer the MCP server transport the plugin uses"
+    fi
+    record warn "codex-transport" "$TRANSPORT_DETAIL" ""
+  fi
+else
+  record warn "codex-transport" "codex not on PATH; transport compatibility checks skipped" ""
+fi
+
+# ── Output ───────────────────────────────────────────────────────────────
 if [ "$WANT_JSON" -eq 1 ]; then
   # Run availability report in JSON mode and embed the result. Round-1
   # fix: previously --json --force ran the standard checks but dropped

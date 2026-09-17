@@ -1,9 +1,7 @@
-// v0.13.0 Slice 1 — manifest pin for the Codex MCP server (Goal 2 + Goal 1 sandbox).
+// v0.16.0 Slice 5 — manifest pin for the Codex MCP server (spec §3).
 //
-// The audit (spec §4) proved that server-level `-c model="gpt-5.5"` only applies when the caller
-// omits a per-call model; pinning here is half of Goal 2 (the other half is stripping per-call model
-// from skills). `danger-full-access` + `approval_policy=never` are the Goal 1 sandbox escalation so
-// Codex reviews can run real verification (out-of-workspace caches, ports) without approval prompts.
+// The server-level pin is a safety default for callers that omit per-call role configuration.
+// `danger-full-access` + `approval_policy=never` retain the existing review sandbox policy.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,8 +16,16 @@ const manifest = JSON.parse(
 const args = manifest.mcpServers.codex.args;
 const joined = args.join(' ');
 
-test('codex MCP args pin model to gpt-5.5', () => {
-  assert.match(joined, /model="gpt-5\.5"/);
+test('codex MCP args pin the planning model to gpt-6-astra', () => {
+  assert.match(joined, /model="gpt-6-astra"/);
+});
+
+test('codex MCP args pin planning reasoning effort to xhigh', () => {
+  assert.match(joined, /model_reasoning_effort="xhigh"/);
+});
+
+test('codex MCP args contain no retired gpt-5.5 pin', () => {
+  assert.doesNotMatch(joined, /gpt-5\.5/);
 });
 
 test('codex MCP args set danger-full-access sandbox', () => {

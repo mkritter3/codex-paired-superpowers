@@ -1,4 +1,4 @@
-// v0.13.0 Slice 5 — installed-smoke for real Codex MCP reliability behavior.
+// v0.16.0 Slice 5 — installed-smoke for real Codex MCP reliability behavior.
 //
 // TIER 4 — only runs when CPS_INSTALLED_SMOKE=1 AND `codex` is on PATH AND Codex is authenticated.
 // Excluded from `npm test` (see scripts/collect-test-files.mjs). Run with:
@@ -8,7 +8,7 @@
 // IMPORTANT: these tests drive a real `codex mcp-server` over MCP stdio (newline-delimited
 // JSON-RPC) and require live Codex auth. They cannot run in CI. They assert the three v0.13.0
 // reliability guarantees against the REAL server launched with the manifest's pinned args:
-//   1. Omitted per-call model → session starts on gpt-5.5 (Goal 2 pin).
+//   1. An omitted per-call model uses the manifest pin, while a review-role call overrides it.
 //   2. The review sandbox can write outside the workspace (under ~/.codex/tmp) with no approval
 //      prompt, and can run a project command with no approval prompt (Goal 1 full-access).
 //   3. A thread id from a restarted server yields "Session not found for thread_id" (Goal 3 premise
@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { mcpCallConfig, resolveModelRoles } from '../../lib/codex-bridge/models.js';
 
 const SMOKE_ENABLED = process.env.CPS_INSTALLED_SMOKE === '1';
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -35,6 +36,13 @@ const READY = SMOKE_ENABLED && codexPresent();
 function manifestCodexArgs() {
   const m = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   return m.mcpServers.codex.args;
+}
+
+function manifestPinnedModel() {
+  const modelArg = manifestCodexArgs().find((arg) => /^model="[^"]+"$/.test(arg));
+  const match = /^model="([^"]+)"$/.exec(modelArg ?? '');
+  assert.ok(match, 'manifest must include a quoted model pin');
+  return match[1];
 }
 
 // ── Minimal MCP stdio client (newline-delimited JSON-RPC) ──────────────────
@@ -130,19 +138,41 @@ test('codex-mcp-reliability: skips unless CPS_INSTALLED_SMOKE=1 and codex on PAT
   () => { assert.ok(READY); },
 );
 
-test('Goal 2: omitted per-call model → session_configured.model is gpt-5.5',
+test('server pin applies when per-call model omitted',
   { timeout: 90_000, skip: READY ? false : 'live MCP smoke disabled' },
   async () => {
     const client = new McpStdioClient(manifestCodexArgs());
     try {
       await client.initialize();
-      // Call the `codex` tool with NO per-call model — the server pin (-c model="gpt-5.5") must apply.
+      // Call the `codex` tool with no per-call model; the manifest server pin must apply.
       await client.request('tools/call', {
         name: 'codex',
         arguments: { prompt: 'Reply with the single word: ok.' },
       }, 80_000);
-      assert.equal(client.sessionModel(), 'gpt-5.5',
-        `expected pinned gpt-5.5 when per-call model omitted; got ${client.sessionModel()}`);
+      const expectedModel = manifestPinnedModel();
+      assert.equal(client.sessionModel(), expectedModel,
+        `expected manifest pin ${expectedModel} when per-call model omitted; got ${client.sessionModel()}`);
+    } finally { client.close(); }
+  },
+);
+
+test('review role per-call model overrides the server pin',
+  { timeout: 90_000, skip: READY ? false : 'live MCP smoke disabled' },
+  async () => {
+    const client = new McpStdioClient(manifestCodexArgs());
+    const roles = resolveModelRoles({ repoRoot: PLUGIN_ROOT }).roles;
+    const reviewConfig = mcpCallConfig('review', roles);
+    try {
+      await client.initialize();
+      await client.request('tools/call', {
+        name: 'codex',
+        arguments: {
+          prompt: 'Reply with the single word: ok.',
+          ...reviewConfig,
+        },
+      }, 80_000);
+      assert.equal(client.sessionModel(), reviewConfig.model,
+        `expected review role model ${reviewConfig.model}; got ${client.sessionModel()}`);
     } finally { client.close(); }
   },
 );
