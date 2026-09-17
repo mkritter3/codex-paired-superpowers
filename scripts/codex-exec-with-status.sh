@@ -1,101 +1,167 @@
 #!/usr/bin/env bash
-# v0.7.2 — codex exec wrapper with durable status file.
-#
-# Wraps a `codex exec` invocation. Captures the exit code, completion
-# timestamp, and signal (if killed) in a JSON status file. The status file
-# survives the orchestrator's session, providing durable evidence of dispatch
-# outcome for crash recovery.
+# Codex exec wrapper with durable, atomic launch and completion evidence.
 #
 # Usage:
-#   scripts/codex-exec-with-status.sh <status-file-path> -- <codex-cmd> [args...]
+#   scripts/codex-exec-with-status.sh <status-file> \
+#     --model-role implement [--repo-root <repo>] -- codex exec [args...]
 #
 # Example:
-#   scripts/codex-exec-with-status.sh /tmp/cps/slice-3.status.json -- \
-#     codex exec --skip-git-repo-check -s workspace-write -C /repo/.git-worktrees/slice-3 \
-#     -m gpt-5.5 -c model_reasoning_effort=high "<prompt>" </dev/null
-#
-# Status file shape:
-#   { "exit_code": 0, "started_at": "2026-05-09T...", "completed_at": "2026-05-09T...", "signal": null }
-#   or on signal:
-#   { "exit_code": 143, "started_at": "...", "completed_at": "...", "signal": "SIGTERM" }
-#
-# Exit codes:
-#   - The wrapper exits with the same exit code as the wrapped codex command.
-#   - If signal-killed: exit 128 + signal-number per POSIX convention.
-#
-# Crash safety:
-#   - Status file is written atomically via temp + mv to prevent partial reads
-#     from interleaving with orchestrator polls.
-#   - On wrapper-self-kill (SIGTERM, SIGINT), trap captures the signal and
-#     writes a status before propagating the exit.
+#   scripts/codex-exec-with-status.sh /tmp/cps/slice-3.status.json \
+#     --model-role implement -- \
+#     codex exec --skip-git-repo-check -s workspace-write -C /repo/.git-worktrees/slice-3 "<prompt>" </dev/null
 
 set -uo pipefail
 
-if [ "$#" -lt 3 ] || [ "$2" != "--" ]; then
-  echo "usage: $(basename "$0") <status-file-path> -- <codex-cmd> [args...]" >&2
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  echo "usage: $(basename "$0") <status-file-path> [--model-role <role>] [--repo-root <dir>] -- <codex-cmd> [args...]" >&2
+}
+
+if [ "$#" -lt 2 ]; then
+  usage
   exit 64
 fi
 
 STATUS_FILE="$1"
-shift 2  # drop status file + the "--" separator
+shift
+MODEL_ROLE=""
+MODEL=""
+EFFORT=""
+REPO_ROOT=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model-role)
+      if [ "$#" -lt 2 ]; then usage; exit 64; fi
+      MODEL_ROLE="$2"
+      shift 2
+      ;;
+    --repo-root)
+      if [ "$#" -lt 2 ]; then usage; exit 64; fi
+      REPO_ROOT="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      usage
+      exit 64
+      ;;
+  esac
+done
+
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 64
+fi
 
 STATUS_DIR=$(dirname "$STATUS_FILE")
 mkdir -p "$STATUS_DIR"
 
 iso_now() {
-  # POSIX-portable ISO 8601 with milliseconds. macOS date doesn't support %N,
-  # so we approximate with %S then append .000Z. Resolution is seconds; that's
-  # sufficient for orchestration timestamps (slice runs are O(seconds-minutes)).
   date -u +"%Y-%m-%dT%H:%M:%S.000Z"
 }
 
+STARTED_AT=$(iso_now)
+
 write_status() {
-  local exit_code="$1"
-  local signal="${2:-null}"
-  local completed_at
-  completed_at=$(iso_now)
-  # Atomic write: temp + mv. If the orchestrator polls mid-write, it sees
-  # either the old contents (none) or the new contents — never a partial JSON.
+  local state="$1"
+  local exit_code="$2"
+  local signal="${3:-}"
+  local completed_at="${4:-}"
+  local error="${5:-}"
   local tmp="$STATUS_FILE.tmp.$$"
-  if [ "$signal" = "null" ]; then
-    cat > "$tmp" <<EOF
-{
-  "exit_code": $exit_code,
-  "started_at": "$STARTED_AT",
-  "completed_at": "$completed_at",
-  "signal": null
-}
-EOF
-  else
-    cat > "$tmp" <<EOF
-{
-  "exit_code": $exit_code,
-  "started_at": "$STARTED_AT",
-  "completed_at": "$completed_at",
-  "signal": "$signal"
-}
-EOF
-  fi
+
+  node -e '
+    const fs = require("node:fs");
+    const [path, state, exitCode, signal, startedAt, completedAt, role, model, effort, error] = process.argv.slice(1);
+    const status = {
+      state,
+      exit_code: exitCode === "null" ? null : Number(exitCode),
+      signal: signal === "" ? null : signal,
+      started_at: startedAt,
+      completed_at: completedAt === "" ? null : completedAt,
+    };
+    if (role !== "") status.model_role = role;
+    if (model !== "") status.model = model;
+    if (effort !== "") status.effort = effort;
+    if (error !== "") status.error = error;
+    fs.writeFileSync(path, JSON.stringify(status, null, 2) + "\n");
+  ' "$tmp" "$state" "$exit_code" "$signal" "$STARTED_AT" "$completed_at" "$MODEL_ROLE" "$MODEL" "$EFFORT" "$error"
   mv "$tmp" "$STATUS_FILE"
 }
 
-# Trap interrupts so we record cause-of-death durably before the wrapper exits.
+config_error() {
+  local error="$1"
+  local detail="$2"
+  echo "$detail" >&2
+  write_status "exited" "78" "" "$(iso_now)" "$error"
+  exit 78
+}
+
+if [ -n "$MODEL_ROLE" ]; then
+  ROLE_ARGS=(model-role --role "$MODEL_ROLE" --format json)
+  if [ -n "$REPO_ROOT" ]; then
+    ROLE_ARGS+=(--repoRoot "$REPO_ROOT")
+  fi
+  if ! ROLE_JSON=$(node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" "${ROLE_ARGS[@]}"); then
+    config_error "model-role-resolution-failed" "model role resolution failed; fix .codex-paired/project.json models or CODEX_PAIRED_* and retry"
+  fi
+  if ! SNAPSHOT=$(node -e '
+    const value = JSON.parse(process.argv[1]);
+    process.stdout.write(value.model + "\t" + value.effort);
+  ' "$ROLE_JSON"); then
+    config_error "model-role-resolution-failed" "model role resolution returned malformed JSON"
+  fi
+  IFS=$'\t' read -r MODEL EFFORT <<< "$SNAPSHOT"
+
+  for arg in "$@"; do
+    case "$arg" in
+      -m|--model|--model=*|*model_reasoning_effort=*)
+        config_error "model-role-conflicting-args" "wrapped codex exec already supplies model flags; remove -m, --model, and model_reasoning_effort overrides"
+        ;;
+    esac
+  done
+
+  CMD=("$@")
+  EXEC_INDEX=-1
+  for i in "${!CMD[@]}"; do
+    if [ "${CMD[$i]}" = "exec" ]; then
+      EXEC_INDEX=$i
+      break
+    fi
+  done
+  if [ "$EXEC_INDEX" -lt 0 ]; then
+    config_error "model-role-conflicting-args" "wrapped command is not codex exec"
+  fi
+  CMD=(
+    "${CMD[@]:0:$((EXEC_INDEX + 1))}"
+    -m "$MODEL"
+    -c "model_reasoning_effort=$EFFORT"
+    "${CMD[@]:$((EXEC_INDEX + 1))}"
+  )
+else
+  CMD=("$@")
+fi
+
 on_signal() {
   local sig="$1"
   local code
   case "$sig" in
-    INT)  code=130 ;;
+    INT) code=130 ;;
     TERM) code=143 ;;
-    HUP)  code=129 ;;
-    *)    code=1   ;;
+    HUP) code=129 ;;
+    *) code=1 ;;
   esac
-  # Best-effort: kill the codex child if it's still running.
   if [ -n "${CODEX_PID:-}" ] && kill -0 "$CODEX_PID" 2>/dev/null; then
     kill -TERM "$CODEX_PID" 2>/dev/null || true
     sleep 1
     kill -KILL "$CODEX_PID" 2>/dev/null || true
   fi
-  write_status "$code" "SIG${sig}"
+  write_status "exited" "$code" "SIG$sig" "$(iso_now)"
   exit "$code"
 }
 
@@ -103,15 +169,13 @@ trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
 trap 'on_signal HUP' HUP
 
-STARTED_AT=$(iso_now)
+# Pre-launch evidence must be durable before the child can execute.
+write_status "started" "null" "" ""
 
-# Run codex in the background so we can capture its PID for signal forwarding.
-"$@" &
+"${CMD[@]}" &
 CODEX_PID=$!
-
-# Wait for codex to exit. `wait` returns codex's exit code.
 wait "$CODEX_PID"
 EXIT_CODE=$?
 
-write_status "$EXIT_CODE" "null"
+write_status "exited" "$EXIT_CODE" "" "$(iso_now)"
 exit "$EXIT_CODE"

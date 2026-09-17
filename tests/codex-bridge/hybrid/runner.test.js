@@ -214,9 +214,14 @@ test('verifyOwnerClaimedFiles halts on a change outside the claim (either owner)
 test('classifyBackgroundStatus maps status-file states to the spec §10 outcomes', () => {
   const table = [
     { name: 'completed exit 0', in: { statusFile: { status: 'completed', exit_code: 0 }, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'completed', terminal: false, haltReason: null } },
+    { name: 'wrapper exited exit 0', in: { statusFile: { state: 'exited', exit_code: 0 }, taskAlive: false, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'completed', terminal: false, haltReason: null } },
     { name: 'nonzero exit', in: { statusFile: { status: 'completed', exit_code: 1 }, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'failed', terminal: true, haltReason: 'hybrid-codex-backend-failed' } },
     { name: 'blocked sentinel', in: { statusFile: { status: 'blocked', exit_code: null }, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'failed', terminal: true, haltReason: 'hybrid-codex-backend-failed' } },
+    { name: 'needs-context sentinel', in: { statusFile: { status: 'needs-context', exit_code: 0 }, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'failed', terminal: true, haltReason: 'hybrid-codex-backend-failed' } },
     { name: 'transient marker', in: { statusFile: { status: 'running', transient: true }, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'transient', terminal: false, haltReason: null } },
+    { name: 'nonterminal alive', in: { statusFile: { state: 'started', exit_code: null }, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'transient', terminal: false, haltReason: null } },
+    { name: 'nonterminal dead', in: { statusFile: { state: 'started', exit_code: null }, taskAlive: false, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'lost', terminal: true, haltReason: 'hybrid-codex-background-lost' } },
+    { name: 'config error preserves file reason', in: { statusFile: { state: 'exited', exit_code: 78, error: 'model-role-conflicting-args' }, taskAlive: false, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'config-error', terminal: true, haltReason: 'model-role-conflicting-args' } },
     { name: 'missing but task alive', in: { statusFile: null, taskAlive: true, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'transient', terminal: false, haltReason: null } },
     { name: 'missing and task dead', in: { statusFile: null, taskAlive: false, runtimeMs: 10, maxRuntimeMs: 1000 }, want: { state: 'lost', terminal: true, haltReason: 'hybrid-codex-background-lost' } },
     { name: 'runtime exceeded', in: { statusFile: null, taskAlive: true, runtimeMs: 2000, maxRuntimeMs: 1000 }, want: { state: 'timeout', terminal: true, haltReason: 'hybrid-codex-background-timeout' } },
@@ -388,6 +393,72 @@ test('autopilot run records started + completed events for both owners and emits
   // `from` must be a VALID mailbox recipient slug, not the raw member id (the real
   // writeToMailbox rejects `hybrid-ui@claude:sonnet#0`). recipientForMember → `impl-…`.
   assert.match(ack.message.from, /^(orchestrator|slice-\d+|expert-[a-z][a-z0-9-]{0,47}|impl-[a-z0-9][a-z0-9-]{0,60})$/);
+});
+
+test('backend launch snapshot is checkpointed before dispatch resolves and copied to terminal event', async () => {
+  const snapshot = { model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', status_file: '/tmp/backend.status.json' };
+  const deps = orchestratorDeps({
+    dispatch: {
+      ui: async () => completedResult(UI_MEMBER, [UI_FILE, UI_SHIM]),
+      backend: async (input) => {
+        await input.onLaunched(snapshot);
+        return {
+          ...completedResult(BACKEND_MEMBER, [BACKEND_FILE]),
+          modelSnapshot: { model_role: snapshot.model_role, model: snapshot.model, effort: snapshot.effort },
+        };
+      },
+    },
+  });
+  const result = await runHybridSlice(runArgs(deps));
+  assert.equal(result.ok, true);
+  const events = deps._calls.events.filter((event) => event.member_id === BACKEND_MEMBER);
+  assert.deepEqual(events.map((event) => event.event_type), ['started', 'checkpoint', 'completed']);
+  assert.equal(events[0].payload.model_role, 'implement');
+  assert.deepEqual(events[1].payload, { phase: 'launched', ...snapshot });
+  assert.deepEqual(events[2].payload.modelSnapshot, {
+    model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high',
+  });
+});
+
+test('backend dispatch remains valid when it does not call onLaunched', async () => {
+  const deps = orchestratorDeps();
+  const result = await runHybridSlice(runArgs(deps));
+  assert.equal(result.ok, true);
+  const checkpoints = deps._calls.events.filter((event) => event.member_id === BACKEND_MEMBER && event.event_type === 'checkpoint');
+  assert.equal(checkpoints.length, 0);
+});
+
+test('launch snapshot is durable while backend dispatch remains unresolved', async () => {
+  let launched;
+  const launchedPromise = new Promise((resolve) => { launched = resolve; });
+  const deps = orchestratorDeps({
+    dispatch: {
+      ui: async () => new Promise(() => {}),
+      backend: async (input) => {
+        await input.onLaunched({ model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', status_file: '/tmp/live.status.json' });
+        launched();
+        return new Promise(() => {});
+      },
+    },
+  });
+  void runHybridSlice(runArgs(deps));
+  await Promise.race([
+    launchedPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('launch checkpoint timeout')), 100)),
+  ]);
+  const checkpoint = deps._calls.events.find((event) => event.member_id === BACKEND_MEMBER && event.event_type === 'checkpoint');
+  assert.deepEqual(checkpoint.payload, {
+    phase: 'launched', model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', status_file: '/tmp/live.status.json',
+  });
+});
+
+test('hybrid config-error classification halts with the status-file reason', () => {
+  assert.deepEqual(classifyBackgroundStatus({
+    statusFile: { exit_code: 78, error: 'model-role-resolution-failed' },
+    taskAlive: false,
+    runtimeMs: 10,
+    maxRuntimeMs: 1000,
+  }), { state: 'config-error', terminal: true, haltReason: 'model-role-resolution-failed' });
 });
 
 test('UI completing without consuming the latest contract halts hybrid-contract-not-consumed', async () => {

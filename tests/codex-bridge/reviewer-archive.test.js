@@ -40,6 +40,19 @@ test('archive() works for a reviewer-* identity on a PRESERVE reason', async () 
   assert.equal(result.status, 'preserved-for-resume');
 });
 
+test('v0.16.0 model-role and attempt halts preserve reviewer mailboxes', async () => {
+  for (const reason of [
+    'model-role-resolution-failed',
+    'model-role-conflicting-args',
+    'implementer-attempt-lost',
+    'implementer-attempt-timeout',
+  ]) {
+    const result = await archive({ id: 'reviewer-test' }, reason);
+    assert.equal(result.status, 'preserved-for-resume');
+    assert.equal(result.archive_reason, reason);
+  }
+});
+
 test('unknown halt reason throws ReviewerArchiveError (caught via ExpertArchiveError alias too)', async () => {
   await assert.rejects(
     () => archive({ id: 'reviewer-ui' }, 'no-such-halt-reason'),
