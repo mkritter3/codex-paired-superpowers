@@ -497,3 +497,34 @@ test('resolveModelRoles: project.json missing "app" → ModelsConfigError with t
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Claude C0 review of slice 1: an env effort from a DIFFERENT layer than the agy model must not
+// trigger the same-layer mismatch — it is overridden by the derived effort.
+test('global CODEX_PAIRED_REASONING (env layer) does not conflict with a project-layer agy model; derived effort wins', () => {
+  const root = makeRepo({
+    ...MIN_VALID,
+    models: { review: { cli: 'agy', model: 'gemini-3.8-flash-medium' } },
+  });
+  try {
+    const { roles, sources } = resolveModelRoles({ repoRoot: root, env: { CODEX_PAIRED_REASONING: 'high' } });
+    assert.equal(roles.review.effort, 'medium');
+    assert.equal(sources.review.effort, 'derived');
+    assert.equal(roles.implement.effort, 'high'); // codex roles still take the global env effort
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('per-role env model with a mismatching per-role env effort is a same-layer mismatch; a global env effort is not', () => {
+  const root = makeRepo();
+  try {
+    assert.throws(
+      () => resolveModelRoles({ repoRoot: root, env: { CODEX_PAIRED_CLI_REVIEW: 'agy', CODEX_PAIRED_MODEL_REVIEW: 'gemini-3.8-flash-low', CODEX_PAIRED_REASONING_REVIEW: 'high' } }),
+      /same-layer mismatch/,
+    );
+    const { roles } = resolveModelRoles({ repoRoot: root, env: { CODEX_PAIRED_CLI_REVIEW: 'agy', CODEX_PAIRED_MODEL_REVIEW: 'gemini-3.8-flash-low', CODEX_PAIRED_REASONING: 'high' } });
+    assert.equal(roles.review.effort, 'low');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
