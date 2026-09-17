@@ -30,7 +30,11 @@ if [ -n "${FAKE_WAIT_FILE:-}" ]; then
   cp "$FAKE_STATUS_FILE" "$FAKE_SEEN_STATUS"
   while [ ! -e "$FAKE_WAIT_FILE" ]; do sleep 0.05; done
 fi
-exit 0
+if [ -n "${FAKE_BREAK_STATUS_DIR:-}" ]; then
+  rm -rf "$FAKE_BREAK_STATUS_DIR"
+  : > "$FAKE_BREAK_STATUS_DIR"
+fi
+exit "${FAKE_EXIT_CODE:-0}"
 EOF
   chmod +x "$root/bin/codex"
 }
@@ -154,6 +158,46 @@ RC2=$?
 if [ "$RC1" -eq 78 ] && [ "$RC2" -eq 78 ] && [ ! -e "$ARGS" ]; then
   pass "explicit effort overrides rejected"
 else fail "explicit effort override not rejected (rc1=$RC1 rc2=$RC2)"; fi
+rm -rf "$TMP"
+
+echo "[12] attached short model and effort overrides are rejected"
+for attached in -mgpt-5.5 -cmodel_reasoning_effort=low; do
+  TMP=$(mktmp); make_fake_codex "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+  PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- codex exec "$attached" p >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && assert_fields "$STATUS" exit_code 78 error model-role-conflicting-args; then
+    pass "attached override $attached rejected"
+  else fail "attached override $attached was not rejected (rc=$RC)"; fi
+  rm -rf "$TMP"
+done
+
+echo "[13] conflict scanning stops at the wrapped command option terminator"
+TMP=$(mktmp); make_fake_codex "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- codex exec -- -m model_reasoning_effort=quoted >/dev/null 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && [ -e "$ARGS" ] && grep -qx -- '-m' "$ARGS" && grep -qx 'model_reasoning_effort=quoted' "$ARGS"; then
+  pass "positional flag-shaped prompt arguments after -- are not conflicts"
+else fail "wrapped command option terminator did not stop conflict scanning (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[14] impossible status path prevents launch with EX_IOERR"
+TMP=$(mktmp); make_fake_codex "$TMP"; BLOCKER="$TMP/not-a-directory"; STATUS="$BLOCKER/status.json"; ARGS="$TMP/args"; ERR="$TMP/stderr"
+: > "$BLOCKER"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- codex exec p >/dev/null 2>"$ERR"
+RC=$?
+if [ "$RC" -eq 74 ] && [ ! -e "$ARGS" ] && grep -qi 'status' "$ERR"; then
+  pass "failed pre-launch publication prevents child launch"
+else fail "failed pre-launch publication did not return 74 without launch (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[15] terminal status publication failure overrides child success/failure with EX_IOERR"
+TMP=$(mktmp); make_fake_codex "$TMP"; STATUS_DIR="$TMP/status-dir"; mkdir -p "$STATUS_DIR"; STATUS="$STATUS_DIR/status.json"; ARGS="$TMP/args"; ERR="$TMP/stderr"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" FAKE_BREAK_STATUS_DIR="$STATUS_DIR" FAKE_EXIT_CODE=7 \
+  "$WRAPPER" "$STATUS" --model-role implement -- codex exec p >/dev/null 2>"$ERR"
+RC=$?
+if [ "$RC" -eq 74 ] && [ -e "$ARGS" ] && grep -q 'child exit code: 7' "$ERR"; then
+  pass "terminal publication failure returns 74 and reports child exit"
+else fail "terminal publication failure was hidden (rc=$RC)"; fi
 rm -rf "$TMP"
 
 echo

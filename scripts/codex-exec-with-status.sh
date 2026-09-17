@@ -59,7 +59,10 @@ if [ "$#" -eq 0 ]; then
 fi
 
 STATUS_DIR=$(dirname "$STATUS_FILE")
-mkdir -p "$STATUS_DIR"
+if ! mkdir -p "$STATUS_DIR"; then
+  echo "failed to create status directory for $STATUS_FILE; child not launched" >&2
+  exit 74
+fi
 
 iso_now() {
   date -u +"%Y-%m-%dT%H:%M:%S.000Z"
@@ -75,7 +78,7 @@ write_status() {
   local error="${5:-}"
   local tmp="$STATUS_FILE.tmp.$$"
 
-  node -e '
+  if ! node -e '
     const fs = require("node:fs");
     const [path, state, exitCode, signal, startedAt, completedAt, role, model, effort, error] = process.argv.slice(1);
     const status = {
@@ -90,15 +93,24 @@ write_status() {
     if (effort !== "") status.effort = effort;
     if (error !== "") status.error = error;
     fs.writeFileSync(path, JSON.stringify(status, null, 2) + "\n");
-  ' "$tmp" "$state" "$exit_code" "$signal" "$STARTED_AT" "$completed_at" "$MODEL_ROLE" "$MODEL" "$EFFORT" "$error"
-  mv "$tmp" "$STATUS_FILE"
+  ' "$tmp" "$state" "$exit_code" "$signal" "$STARTED_AT" "$completed_at" "$MODEL_ROLE" "$MODEL" "$EFFORT" "$error"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv "$tmp" "$STATUS_FILE"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
 }
 
 config_error() {
   local error="$1"
   local detail="$2"
   echo "$detail" >&2
-  write_status "exited" "78" "" "$(iso_now)" "$error"
+  if ! write_status "exited" "78" "" "$(iso_now)" "$error"; then
+    echo "failed to publish configuration-error status to $STATUS_FILE; child not launched" >&2
+    exit 74
+  fi
   exit 78
 }
 
@@ -112,6 +124,10 @@ if [ -n "$MODEL_ROLE" ]; then
   fi
   if ! SNAPSHOT=$(node -e '
     const value = JSON.parse(process.argv[1]);
+    if (typeof value.model !== "string" || value.model.length === 0 ||
+        typeof value.effort !== "string" || value.effort.length === 0) {
+      throw new Error("model role response is missing model or effort");
+    }
     process.stdout.write(value.model + "\t" + value.effort);
   ' "$ROLE_JSON"); then
     config_error "model-role-resolution-failed" "model role resolution returned malformed JSON"
@@ -124,6 +140,9 @@ if [ -n "$MODEL_ROLE" ]; then
   # (Claude review of slice 2).
   PREV_WAS_CONFIG=0
   for arg in "$@"; do
+    if [ "$arg" = "--" ]; then
+      break
+    fi
     if [ "$PREV_WAS_CONFIG" -eq 1 ]; then
       PREV_WAS_CONFIG=0
       case "$arg" in
@@ -134,7 +153,7 @@ if [ -n "$MODEL_ROLE" ]; then
       continue
     fi
     case "$arg" in
-      -m|--model|--model=*|-c=model_reasoning_effort=*|--config=model_reasoning_effort=*)
+      -m|-m?*|--model|--model=*|-cmodel_reasoning_effort=*|-c=model_reasoning_effort=*|--config=model_reasoning_effort=*)
         config_error "model-role-conflicting-args" "wrapped codex exec already supplies model flags; remove -m, --model, and -c model_reasoning_effort overrides"
         ;;
       -c|--config)
@@ -178,7 +197,10 @@ on_signal() {
     sleep 1
     kill -KILL "$CODEX_PID" 2>/dev/null || true
   fi
-  write_status "exited" "$code" "SIG$sig" "$(iso_now)"
+  if ! write_status "exited" "$code" "SIG$sig" "$(iso_now)"; then
+    echo "failed to publish terminal status to $STATUS_FILE (child exit code: $code)" >&2
+    exit 74
+  fi
   exit "$code"
 }
 
@@ -187,12 +209,18 @@ trap 'on_signal TERM' TERM
 trap 'on_signal HUP' HUP
 
 # Pre-launch evidence must be durable before the child can execute.
-write_status "started" "null" "" ""
+if ! write_status "started" "null" "" ""; then
+  echo "failed to publish pre-launch status to $STATUS_FILE; child not launched" >&2
+  exit 74
+fi
 
 "${CMD[@]}" &
 CODEX_PID=$!
 wait "$CODEX_PID"
 EXIT_CODE=$?
 
-write_status "exited" "$EXIT_CODE" "" "$(iso_now)"
+if ! write_status "exited" "$EXIT_CODE" "" "$(iso_now)"; then
+  echo "failed to publish terminal status to $STATUS_FILE (child exit code: $EXIT_CODE)" >&2
+  exit 74
+fi
 exit "$EXIT_CODE"

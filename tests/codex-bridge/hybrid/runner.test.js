@@ -10,6 +10,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   resolveUiRuntimeKind,
@@ -22,6 +25,12 @@ import {
 } from '../../../lib/codex-bridge/hybrid/runner.js';
 
 import { HYBRID_RUNTIME_KINDS, __hybridShapesForTests } from '../../../lib/codex-bridge/hybrid/types.js';
+import {
+  appendImplementerEventLocked,
+  initSidecar,
+  loadSidecar,
+  startImplementerRun,
+} from '../../../lib/codex-bridge/sidecar.js';
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -429,27 +438,48 @@ test('backend dispatch remains valid when it does not call onLaunched', async ()
 });
 
 test('launch snapshot is durable while backend dispatch remains unresolved', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-hybrid-runner-'));
+  const specPath = join(dir, 'spec.md');
+  writeFileSync(specPath, '# hybrid runner persistence test\n');
+  initSidecar(specPath, {
+    feature: 'hybrid-runner-persistence', codexSession: 'session', model: 'gpt-5.6-sol', reasoningEffort: 'high',
+  });
   let launched;
+  let finishBackend;
   const launchedPromise = new Promise((resolve) => { launched = resolve; });
+  const backendFinishPromise = new Promise((resolve) => { finishBackend = resolve; });
   const deps = orchestratorDeps({
+    startImplementerRun,
+    appendImplementerEventLocked,
     dispatch: {
-      ui: async () => new Promise(() => {}),
+      ui: async () => completedResult(UI_MEMBER, [UI_FILE, UI_SHIM]),
       backend: async (input) => {
         await input.onLaunched({ model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', status_file: '/tmp/live.status.json' });
         launched();
-        return new Promise(() => {});
+        await backendFinishPromise;
+        return completedResult(BACKEND_MEMBER, [BACKEND_FILE]);
       },
     },
   });
-  void runHybridSlice(runArgs(deps));
-  await Promise.race([
-    launchedPromise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('launch checkpoint timeout')), 100)),
-  ]);
-  const checkpoint = deps._calls.events.find((event) => event.member_id === BACKEND_MEMBER && event.event_type === 'checkpoint');
-  assert.deepEqual(checkpoint.payload, {
-    phase: 'launched', model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', status_file: '/tmp/live.status.json',
-  });
+  const runPromise = runHybridSlice(runArgs(deps, { repoRoot: dir, specPath }));
+  try {
+    await Promise.race([
+      launchedPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('launch checkpoint timeout')), 1000)),
+    ]);
+    const run = loadSidecar(specPath).slice_reviews['slice-4'].phases.implementer_experts;
+    const checkpoint = run.events.find((event) => event.member_id === BACKEND_MEMBER && event.event_type === 'checkpoint');
+    assert.deepEqual(checkpoint.payload, {
+      phase: 'launched', model_role: 'implement', model: 'gpt-5.6-sol', effort: 'high', status_file: '/tmp/live.status.json',
+    });
+    finishBackend();
+    const result = await runPromise;
+    assert.equal(result.ok, true);
+  } finally {
+    finishBackend();
+    await runPromise;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('hybrid config-error classification halts with the status-file reason', () => {
