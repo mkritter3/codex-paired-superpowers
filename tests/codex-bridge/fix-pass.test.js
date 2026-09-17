@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -211,7 +211,8 @@ test('failed pass: a >8 MiB pre-existing untracked file and 100 small ones are a
   const big = Buffer.alloc(8 * 1024 * 1024 + 1, 0x41);
   writeFileSync(join(repoRoot, 'big.bin'), big);
   for (let i = 0; i < 100; i += 1) writeFileSync(join(repoRoot, `n${i}.txt`), `note ${i}\n`);
-  const before = process.memoryUsage().heapUsed;
+  const b = process.memoryUsage();
+  const before = b.heapUsed + b.external + b.arrayBuffers;
   const result = await runFixPass({
     specPath, sliceId: 'slice-3', repoRoot, pass: 1,
     execFn: async () => {
@@ -222,6 +223,9 @@ test('failed pass: a >8 MiB pre-existing untracked file and 100 small ones are a
       return { statusFile: { exit_code: 0 } };
     },
   });
+  const after = process.memoryUsage();
+  const grew = (after.heapUsed + after.external + after.arrayBuffers) - before;
+  assert.ok(grew < 8 * 1024 * 1024, `snapshot must not buffer file contents in process memory (grew ${grew} bytes incl. external/arrayBuffers)`);
   assert.equal(result.ok, false);
   const restored = readFileSync(join(repoRoot, 'big.bin'));
   assert.equal(restored.length, big.length);
@@ -229,8 +233,65 @@ test('failed pass: a >8 MiB pre-existing untracked file and 100 small ones are a
   for (let i = 0; i < 100; i += 1) {
     assert.equal(readFileSync(join(repoRoot, `n${i}.txt`), 'utf8'), `note ${i}\n`);
   }
-  const grew = process.memoryUsage().heapUsed - before;
-  assert.ok(grew < 8 * 1024 * 1024, `snapshot must not buffer file contents on the heap (heap grew ${grew} bytes)`);
-  assert.equal('preserve_skipped' in fixEntries(specPath)[0], false);
+  assert.equal(existsSync(fixEntries(specPath)[0].snapshot_dir), false, 'snapshot dir removed after a completed rollback');
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+// Codex review-slice:slice-3 round 4: recovery copies must survive an incomplete rollback.
+test('restore failure during rollback keeps the recovery copies on disk and names them', async () => {
+  const { repoRoot, specPath } = makeRepo();
+  writeFileSync(join(repoRoot, 'notes.txt'), 'irreplaceable\n');
+  let err;
+  try {
+    await runFixPass({
+      specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+      execFn: async () => { rmSync(join(repoRoot, 'notes.txt')); throw new Error('boom'); },
+      _deps: { copyFile: () => { const e = new Error('ENOSPC'); e.code = 'ENOSPC'; throw e; } },
+    });
+  } catch (e) { err = e; }
+  assert.ok(err, 'restore failure must surface');
+  assert.equal(err.code, 'fix-pass-restore-failed');
+  assert.ok(existsSync(err.snapshot_dir), 'snapshot directory retained');
+  assert.deepEqual(err.snapshot_files, ['notes.txt']);
+  const copies = readdirSync(err.snapshot_dir);
+  assert.equal(copies.length, 1);
+  assert.equal(readFileSync(join(err.snapshot_dir, copies[0]), 'utf8'), 'irreplaceable\n');
+  const entry = fixEntries(specPath)[0];
+  assert.equal(entry.snapshot_retained, true);
+  assert.equal(entry.snapshot_dir, err.snapshot_dir);
+  rmSync(err.snapshot_dir, { recursive: true, force: true });
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('reset failure also retains the recovery copies', async () => {
+  const { repoRoot, specPath } = makeRepo();
+  writeFileSync(join(repoRoot, 'notes.txt'), 'keep\n');
+  let err;
+  try {
+    await runFixPass({
+      specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+      execFn: async () => ({ statusFile: { exit_code: 1 } }),
+      _deps: { reset: () => ({ ok: false, halt: { reason: 'worktree-reset-failed', detail: 'nope' } }) },
+    });
+  } catch (e) { err = e; }
+  assert.equal(err.code, 'fix-pass-reset-failed');
+  assert.ok(existsSync(err.snapshot_dir));
+  rmSync(err.snapshot_dir, { recursive: true, force: true });
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('checkpoint persistence failure before the pass runs cleans up the snapshot and never launches', async () => {
+  const { repoRoot } = makeRepo();
+  writeFileSync(join(repoRoot, 'notes.txt'), 'x\n');
+  let launched = false;
+  const snapshotDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith('cps-fix-pass-snapshot-')).length;
+  const dirsBefore = snapshotDirs();
+  await assert.rejects(() => runFixPass({
+    specPath: join(repoRoot, 'no-such-spec.md'), // no sidecar → appendFixPass throws
+    sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => { launched = true; return { statusFile: { exit_code: 0 } }; },
+  }));
+  assert.equal(launched, false);
+  assert.equal(snapshotDirs(), dirsBefore, 'pre-execution failure must not leak its snapshot directory');
   rmSync(repoRoot, { recursive: true, force: true });
 });
