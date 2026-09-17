@@ -188,34 +188,49 @@ if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js
       }
 
       const warnings = [];
-      const fetchedAt = Date.parse(catalog.fetched_at);
-      if (Number.isFinite(fetchedAt)) {
-        const ageDays = Math.max(0, Math.floor((Date.now() - fetchedAt) / 86400000));
-        if (ageDays > 7) warnings.push(`catalog is ${ageDays} days old`);
-      }
+      try {
+        // Compare elapsed milliseconds, not the floored day count (Codex review): a catalog
+        // 7 days + 1 hour old must warn; the displayed age is floored for readability.
+        const fetchedAt = Date.parse(catalog.fetched_at);
+        if (Number.isFinite(fetchedAt)) {
+          const ageMs = Date.now() - fetchedAt;
+          if (ageMs > 7 * 86400000) warnings.push(`catalog is ${Math.floor(ageMs / 86400000)} days old`);
+        }
 
-      const catalogBySlug = new Map(catalog.models.map((model) => [model.slug, model]));
-      const configuredModels = new Set(roleEntries.map(([, config]) => config.model));
-      for (const modelName of configuredModels) {
-        const model = catalogBySlug.get(modelName);
-        if (!model) {
-          warnings.push(`${modelName} is missing from the catalog`);
-          continue;
+        const catalogBySlug = new Map();
+        for (const model of catalog.models) {
+          if (!model || typeof model !== "object" || typeof model.slug !== "string") {
+            throw new Error("models[] contains an entry without a string slug");
+          }
+          catalogBySlug.set(model.slug, model);
         }
-        if (model.upgrade?.retirement_at) {
-          warnings.push(`${modelName} retires on ${model.upgrade.retirement_at}`);
+        const configuredModels = new Set(roleEntries.map(([, config]) => config.model));
+        for (const modelName of configuredModels) {
+          const model = catalogBySlug.get(modelName);
+          if (!model) {
+            warnings.push(`${modelName} is missing from the catalog`);
+            continue;
+          }
+          if (model.upgrade && typeof model.upgrade === "object" && model.upgrade.retirement_at) {
+            warnings.push(`${modelName} retires on ${model.upgrade.retirement_at}`);
+          }
         }
-      }
 
-      for (const [role, config] of roleEntries) {
-        const model = catalogBySlug.get(config.model);
-        if (!model) continue;
-        const supported = Array.isArray(model.supported_reasoning_levels)
-          ? model.supported_reasoning_levels.map((level) => level?.effort)
-          : [];
-        if (!supported.includes(config.effort)) {
-          warnings.push(`${role}: ${config.model} does not support effort ${config.effort}`);
+        for (const [role, config] of roleEntries) {
+          const model = catalogBySlug.get(config.model);
+          if (!model) continue;
+          const supported = Array.isArray(model.supported_reasoning_levels)
+            ? model.supported_reasoning_levels.map((level) => level?.effort)
+            : [];
+          if (!supported.includes(config.effort)) {
+            warnings.push(`${role}: ${config.model} does not support effort ${config.effort}`);
+          }
         }
+      } catch (error) {
+        // Any analysis failure after a successful parse is still "unreadable" — a warning, never
+        // an invalid status line (Codex review: models:[null] used to escape as raw stderr).
+        process.stdout.write(`warn|catalog unreadable: ${error.message}; ${roleDetails.join("; ")}`);
+        process.exit(0);
       }
 
       const note = "catalog presence does not prove account access";
@@ -223,6 +238,10 @@ if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js
       process.stdout.write(`${warnings.length ? "warn" : "pass"}|${detail}`);
     ' "$MODELS_CATALOG" "$MODELS_JSON" 2>&1)
     IFS='|' read -r MODELS_STATUS MODELS_DETAIL <<< "$MODELS_CHECK"
+    case "$MODELS_STATUS" in
+      pass|warn|fail) ;;
+      *) MODELS_DETAIL="catalog check did not produce a status: $(printf '%s' "$MODELS_CHECK" | tr '\n' ' ' | cut -c1-300)"; MODELS_STATUS=warn ;;
+    esac
     record "$MODELS_STATUS" "models" "$MODELS_DETAIL" ""
   else
     MODELS_ERROR=$(printf '%s' "$MODELS_JSON" | tr '\n' ' ')

@@ -40,7 +40,12 @@ write_catalog() {
     const path = require("node:path");
     const mode = process.argv[1];
     const catalog = {
-      fetched_at: new Date(Date.now() - (mode === "stale" ? 10 * 86400000 : 0)).toISOString(),
+      fetched_at: new Date(Date.now() - (
+        mode === "stale" ? 10 * 86400000
+          : mode === "just_stale" ? 7 * 86400000 + 3600000
+            : mode === "almost_stale" ? 7 * 86400000 - 60000
+              : 0
+      )).toISOString(),
       client_version: "0.153.4",
       models: [
         {
@@ -61,6 +66,7 @@ write_catalog() {
       ],
     };
     if (mode === "missing") catalog.models = catalog.models.filter((model) => model.slug !== "gpt-5.6-sol");
+    if (mode === "null_entry") catalog.models = [null, ...catalog.models];
     const target = path.join(process.argv[2], "models_cache.json");
     fs.writeFileSync(target, JSON.stringify(catalog));
   ' "$mode" "$CASE_ROOT/codex"
@@ -173,4 +179,28 @@ assert_check "$(FAKE_MCP_HELP_EXIT=1 run_doctor)" codex-transport warn \
   "does not offer the MCP server transport" \
   "missing MCP server transport warns"
 
-echo "All 12 doctor model/catalog and transport checks passed."
+new_case just_stale
+write_catalog just_stale
+assert_check "$(run_doctor)" models warn "7 days old" \
+  "seven-days-plus-one-hour cache warns (ms comparison, not floored days)"
+
+new_case almost_stale
+write_catalog almost_stale
+assert_check "$(run_doctor)" models pass "gpt-6-astra" \
+  "just-under-seven-days cache passes"
+
+new_case null_entry
+write_catalog null_entry
+null_output=$(run_doctor)
+assert_check "$null_output" models warn "catalog unreadable" \
+  "malformed catalog entry warns instead of emitting an invalid status"
+node -e '
+  const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  const statuses = new Set(report.checks.map((c) => c.status));
+  for (const s of statuses) if (!["pass", "warn", "fail"].includes(s)) throw new Error(`invalid status ${s}`);
+  const warns = report.checks.filter((c) => c.status === "warn").length;
+  if (report.summary.warn !== warns) throw new Error(`summary.warn ${report.summary.warn} != ${warns}`);
+' "$null_output"
+echo "  PASS: malformed entry keeps summary accounting valid"
+
+echo "All 16 doctor model/catalog and transport checks passed."
