@@ -150,11 +150,13 @@ test('openReviewerThread with role:review on agy invokes dispatch and records si
     assert.equal(seenCwdFiles.planExists, true);
     assert.equal(seenCwdFiles.specContent, '# Spec Content\n');
 
-    assert.deepEqual(result, {
-      threadId: 'conv-agy-123',
-      content: 'review response text',
-      usage: { prompt_tokens: 150, completion_tokens: 45 },
-    });
+    assert.equal(result.threadId, 'conv-agy-123');
+    assert.equal(result.content, 'review response text');
+    assert.deepEqual(result.usage, { prompt_tokens: 150, completion_tokens: 45 });
+    assert.equal(result.ok, true);
+    assert.equal(result.exit, 0);
+    assert.equal(result.status, 'SUCCESS');
+    assert.deepEqual(result.warnings, []);
 
     const sc = loadSidecar(specAbs);
     assert.equal(sc.role_sessions['execution-reviewer'], 'conv-agy-123');
@@ -585,5 +587,74 @@ test('CLI verbs: reviewer-thread-open and reviewer-thread-reply with fake agy CL
   } finally {
     rmSync(binDir, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+// ── Claude C0 review of slice 4: adapter failures must be visible, not empty replies ──
+
+test('continueReviewerThread surfaces a non-SUCCESS agy status as ok:false with exit/status/warnings', async () => {
+  const dir = setupRepo({ ...MIN_PROJECT_CONFIG, models: { review: { cli: 'agy', model: 'gemini-3.8-flash-high' } } });
+  try {
+    const specRel = join('docs', 'spec.md');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, specRel), '# spec\n');
+    const specAbs = join(dir, specRel);
+    initSidecar(specAbs, { feature: 'f', codexSession: 'conv-1', model: 'gpt-6-astra', reasoningEffort: 'high' });
+    const result = await continueReviewerThread(
+      { role: 'review', specPath: specAbs, repoRoot: dir, prompt: 'p', conversationId: 'conv-1' },
+      { dispatch: async (_sys, _prompt, _opts) => ({
+          responseText: '', exit: 1, warnings: ['agy-status:ERROR', 'stderr:conversation conv-1 not found'],
+          sessionId: null, adapterMeta: { adapter: 'cli-harness:agy', status: 'ERROR', stderr: 'conversation conv-1 not found' }, duration_ms: 1,
+        }) },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.exit, 1);
+    assert.equal(result.status, 'ERROR');
+    assert.ok(result.warnings.includes('agy-status:ERROR'));
+    assert.equal(result.content, '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('openReviewerThread does not record a thread when the open turn failed', async () => {
+  const dir = setupRepo({ ...MIN_PROJECT_CONFIG, models: { review: { cli: 'agy', model: 'gemini-3.8-flash-high' } } });
+  try {
+    const specRel = join('docs', 'spec.md');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, specRel), '# spec\n');
+    const specAbs = join(dir, specRel);
+    initSidecar(specAbs, { feature: 'f', codexSession: 'old', model: 'gpt-6-astra', reasoningEffort: 'high' });
+    const result = await openReviewerThread(
+      { role: 'review', specPath: specAbs, repoRoot: dir, prompt: 'p' },
+      { dispatch: async () => ({ responseText: '', exit: 1, warnings: ['timeout'], sessionId: 'half-open', adapterMeta: { adapter: 'cli-harness:agy' }, duration_ms: 1 }) },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(getCodexThreadId(loadSidecar(specAbs), 'execution-reviewer'), undefined, 'a failed open must not persist a thread id');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('CLI verbs exit 1 and print status when the fake agy reports ERROR', () => {
+  const dir = setupRepo({ ...MIN_PROJECT_CONFIG, models: { review: { cli: 'agy', model: 'gemini-3.8-flash-high' } } });
+  const binDir = mkdtempSync(join(tmpdir(), 'cps-bin-'));
+  copyFileSync(FAKE_AGY_SH, join(binDir, 'agy'));
+  chmodSync(join(binDir, 'agy'), 0o755);
+  try {
+    const specRel = join('docs', 'spec.md');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, specRel), '# spec\n');
+    const specAbs = join(dir, specRel);
+    initSidecar(specAbs, { feature: 'f', codexSession: 'old', model: 'gpt-6-astra', reasoningEffort: 'high' });
+    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, FAKE_AGY_CONVERSATION: 'c9', FAKE_AGY_RESPONSE: '', FAKE_AGY_STATUS: 'ERROR' };
+    let status = 0; let stdout = '';
+    try {
+      stdout = execFileSync(process.execPath, [CLI_PATH, 'reviewer-thread-open', '--role', 'review', '--specPath', specAbs, '--repoRoot', dir, '--prompt-stdin'], { input: 'p', env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) { status = e.status; stdout = e.stdout; }
+    assert.equal(status, 1);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.status, 'ERROR');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(binDir, { recursive: true, force: true });
   }
 });
