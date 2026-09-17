@@ -230,3 +230,39 @@ test('models and project-config imports are safe in either order in fresh proces
   execFileSync('node', ['-e', "import('./lib/codex-bridge/models.js').then(()=>import('./lib/codex-bridge/project-config.js'))"], { cwd: ROOT });
   execFileSync('node', ['-e', "import('./lib/codex-bridge/project-config.js').then(()=>import('./lib/codex-bridge/models.js'))"], { cwd: ROOT });
 });
+
+// ── frozen contract: ModelsConfigError.code is ALWAYS 'models-config-malformed' ──
+
+test('resolveModelRoles: invalid project.json JSON → ModelsConfigError with the frozen code and the loader detail preserved', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cps-model-roles-badjson-'));
+  try {
+    mkdirSync(join(root, '.codex-paired'), { recursive: true });
+    writeFileSync(join(root, '.codex-paired', 'project.json'), '{ "version": 1, ');
+    assert.throws(
+      () => resolveModelRoles({ repoRoot: root, env: {} }),
+      (err) =>
+        err instanceof ModelsConfigError &&
+        err.code === 'models-config-malformed' &&
+        /live-verification-config-malformed/.test(err.detail) &&
+        err.cause && err.cause.code === 'live-verification-config-malformed',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resolveModelRoles: project.json missing "app" → ModelsConfigError with the frozen code, loader code only in detail/cause', () => {
+  const root = makeRepo({ version: 1, live_verification: { default: 'skip', skip_reason: 'x' } });
+  try {
+    assert.throws(
+      () => resolveModelRoles({ repoRoot: root, env: {} }),
+      (err) =>
+        err instanceof ModelsConfigError &&
+        err.code === 'models-config-malformed' &&
+        /missing-field:app/.test(err.detail) &&
+        err.cause && err.cause.code === 'missing-field:app',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
