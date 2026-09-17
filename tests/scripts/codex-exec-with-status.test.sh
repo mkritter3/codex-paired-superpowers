@@ -136,6 +136,26 @@ if [ "$RC" -eq 7 ] && assert_fields "$STATUS" state exited exit_code 7 signal nu
 if [ "$RC" -eq 64 ]; then pass "usage error remains 64"; else fail "usage error was $RC"; fi
 rm -rf "$TMP"
 
+echo "[10] prompt text mentioning model_reasoning_effort= is NOT a conflicting flag (Claude review of slice 2)"
+TMP=$(mktmp); make_fake_codex "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- codex exec --skip-git-repo-check "Implement per the plan: the wrapper inserts -c model_reasoning_effort=<effort> after exec" >/dev/null 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && [ -e "$ARGS" ] && grep -q "model_reasoning_effort=high" "$ARGS"; then
+  pass "prompt text is not scanned as a flag"
+else fail "prompt text was misread as a conflicting flag (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[11] real -c model_reasoning_effort and --config= forms are still rejected"
+TMP=$(mktmp); make_fake_codex "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- codex exec -c model_reasoning_effort=low p >/dev/null 2>&1
+RC1=$?
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement -- codex exec --config=model_reasoning_effort=low p >/dev/null 2>&1
+RC2=$?
+if [ "$RC1" -eq 78 ] && [ "$RC2" -eq 78 ] && [ ! -e "$ARGS" ]; then
+  pass "explicit effort overrides rejected"
+else fail "explicit effort override not rejected (rc1=$RC1 rc2=$RC2)"; fi
+rm -rf "$TMP"
+
 echo
 echo "================================================================="
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

@@ -118,10 +118,27 @@ if [ -n "$MODEL_ROLE" ]; then
   fi
   IFS=$'\t' read -r MODEL EFFORT <<< "$SNAPSHOT"
 
+  # Only FLAG-SHAPED arguments (and the value that follows -c/--config) are inspected. The
+  # implementation prompt is a positional argument that legitimately quotes the plan — which
+  # mentions "model_reasoning_effort=" — so scanning every argument produced a false 78
+  # (Claude review of slice 2).
+  PREV_WAS_CONFIG=0
   for arg in "$@"; do
+    if [ "$PREV_WAS_CONFIG" -eq 1 ]; then
+      PREV_WAS_CONFIG=0
+      case "$arg" in
+        model_reasoning_effort=*)
+          config_error "model-role-conflicting-args" "wrapped codex exec already supplies model flags; remove -m, --model, and -c model_reasoning_effort overrides"
+          ;;
+      esac
+      continue
+    fi
     case "$arg" in
-      -m|--model|--model=*|*model_reasoning_effort=*)
-        config_error "model-role-conflicting-args" "wrapped codex exec already supplies model flags; remove -m, --model, and model_reasoning_effort overrides"
+      -m|--model|--model=*|-c=model_reasoning_effort=*|--config=model_reasoning_effort=*)
+        config_error "model-role-conflicting-args" "wrapped codex exec already supplies model flags; remove -m, --model, and -c model_reasoning_effort overrides"
+        ;;
+      -c|--config)
+        PREV_WAS_CONFIG=1
         ;;
     esac
   done
