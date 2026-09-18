@@ -599,6 +599,19 @@ test('withReviewCheckout: rejects invalid overlayPaths before creating checkout 
       },
     );
 
+    // 4. Git metadata, in any case or position (v0.19.0: a copied linked-checkout `.git` pointer
+    //    would redirect the review checkout's ownership marker to another checkout's admin dir).
+    //    Present in the repo so rejection cannot come from the existence check.
+    mkdirSync(join(repoRoot, 'sub', '.GIT'), { recursive: true });
+    writeFileSync(join(repoRoot, 'sub', '.GIT', 'x'), 'x');
+    for (const overlay of ['.git', '.git/config', 'sub/.GIT/x']) {
+      await assert.rejects(
+        async () => withReviewCheckout(repoRoot, { overlayPaths: [overlay] }, async () => {}),
+        (err) => err.code === 'review-overlay-invalid' && /git metadata/.test(err.message),
+        overlay,
+      );
+    }
+
     // No worktrees were created
     const wtListAfter = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
     assert.equal(wtListAfter, wtListBefore);

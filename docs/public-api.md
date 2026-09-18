@@ -10205,7 +10205,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
   ],
   "module_digest": {
     "lib/codex-bridge/active-anchor.js": "sha256:efeec4ebb5735a634b5c2314a0ab3e4812d31a0446df9857bafbcca04fb908a5",
-    "lib/codex-bridge/checkout-markers.js": "sha256:6dd57a3d7eb48b9979426739a3b2bdb546a7cc7ba63cb13231250104152983fa",
+    "lib/codex-bridge/checkout-markers.js": "sha256:a37c9fa77bfab898f7abb25551c5057912c53fb1b6b140b8f798425906b7cf48",
     "lib/codex-bridge/cli-harness/adapters/agy.js": "sha256:382a4b360e58045da4f9cc6f7b0b8d5b37d9a8b8d365f2b7e1a045a180f29b81",
     "lib/codex-bridge/cli-harness/adapters/claude-cli.js": "sha256:4e243005f48bf9616ab8c0da127017733cdae932eaee1d1d4ccdd04bdd0ac198",
     "lib/codex-bridge/cli-harness/adapters/codex.js": "sha256:a92a130d27d669d627b8a756a711eafdd1b74ae08b6fb88d1190691193e41337",
@@ -10229,7 +10229,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/sidecar.js": "sha256:4c8f0e545a22644330f864ccb84470a91e6c89626435e66ea2e1cd4cef5524d4",
     "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
     "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
-    "lib/codex-bridge/worktree.js": "sha256:b1e8fdb1a60e97f30b121bda853c1884434f6fcd98f96a4de03b13359fb08d42"
+    "lib/codex-bridge/worktree.js": "sha256:d98507a7a5850f49db90d2421e3b4d59d1de8853f80b75a1449eb20831ac69f6"
   },
   "input_digest": {
     "lib/codex-bridge/cli-clients/agy.json": "sha256:b1ed7727d9dc0e80a457b9ac1dbec752dec8e7cbd7005442eb900d94962b83a4",

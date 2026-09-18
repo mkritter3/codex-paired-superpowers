@@ -119,3 +119,24 @@ test('darwin discovery scopes lsof to the injected uid', () => {
   assert.deepEqual(darwin('/run/root'), { pids: [], complete: true, gaps: [] });
   assert.deepEqual(seen, ['-a', '-d', 'cwd', '-u', '4242', '-F', 'pn']);
 });
+
+test('discovery keeps PID 1 as occupancy evidence and treats lsof warnings as a gap', () => {
+  const linux = createProcessOwnershipDiscovery({
+    platform: 'linux',
+    uid: 1000,
+    readdir: () => [dirent('1')],
+    ownerUid: () => 1000,
+    readlink: () => '/run/root',
+    spawn: () => { throw new Error('not used'); },
+  });
+  assert.deepEqual(linux('/run/root'), { pids: [1], complete: true, gaps: [] });
+
+  const darwin = createProcessOwnershipDiscovery({
+    platform: 'darwin',
+    uid: 1000,
+    readdir: () => { throw new Error('not used'); },
+    readlink: () => { throw new Error('not used'); },
+    spawn: () => ({ status: 0, stdout: 'p5\nn/elsewhere\n', stderr: 'lsof: WARNING: can\'t stat() fuse file system\n' }),
+  });
+  assert.deepEqual(darwin('/run/root'), { pids: [], complete: false, gaps: [{ source: 'lsof', target: 'lsof', code: 'WARNINGS' }] });
+});

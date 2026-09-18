@@ -158,3 +158,33 @@ test('checkout-preserve rejects an unregistered path without writing a marker', 
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test('readMarkers: a symlinked marker is invalid whether its target is valid or dangling', async () => {
+  const { symlinkSync } = await import('node:fs');
+  const { rootDir, worktreePath, adminDir } = syntheticWorktree();
+  try {
+    // A genuinely valid pair written elsewhere, then linked in.
+    const other = syntheticWorktree();
+    writeOwnershipMarker(other.worktreePath, { kind: 'review', run_id: 'r', base: 'b' });
+    writePreservationMarker(other.worktreePath, { reason: 'keep', run_id: 'r' });
+    symlinkSync(join(other.adminDir, 'codex-paired.json'), join(adminDir, 'codex-paired.json'));
+    symlinkSync(join(other.adminDir, 'codex-paired-keep.json'), join(adminDir, 'codex-paired-keep.json'));
+    let read = readMarkers({ repoRoot: rootDir, adminDir });
+    assert.equal(read.ownership.state, 'invalid');
+    assert.equal(read.preservation.state, 'invalid');
+
+    // Dangling links must never read as absent: absent preservation would drop protection.
+    rmSync(other.rootDir, { recursive: true, force: true });
+    read = readMarkers({ repoRoot: rootDir, adminDir });
+    assert.equal(read.ownership.state, 'invalid');
+    assert.equal(read.preservation.state, 'invalid');
+
+    // A directory in the marker's place is invalid too.
+    rmSync(join(adminDir, 'codex-paired-keep.json'));
+    mkdirSync(join(adminDir, 'codex-paired-keep.json'));
+    assert.equal(readMarkers({ repoRoot: rootDir, adminDir }).preservation.state, 'invalid');
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+  void worktreePath;
+});

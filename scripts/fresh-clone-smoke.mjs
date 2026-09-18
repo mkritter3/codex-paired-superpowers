@@ -149,11 +149,13 @@ function findRunProcesses(runRootReal, marker) {
   // Preserve the smoke's prior behavior while the shared helper exposes a
   // richer fail-closed result to the reaper: Linux EACCES entries were
   // historically skipped, while missing tools and other I/O failures threw.
+  // lsof exiting 0 with warnings was likewise accepted before the helper began reporting it.
   const fatalGap = cwdDiscovery.gaps.find((gap) => !(
-    process.platform === 'linux'
-    && gap.source === 'proc'
-    && gap.code === 'EACCES'
-    && /^\/proc\/\d+(?:\/cwd)?$/.test(gap.target)
+    (process.platform === 'linux'
+      && gap.source === 'proc'
+      && gap.code === 'EACCES'
+      && /^\/proc\/\d+(?:\/cwd)?$/.test(gap.target))
+    || (gap.source === 'lsof' && gap.code === 'WARNINGS')
   ));
   if (fatalGap) {
     throw new Error(`cwd process discovery incomplete at ${fatalGap.target}: ${fatalGap.code}`);

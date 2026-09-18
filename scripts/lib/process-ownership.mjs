@@ -17,7 +17,7 @@ function isUnder(path, root) {
 /** @param {Set<number>} pids @param {DiscoveryGap[]} gaps @returns {DiscoveryResult} */
 function result(pids, gaps) {
   return {
-    pids: [...pids].filter((pid) => Number.isInteger(pid) && pid > 1).sort((left, right) => left - right),
+    pids: [...pids].filter((pid) => Number.isInteger(pid) && pid >= 1).sort((left, right) => left - right),
     complete: gaps.length === 0,
     gaps,
   };
@@ -86,6 +86,10 @@ export function createProcessOwnershipDiscovery({ platform, uid, readdir, readli
       if (scan.status !== 0) {
         gaps.push({ source: 'lsof', target: 'lsof', code: `EXIT_${scan.status ?? 'UNKNOWN'}` });
         return result(pids, gaps);
+      }
+      // lsof can exit 0 while warning that it could not read some processes; that is incomplete.
+      if ((scan.stderr || '').trim().length > 0) {
+        gaps.push({ source: 'lsof', target: 'lsof', code: 'WARNINGS' });
       }
       let pid = NaN;
       for (const line of (scan.stdout || '').split('\n')) {
