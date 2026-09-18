@@ -141,3 +141,22 @@ The drivers and splits above map onto engines that already exist (the autopilot 
 the interactive subagent-driven driver, the symmetric two-implementer orchestrator, and
 the hybrid UI/backend runner). This model is the selection layer over them, not a new
 engine.
+
+## Review panels (v0.19.0)
+
+A **review panel** puts more than one external reviewer on a phase. It is opt-in and per phase:
+`review_panel.planning` covers the spec, the plan and autopilot's per-slice plan review;
+`review_panel.review` covers slice reviews and `docs-update`. With neither configured, nothing
+changes: one external reviewer, exactly as above.
+
+When a phase is configured, every member reviews the same artifact version **independently** (all
+are dispatched in the same turn and none sees another's current verdict), and the round ships only
+when **Claude and every member** say SHIP on that same version. There is no vote and no tiebreaker:
+any REVISE from anyone sends the round back, and a member that fails or cannot be reached halts the
+review rather than being dropped. The procedure every skill follows is in
+`skills/brainstorming/codex-pairing.md` § "Review panel rounds (v0.19.0)".
+
+A panel changes **who** reviews, not which lane a diff is in. A configured review panel reviews
+prose-lane slices too, under the prose lane's two-round cap. The `two-disjoint` and
+`hybrid-ui-backend` splits do not support a multi-member review panel yet: they halt with
+`panel-unsupported-route` before creating any checkout.

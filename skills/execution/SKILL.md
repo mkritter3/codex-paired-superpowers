@@ -99,6 +99,11 @@ For each work item in the plan:
 1. **Normalize the split directive** for the work item and route it through `runSplit` (the same
    normalize-then-route seam autopilot uses). `runSplit` resolves the work item to one of three split
    paths: `single`, `two-disjoint`, or `hybrid-ui-backend`.
+   **Route check (v0.19.0):** when a multi-member **review** panel is configured, `runSplit` (and the
+   fan-out and hybrid runners, before creating any checkout) halts `two-disjoint` and
+   `hybrid-ui-backend` work items with `panel-unsupported-route`; those routes' review gates do not
+   support a panel yet. Tell the user, and suggest either the `single` split or removing
+   `review_panel.review`. Unconfigured projects and the `single` split are unaffected.
 2. **Run the corresponding split path** (see below).
 3. **Run the domain reviewers** for the work item using the reviewer-named APIs.
 4. **Claude reviews first** (SDD Step C0: findings list, at most two `runFixPass` fix passes), then

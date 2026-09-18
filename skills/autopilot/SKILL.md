@@ -121,6 +121,13 @@ After each phase ships (double-SHIP), advance `current_phase` to the next phase 
 2. Print a summary to the user: which slice, which phase, what blocked. **If outer-mode is on** (see § "Outer-mode under app-autopilot"), the summary MUST also include a literal `APP_HALT: <halt_reason>: <plain-English one-liner>` line so the parent `/goal` evaluator picks it up.
 3. **Clear the active anchor** (`anchor-clear --repoRoot <repo>`). This is critical: while halted, the user must be able to make manual recovery commits without the provenance hook blocking them. The sidecar's `autopilot` block (with `halt_reason` set) remains and is the source of truth for resumption.
 3b. **Clear the honest-reporting marker** (`honest-reporting-clear` — v0.15.0). While halted, the user (or an unrelated session in this repo) must not fight the claim scanner. Resuming re-marks it via the entry block.
+3c. **Mark every worktree the halt leaves in place as preserved** (v0.19.0). For each slice,
+   fan-out or review worktree this run leaves behind for inspection, run
+   `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" checkout-preserve --path "<worktree>"
+   --reason "halt:<halt_reason>" --run "<slice-id>" --repoRoot "$REPO_ROOT"`, and list the paths in
+   the halt summary. `worktree-reap` never removes a preserved checkout, so a later cleanup cannot
+   delete what a halt kept for diagnosis. A `checkout-preserve` failure is reported in the summary; it
+   never replaces the original halt reason.
 4. **Emit the halt envelope** (v0.9.0). Before returning, wrap the halt reason through the halt-envelope module so the resume path (and any `/loop` driver) receives the structured shape:
 
    ```js
@@ -200,6 +207,11 @@ Three artifacts reviewed in one phase: the task list, the test list, AND the val
      Critique with L11 rigor. Apply the validation rubric. SHIP only if every Tier-1 subcategory has an explicit entry in your verdict's critique array AND every Tier-2 trigger is stated as fired-or-not. If validation tier is `critical`, also answer Tier 3.
      ```
 5. Send via `codex-reply` on the **planning** thread (`sidecar-thread-id --specPath <spec> --role paired-reviewer` — GPT-6 Astra at `xhigh` by default; per-slice plan review is planning-grade work). Run the standard 7-round loop. Append rounds to sidecar via `sidecar-append-round` with phase `plan-slice:<slice-N>`.
+5a. **Planning panel (v0.19.0).** Before round 1, run the activation check in `skills/brainstorming/codex-pairing.md` § "Review panel rounds (v0.19.0)" with
+   `--phase planning`. If `configured` is `false`, step 5 applies exactly as written. If `configured`
+   is `true`, run each `plan-slice:<slice-N>` round as a panel round per that section instead of the
+   single `codex-reply` (Codex members on threads keyed `paired-reviewer:<member_id>`), and step 6
+   validates the rubric coverage of **every** member's final SHIP critique, not only one.
 6. **On double-SHIP, parse and validate structured rubric coverage via the bridge CLI, then persist.** The verdict's `critique` array contains the rubric coverage bullets. Pipe it as JSON to the `validation-parse` subcommand and dispatch on the exit code:
 
    ```bash
@@ -1493,6 +1505,13 @@ Collect them across rounds and clear them in ONE cleanup pass before the work it
    differ or do not equal `--headSha` (same-commit rule, v0.16.0). Any fix after a Codex verdict
    starts a new round with fresh verification on both sides. On double-SHIP, write phase state via
    `sidecar-set-phase`, advance to Phase D.
+
+**Review panel (v0.19.0) for Phases C and D.** Before round 1 of a slice review, run the activation
+check in `skills/brainstorming/codex-pairing.md` § "Review panel rounds (v0.19.0)" with `--phase review`. If `configured` is `false`, Phases C and D apply exactly as
+written. If `configured` is `true`, send step 3's prompt (and Phase D's) to every member as a panel
+round (Codex members on threads keyed `execution-reviewer:<member_id>`), reduce with `panel-reduce`,
+treat the combined blocking findings as step 3's REVISE input, and log with the panel round shape and
+one verification audit per member. The same-commit rule applies to every member.
 
 ### Phase D: docs-update
 1. Compute the slice's diff again: `git diff <slice_start_sha>..HEAD`.
