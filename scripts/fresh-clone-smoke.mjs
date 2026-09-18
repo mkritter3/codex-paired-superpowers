@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { reapRunProcesses as reapRunProcessesLoop } from './lib/reap-run-processes.mjs';
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tempRootOverride = process.env.CPS_FRESH_CLONE_TMP_ROOT;
 const tempRoot = tempRootOverride
@@ -219,36 +221,15 @@ function wait(delayMs) {
   return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
 }
 
-/**
- * Reap every run-owned process, converging rather than snapshotting.
- *
- * The previous version waited for a KNOWN pid list to disappear and then ran discovery exactly
- * once, so two things were reported as survivors without ever being signalled: a process the smoke
- * script spawned DURING cancellation (it is still running while we tear down), and a killed process
- * still visible to discovery in the instant after SIGKILL. CI caught it on macOS/Node 26 — the
- * SIGTERM cancellation exited 1 with `incomplete cleanup: 23213,23246` instead of 143.
- *
- * Each pass signals pids it has not signalled yet (SIGTERM), escalates the ones it already has
- * (SIGKILL), then re-discovers. It returns [] as soon as a discovery comes back empty, and only
- * reports survivors once the bound expires.
- */
-async function reapRunProcesses(limitMs) {
+/** Thin binding of the shared converging reap to this run's discovery and signalling. */
+function reapRunProcesses(limitMs) {
   const marker = `CPS_FRESH_CLONE_RUN_ID=${runId}`;
-  const deadline = Date.now() + limitMs;
-  const termed = new Set();
-  for (;;) {
-    const current = findRunProcesses(tempRootReal, marker);
-    if (current.length === 0) return [];
-    const fresh = current.filter((pid) => !termed.has(pid));
-    if (fresh.length > 0) {
-      signalRunProcesses(fresh, 'SIGTERM');
-      for (const pid of fresh) termed.add(pid);
-    } else {
-      signalRunProcesses(current, 'SIGKILL');
-    }
-    if (Date.now() >= deadline) return findRunProcesses(tempRootReal, marker);
-    await wait(Math.min(25, Math.max(1, deadline - Date.now())));
-  }
+  return reapRunProcessesLoop({
+    discover: () => findRunProcesses(tempRootReal, marker),
+    signal: signalRunProcesses,
+    wait,
+    limitMs,
+  });
 }
 
 function destroyChildPipes() {
