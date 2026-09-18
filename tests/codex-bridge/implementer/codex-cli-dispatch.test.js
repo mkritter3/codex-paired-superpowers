@@ -545,3 +545,23 @@ test('required direct-Codex failure cancels a hanging sibling', { timeout: 10_00
     assert.equal(result.cancelled.length, 1);
   } finally { writeFileSync(release, 'go'); rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
+
+test('running evidence without a pid and launching evidence without launched_at are lost, never polled', async () => {
+  for (const record of [
+    { state: 'running', spawned_at: new Date().toISOString() },
+    { state: 'running', pid: 'not-a-pid', spawned_at: new Date().toISOString() },
+    { state: 'launching' },
+    { state: 'bogus' },
+  ]) {
+    const f = repoFixture();
+    const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+    const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(path, JSON.stringify(record));
+      const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10, timeout_ms: 2_000 });
+      assert.equal(observed.outcome, 'halted', JSON.stringify(record));
+      assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost', JSON.stringify(record));
+    } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+  }
+});
