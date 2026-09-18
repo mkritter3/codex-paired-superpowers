@@ -18,6 +18,20 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, '..', '..');
 
+function publicApiSkills() {
+  const markdown = readFileSync(join(PLUGIN_ROOT, 'docs', 'public-api.md'), 'utf8');
+  const match = markdown.match(/```json public-api:skills\n([\s\S]*?)\n```/);
+  assert.ok(match, 'docs/public-api.md must contain the skills contract block');
+  return JSON.parse(match[1]);
+}
+
+function commandFrontmatter(name) {
+  const content = readFileSync(join(PLUGIN_ROOT, 'commands', `${name}.md`), 'utf8');
+  const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)[1];
+  const hint = frontmatter.match(/^argument-hint:\s*"([\s\S]*)"$/m)?.[1];
+  return { name, argument_hint: hint };
+}
+
 function readSkill(name) {
   return readFileSync(join(PLUGIN_ROOT, 'skills', name, 'SKILL.md'), 'utf8');
 }
@@ -250,6 +264,23 @@ test('autopilot declares all 5 v0.9.0 halt reasons', () => {
       content.includes(halt),
       `autopilot/SKILL.md missing v0.9.0 halt reason: ${halt}`,
     );
+  }
+});
+
+test('public API skills block matches commands and documented skill-body inputs', () => {
+  const contract = publicApiSkills();
+  const commandNames = readdirSync(join(PLUGIN_ROOT, 'commands'))
+    .filter((name) => name.endsWith('.md'))
+    .map((name) => name.slice(0, -3))
+    .sort();
+  assert.deepEqual(contract.items.map((item) => item.command.name).sort(), commandNames);
+  for (const item of contract.items) {
+    assert.deepEqual(item.command, commandFrontmatter(item.command.name));
+    const body = readSkill(item.skill);
+    for (const input of item.inputs) {
+      assert.match(body, new RegExp(`\\b${input}\\b`, 'm'),
+        `${item.skill} must document input ${input}`);
+    }
   }
 });
 

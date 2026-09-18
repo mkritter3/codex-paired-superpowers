@@ -1,0 +1,7513 @@
+# Public API contract
+
+This document names the supported user-facing surface of codex-paired-superpowers. The prose explains intent; the seven JSON blocks are the machine-readable source of truth. Each item records its stability and first contract release.
+
+## Skills
+
+The stable slash commands are derived from command filenames and their argument hints. Their inputs are the names in the delegated skill body's input section.
+
+## Bridge CLI
+
+Every runtime verb is inventoried below. Cases are executable coverage records. Flag contracts describe the permissive parser; individual handlers enforce required values. JSON output types use JSON-domain names. A manual entry means static extraction encountered an opaque construct; its region digest makes changes reviewable.
+
+## Execution wrapper
+
+The wrapper publishes an atomic started record before launch and replaces it with an exited record after completion. Child exit codes pass through unless the wrapper reports its own documented usage, persistence, configuration, or signal outcome.
+
+## Doctor
+
+JSON consumers may rely on the envelope and check names. Human consumers may rely on one status-prefixed line per check and the exit rule, not sentence wording.
+
+## Project configuration
+
+The schema describes accepted shape. Runtime cases separately pin permissive versions and unknown keys, defaults, environment-dependent validation, and error precedence without changing the loader.
+
+## Sidecars
+
+Version 1 and the initial top-level field set are stable. Later lifecycle fields remain additive.
+
+## Semantic versioning
+
+Stable breaking changes require a major release; stable additions require a minor release. Except for the bridge CLI entry point, files under lib are internal implementation.
+
+## Maintaining this document
+
+Any slice changing a pinned module or pinned JSON input must run `node scripts/cli-surface.mjs --digest --write` before verification and commit the resulting document diff in the same reviewed commit. The command may update only `closure`, `module_digest`, and `input_digest`; behavior cases always require deliberate review.
+
+```json public-api:skills
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "items": [
+    {
+      "stability": "stable",
+      "since": "0.18.0",
+      "skill": "execution",
+      "command": {
+        "name": "execute",
+        "argument_hint": "driver=<interactive|autopilot> <plan-path>  |  omit arguments to resume one autopilot run"
+      },
+      "inputs": [
+        "driver",
+        "plan"
+      ]
+    },
+    {
+      "stability": "stable",
+      "since": "0.18.0",
+      "skill": "autopilot",
+      "command": {
+        "name": "autopilot",
+        "argument_hint": "[plan-path]  (omit to resume the in-progress run)"
+      },
+      "inputs": [
+        "plan"
+      ]
+    }
+  ]
+}
+```
+
+```json public-api:cli-verbs
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "unknown_verb": {
+    "exit": 2,
+    "stderr_prefix": "available: "
+  },
+  "expansions": [
+    {
+      "site": "lib/codex-bridge/cli-harness/adapters/registry.js",
+      "roots": "lib/codex-bridge/cli-harness/adapters/*.js",
+      "inputs": "lib/codex-bridge/cli-clients/*.json"
+    }
+  ],
+  "verbs": {
+    "anchor-clear": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "repoRoot"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "anchor-clear"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "anchor-clear",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "anchor-read": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "repoRoot"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "anchor-read"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "anchor-read",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "empty-valid-repo",
+          "invocation": {
+            "args": [
+              "anchor-read",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "json-present",
+          "invocation": {
+            "args": [
+              "anchor-read",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "anchor-present"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "anchor-write": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "repoRoot",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "anchor-write"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "anchor-write",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "anchor-write",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "app-state-get": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "app-state-get"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "app-state-get",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "app-state-init": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "goals",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "goals",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "app-state-init"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-goals",
+          "invocation": {
+            "args": [
+              "app-state-init",
+              "--goals",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "goals"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "app-state-init",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "app-state-mark-goal-shipped": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "goalId",
+        "planPath",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "goalId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "planPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "app-state-mark-goal-shipped"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-goalId",
+          "invocation": {
+            "args": [
+              "app-state-mark-goal-shipped",
+              "--goalId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "goalId"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-planPath",
+          "invocation": {
+            "args": [
+              "app-state-mark-goal-shipped",
+              "--planPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "planPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "app-state-mark-goal-shipped",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "app-state-next-plan-context": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [
+        "active_plan",
+        "goals_shipped_count",
+        "shipped_goals",
+        "shipped_plans",
+        "total_goals",
+        "unshipped_goals"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "active_plan": "object|null",
+        "goals_shipped_count": "number",
+        "shipped_goals": "array",
+        "shipped_plans": "array",
+        "total_goals": "number",
+        "unshipped_goals": "array"
+      },
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "app-state-next-plan-context"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "app-state-next-plan-context",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "initialized-json",
+          "invocation": {
+            "args": [
+              "app-state-next-plan-context",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "app-state"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": [
+              "active_plan",
+              "goals_shipped_count",
+              "shipped_goals",
+              "shipped_plans",
+              "total_goals",
+              "unshipped_goals"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "uninitialized-usage",
+          "invocation": {
+            "args": [
+              "app-state-next-plan-context",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "app-state-set-plan": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "planPath",
+        "shipped",
+        "specPath",
+        "started"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "planPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "shipped",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "started",
+          "required": false,
+          "value_type": "boolean"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "app-state-set-plan"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-planPath",
+          "invocation": {
+            "args": [
+              "app-state-set-plan",
+              "--planPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "planPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-shipped",
+          "invocation": {
+            "args": [
+              "app-state-set-plan",
+              "--shipped"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "shipped"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "app-state-set-plan",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-started",
+          "invocation": {
+            "args": [
+              "app-state-set-plan",
+              "--started"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "started"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "honest-reporting-clear": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "cwd"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "cwd",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "honest-reporting-clear"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-cwd",
+          "invocation": {
+            "args": [
+              "honest-reporting-clear",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "honest-reporting-is-active": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "cwd"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "cwd",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "honest-reporting-is-active"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-cwd",
+          "invocation": {
+            "args": [
+              "honest-reporting-is-active",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "honest-reporting-mark-active": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "cwd",
+        "skill",
+        "spec",
+        "ttl-hours"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [
+        "marker",
+        "path"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "cwd",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "skill",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "spec",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "ttl-hours",
+          "required": false,
+          "value_type": "number"
+        }
+      ],
+      "stdout_types": {
+        "marker": "object",
+        "path": "string"
+      },
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "honest-reporting-mark-active"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-cwd",
+          "invocation": {
+            "args": [
+              "honest-reporting-mark-active",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-skill",
+          "invocation": {
+            "args": [
+              "honest-reporting-mark-active",
+              "--skill",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "skill"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "marker",
+              "path"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-spec",
+          "invocation": {
+            "args": [
+              "honest-reporting-mark-active",
+              "--spec",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "spec"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-ttl-hours",
+          "invocation": {
+            "args": [
+              "honest-reporting-mark-active",
+              "--ttl-hours",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "ttl-hours"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "honest-reporting-marker-path": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "cwd"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "cwd",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "honest-reporting-marker-path"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "text"
+            }
+          }
+        },
+        {
+          "case": "flag-cwd",
+          "invocation": {
+            "args": [
+              "honest-reporting-marker-path",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "text"
+            }
+          }
+        }
+      ]
+    },
+    "honest-reporting-read-marker": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "cwd"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "cwd",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "honest-reporting-read-marker"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-cwd",
+          "invocation": {
+            "args": [
+              "honest-reporting-read-marker",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "live-validation-parse": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "tier"
+      ],
+      "exits": [
+        0,
+        2
+      ],
+      "stdoutKeys": [
+        "coverage",
+        "tier"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "tier",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "coverage": "object",
+        "tier": "string"
+      },
+      "exit_meanings": {
+        "0": "success",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "live-validation-parse"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-tier",
+          "invocation": {
+            "args": [
+              "live-validation-parse",
+              "--tier",
+              "standard"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "tier"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "valid-standard-json",
+          "invocation": {
+            "args": [
+              "live-validation-parse"
+            ],
+            "stdin": "[\"tier: standard\",\"live.scenarios-covered: c\",\"live.preconditions-enforced: c\",\"live.user-takeover-safe: c\",\"live.evidence-quality: c\",\"live.assertions-visible: c\",\"live.logs-reviewed: c\",\"live.flake-triaged: c\",\"live.failures-fixed: c\",\"live.regressions-rerun: c\",\"live.cleanup-recorded: c\",\"live.deferred-justified: c\",\"live.environment-reproducible: c\",\"live.residual-risk: c\"]"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": [
+              "coverage",
+              "tier"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "mailbox-mark-read": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "actor",
+        "for",
+        "id",
+        "repoRoot"
+      ],
+      "exits": [
+        0,
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "actor",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "for",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "id",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "0": "success",
+        "1": "operation failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-actor",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--actor",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "actor"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-for",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--for",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "for"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-id",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--id",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "id"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "success",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--id",
+              "$MESSAGE_ID",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "mailbox-message"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "operation-failure",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--id",
+              "$MESSAGE_ID",
+              "--repoRoot",
+              "/dev/null"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "mailbox-mark-read-batch": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "actor",
+        "for",
+        "message-ids",
+        "repoRoot"
+      ],
+      "exits": [
+        0,
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "actor",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "for",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "message-ids",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "0": "success",
+        "1": "operation failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-actor",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--actor",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "actor"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-for",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--for",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "for"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-message-ids",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--message-ids",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "message-ids"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "success",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--message-ids",
+              "msg-2026-01-01T00-00-00-000Z-0001",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "operation-failure",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--message-ids",
+              "msg-2026-01-01T00-00-00-000Z-0001",
+              "--repoRoot",
+              "/dev/null"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "mailbox-read": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "actor",
+        "for",
+        "json",
+        "repoRoot",
+        "unread"
+      ],
+      "exits": [
+        0,
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "actor",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "for",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "json",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "unread",
+          "required": false,
+          "value_type": "boolean"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "0": "success",
+        "1": "operation failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "mailbox-read"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2,
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-actor",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--actor",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "actor"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-for",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--for",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "for"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-json",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--json"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "json"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-unread",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--unread"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "unread"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "success",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ],
+      "manual": {
+        "reason": "the literal exit 1 is a defensive catch for a non-MailboxError, while all current readMailbox storage failures are normalized to exit 2",
+        "region_digest": "sha256:d3123ac61f48f81e830b09c436e348ecab4f96fee846806824e8188c72182240"
+      }
+    },
+    "mailbox-write": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "color",
+        "from",
+        "message-json-stdin",
+        "repoRoot",
+        "summary",
+        "text",
+        "text-stdin",
+        "to"
+      ],
+      "exits": [
+        0,
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "color",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "from",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "message-json-stdin",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "summary",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "text",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "text-stdin",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "to",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "0": "success",
+        "1": "operation failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "mailbox-write"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-color",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--color",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "color"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-from",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--from",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "from"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-message-json-stdin",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--message-json-stdin"
+            ],
+            "stdin": "{}"
+          },
+          "covers": {
+            "flags": [
+              "message-json-stdin"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-summary",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--summary",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "summary"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-text",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--text",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "text"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-text-stdin",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--text-stdin"
+            ],
+            "stdin": "contract"
+          },
+          "covers": {
+            "flags": [
+              "text-stdin"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-to",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--to",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "to"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "success",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--to",
+              "orchestrator",
+              "--from",
+              "slice-1",
+              "--text",
+              "contract",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "operation-failure",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--to",
+              "orchestrator",
+              "--from",
+              "slice-1",
+              "--text",
+              "contract",
+              "--repoRoot",
+              "/dev/null"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "model-role": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "format",
+        "repoRoot",
+        "role"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [
+        "args",
+        "cli",
+        "command",
+        "effort",
+        "insertAfter",
+        "model",
+        "role",
+        "sources"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "format",
+          "required": false,
+          "value_type": "json|flags|mcp"
+        },
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "role",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "args": "array",
+        "cli": "string",
+        "command": "string",
+        "effort": "string",
+        "insertAfter": "string|null",
+        "model": "string",
+        "role": "string",
+        "sources": "object"
+      },
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "model-role"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "planning-json",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--role",
+              "planning",
+              "--format",
+              "json"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role",
+              "format"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "args",
+              "cli",
+              "command",
+              "effort",
+              "insertAfter",
+              "model",
+              "role",
+              "sources"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "planning-flags",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--role",
+              "planning",
+              "--format",
+              "flags"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role",
+              "format"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "text"
+            }
+          }
+        },
+        {
+          "case": "planning-mcp",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--role",
+              "planning",
+              "--format",
+              "mcp"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role",
+              "format"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-format",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--format",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "format"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-role",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--role",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "model-roles": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "repoRoot"
+      ],
+      "exits": [],
+      "stdoutKeys": [
+        "validated_cli_version"
+      ],
+      "unsupported": [
+        "stdout-spread"
+      ],
+      "flag_contract": [
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "validated_cli_version": "string"
+      },
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "model-roles"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": [
+              "validated_cli_version"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "model-roles",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ],
+      "manual": {
+        "reason": "stdout object spread requires manual review of the complete handler region",
+        "region_digest": "sha256:105584241c5c05c13b4a1a79e14fb349cc9606c93155bf23ff568246c8b04f99"
+      }
+    },
+    "parse-skip-frontmatter": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [],
+      "exits": [
+        0,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [],
+      "stdout_types": {},
+      "exit_meanings": {
+        "0": "success",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "parse-skip-frontmatter"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "malformed-directive",
+          "invocation": {
+            "args": [
+              "parse-skip-frontmatter"
+            ],
+            "stdin": "live-verification: skip"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "reviewer-thread-open": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "planPath",
+        "repoRoot",
+        "role",
+        "sha",
+        "specPath"
+      ],
+      "exits": [
+        1,
+        2
+      ],
+      "stdoutKeys": [
+        "content",
+        "exit",
+        "ok",
+        "status",
+        "threadId",
+        "usage",
+        "warnings"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "planPath",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "role",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "sha",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "content": "string",
+        "exit": "number",
+        "ok": "boolean",
+        "status": "string",
+        "threadId": "string",
+        "usage": "object|null",
+        "warnings": "array"
+      },
+      "exit_meanings": {
+        "1": "operation failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-planPath",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--planPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "planPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-role",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--role",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sha",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--sha",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sha"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "agy-success-json",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "review",
+            "setup": "reviewer-success"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": [
+              "content",
+              "exit",
+              "ok",
+              "status",
+              "threadId",
+              "usage",
+              "warnings"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "agy-failure-json",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "review",
+            "setup": "reviewer-failure"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": [
+              "content",
+              "exit",
+              "ok",
+              "status",
+              "threadId",
+              "usage",
+              "warnings"
+            ]
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "reviewer-thread-reply": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "planPath",
+        "repoRoot",
+        "role",
+        "sha",
+        "specPath"
+      ],
+      "exits": [
+        1,
+        2
+      ],
+      "stdoutKeys": [
+        "content",
+        "exit",
+        "ok",
+        "status",
+        "threadId",
+        "usage",
+        "warnings"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "planPath",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "role",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "sha",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "content": "string",
+        "exit": "number",
+        "ok": "boolean",
+        "status": "string",
+        "threadId": "string",
+        "usage": "object|null",
+        "warnings": "array"
+      },
+      "exit_meanings": {
+        "1": "operation failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-planPath",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--planPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "planPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-role",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--role",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sha",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--sha",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sha"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "agy-success-json",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "review",
+            "setup": "reviewer-reply"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": [
+              "content",
+              "exit",
+              "ok",
+              "status",
+              "threadId",
+              "usage",
+              "warnings"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "agy-failure-json",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "review",
+            "setup": "reviewer-failure"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": [
+              "content",
+              "exit",
+              "ok",
+              "status",
+              "threadId",
+              "usage",
+              "warnings"
+            ]
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "scenario-validate": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "require-scenarios"
+      ],
+      "exits": [
+        0,
+        2
+      ],
+      "stdoutKeys": [
+        "deferred",
+        "ok",
+        "scenarios"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "require-scenarios",
+          "required": false,
+          "value_type": "boolean"
+        }
+      ],
+      "stdout_types": {
+        "deferred": "array",
+        "ok": "boolean",
+        "scenarios": "array"
+      },
+      "exit_meanings": {
+        "0": "success",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "scenario-validate"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-require-scenarios",
+          "invocation": {
+            "args": [
+              "scenario-validate",
+              "--require-scenarios"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "require-scenarios"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "valid-scenario-json",
+          "invocation": {
+            "args": [
+              "scenario-validate"
+            ],
+            "stdin": "{\"scenarios\":[{\"id\":\"lv-001\",\"title\":\"contract\",\"risk\":\"happy-path\",\"why\":\"contract\",\"preconditions\":[],\"steps\":[{\"action\":\"click\",\"target\":\"Button\"}],\"assertions\":[\"Visible\"],\"diagnostic_expectations\":[],\"timeout_ms\":60000}],\"deferred\":[]}"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": [
+              "deferred",
+              "ok",
+              "scenarios"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-add-contention": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "contention",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "contention",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-add-contention"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-contention",
+          "invocation": {
+            "args": [
+              "sidecar-add-contention",
+              "--contention",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "contention"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-add-contention",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-append-audit": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "audit",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "audit",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-append-audit"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-audit",
+          "invocation": {
+            "args": [
+              "sidecar-append-audit",
+              "--audit",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "audit"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-append-audit",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-append-implement-dispatch": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "dispatch",
+        "sliceId",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "dispatch",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "sliceId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-append-implement-dispatch"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-dispatch",
+          "invocation": {
+            "args": [
+              "sidecar-append-implement-dispatch",
+              "--dispatch",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "dispatch"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sliceId",
+          "invocation": {
+            "args": [
+              "sidecar-append-implement-dispatch",
+              "--sliceId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sliceId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-append-implement-dispatch",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-append-round": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "allow-over-budget",
+        "force-round",
+        "headSha",
+        "round",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "allow-over-budget",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "force-round",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "headSha",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "round",
+          "required": true,
+          "value_type": "number"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-append-round"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-allow-over-budget",
+          "invocation": {
+            "args": [
+              "sidecar-append-round",
+              "--allow-over-budget"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "allow-over-budget"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-force-round",
+          "invocation": {
+            "args": [
+              "sidecar-append-round",
+              "--force-round"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "force-round"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-headSha",
+          "invocation": {
+            "args": [
+              "sidecar-append-round",
+              "--headSha",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "headSha"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-round",
+          "invocation": {
+            "args": [
+              "sidecar-append-round",
+              "--round",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "round"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-append-round",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-append-round-with-audits": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "allow-over-budget",
+        "force-round",
+        "headSha",
+        "payload",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "allow-over-budget",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "force-round",
+          "required": false,
+          "value_type": "boolean"
+        },
+        {
+          "name": "headSha",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "payload",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-allow-over-budget",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits",
+              "--allow-over-budget"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "allow-over-budget"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-force-round",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits",
+              "--force-round"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "force-round"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-headSha",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits",
+              "--headSha",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "headSha"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-payload",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits",
+              "--payload",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "payload"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-get-autopilot": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-get-autopilot"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-get-autopilot",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-get-dependency-graph": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-get-dependency-graph"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-get-dependency-graph",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-get-goals": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-get-goals"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-get-goals",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-has-audit": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "phase",
+        "round",
+        "side",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "phase",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "round",
+          "required": true,
+          "value_type": "number"
+        },
+        {
+          "name": "side",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-has-audit"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-has-audit",
+              "--phase",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-round",
+          "invocation": {
+            "args": [
+              "sidecar-has-audit",
+              "--round",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "round"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-side",
+          "invocation": {
+            "args": [
+              "sidecar-has-audit",
+              "--side",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "side"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-has-audit",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-has-executed-verification": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "phase",
+        "round",
+        "side",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "phase",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "round",
+          "required": true,
+          "value_type": "number"
+        },
+        {
+          "name": "side",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-has-executed-verification"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-has-executed-verification",
+              "--phase",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-round",
+          "invocation": {
+            "args": [
+              "sidecar-has-executed-verification",
+              "--round",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "round"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-side",
+          "invocation": {
+            "args": [
+              "sidecar-has-executed-verification",
+              "--side",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "side"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-has-executed-verification",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-init": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "feature",
+        "model",
+        "reasoning",
+        "specPath",
+        "threadId"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "feature",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "model",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "reasoning",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "threadId",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-init"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-feature",
+          "invocation": {
+            "args": [
+              "sidecar-init",
+              "--feature",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "feature"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-model",
+          "invocation": {
+            "args": [
+              "sidecar-init",
+              "--model",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "model"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-reasoning",
+          "invocation": {
+            "args": [
+              "sidecar-init",
+              "--reasoning",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "reasoning"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-init",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-threadId",
+          "invocation": {
+            "args": [
+              "sidecar-init",
+              "--threadId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "threadId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-list-audits": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "phase",
+        "round",
+        "side",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "phase",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "round",
+          "required": false,
+          "value_type": "number"
+        },
+        {
+          "name": "side",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-list-audits"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-list-audits",
+              "--phase",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-round",
+          "invocation": {
+            "args": [
+              "sidecar-list-audits",
+              "--round",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "round"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-side",
+          "invocation": {
+            "args": [
+              "sidecar-list-audits",
+              "--side",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "side"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-list-audits",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-path": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-path"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-path",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "text"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-replay-context": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-replay-context"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-replay-context",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-requires-verification": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "phase"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "phase",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-requires-verification"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-requires-verification",
+              "--phase",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-rotate-thread-id": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "newThreadId",
+        "oldThreadId",
+        "phase",
+        "reason",
+        "role",
+        "round",
+        "specPath",
+        "threadConfig"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "newThreadId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "oldThreadId",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "phase",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "role",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "round",
+          "required": false,
+          "value_type": "number"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "threadConfig",
+          "required": false,
+          "value_type": "json"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-newThreadId",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--newThreadId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "newThreadId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-oldThreadId",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--oldThreadId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "oldThreadId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--phase",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-reason",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--reason",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "reason"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-role",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--role",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-round",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--round",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "round"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-threadConfig",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--threadConfig",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "threadConfig"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-scan-stale": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "max-age-hours",
+        "repoRoot"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "max-age-hours",
+          "required": false,
+          "value_type": "number"
+        },
+        {
+          "name": "repoRoot",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-scan-stale"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-max-age-hours",
+          "invocation": {
+            "args": [
+              "sidecar-scan-stale",
+              "--max-age-hours",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "max-age-hours"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        },
+        {
+          "case": "flag-repoRoot",
+          "invocation": {
+            "args": [
+              "sidecar-scan-stale",
+              "--repoRoot",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "repoRoot"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-autopilot": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "block",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "block",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-autopilot"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-block",
+          "invocation": {
+            "args": [
+              "sidecar-set-autopilot",
+              "--block",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "block"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-autopilot",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-dependency-graph": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "graph",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "graph",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-dependency-graph"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-graph",
+          "invocation": {
+            "args": [
+              "sidecar-set-dependency-graph",
+              "--graph",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "graph"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-dependency-graph",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-goals": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "block",
+        "specPath"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "block",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-goals"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-block",
+          "invocation": {
+            "args": [
+              "sidecar-set-goals",
+              "--block",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "block"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-goals",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-implement-bootstrap": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "bootstrap",
+        "sliceId",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "bootstrap",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "sliceId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-bootstrap"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-bootstrap",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-bootstrap",
+              "--bootstrap",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "bootstrap"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sliceId",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-bootstrap",
+              "--sliceId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sliceId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-bootstrap",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-implement-meta": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "meta",
+        "sliceId",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "meta",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "sliceId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-meta"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-meta",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-meta",
+              "--meta",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "meta"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sliceId",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-meta",
+              "--sliceId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sliceId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-meta",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-live-verification": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "block",
+        "sliceId",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "block",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "sliceId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-live-verification"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-block",
+          "invocation": {
+            "args": [
+              "sidecar-set-live-verification",
+              "--block",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "block"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sliceId",
+          "invocation": {
+            "args": [
+              "sidecar-set-live-verification",
+              "--sliceId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sliceId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-live-verification",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-phase": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "phase",
+        "sliceId",
+        "specPath",
+        "state"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "phase",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "sliceId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "state",
+          "required": true,
+          "value_type": "json"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-phase"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-set-phase",
+              "--phase",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sliceId",
+          "invocation": {
+            "args": [
+              "sidecar-set-phase",
+              "--sliceId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sliceId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-phase",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-state",
+          "invocation": {
+            "args": [
+              "sidecar-set-phase",
+              "--state",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "state"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-set-slice": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "sliceId",
+        "specPath",
+        "state"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "sliceId",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "state",
+          "required": true,
+          "value_type": "json"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-slice"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-sliceId",
+          "invocation": {
+            "args": [
+              "sidecar-set-slice",
+              "--sliceId",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "sliceId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-slice",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-state",
+          "invocation": {
+            "args": [
+              "sidecar-set-slice",
+              "--state",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "state"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-show": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-show"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-show",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "sidecar-thread-id": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "role",
+        "specPath"
+      ],
+      "exits": [],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "role",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {},
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-thread-id"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-role",
+          "invocation": {
+            "args": [
+              "sidecar-thread-id",
+              "--role",
+              "__contract__"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "role"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-thread-id",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
+    "validation-parse": {
+      "stability": "stable",
+      "since": "0.18.0",
+      "flags": [
+        "tier"
+      ],
+      "exits": [
+        0,
+        2
+      ],
+      "stdoutKeys": [
+        "coverage",
+        "tier"
+      ],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "tier",
+          "required": false,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "coverage": "object",
+        "tier": "string"
+      },
+      "exit_meanings": {
+        "0": "success",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "validation-parse"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-tier",
+          "invocation": {
+            "args": [
+              "validation-parse",
+              "--tier",
+              "standard"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "tier"
+            ],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "valid-standard-json",
+          "invocation": {
+            "args": [
+              "validation-parse"
+            ],
+            "stdin": "[\"tier: standard\",\"happy: c\",\"edge.zero-null-empty: c\",\"edge.boundary: c\",\"edge.large-input: c\",\"edge.concurrent: c\",\"edge.adversarial: c\",\"fail.dependency: c\",\"fail.malformed-input: c\",\"fail.exception-path: c\",\"integration.cross-module: c\",\"stress.scale: not triggered\",\"perf.slo: not triggered\",\"compat.breaking: not triggered\"]"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": [
+              "coverage",
+              "tier"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "closure": [
+    "lib/codex-bridge/active-anchor.js",
+    "lib/codex-bridge/cli-harness/adapters/agy.js",
+    "lib/codex-bridge/cli-harness/adapters/claude-cli.js",
+    "lib/codex-bridge/cli-harness/adapters/codex.js",
+    "lib/codex-bridge/cli-harness/adapters/ollama.js",
+    "lib/codex-bridge/cli-harness/adapters/registry.js",
+    "lib/codex-bridge/cli-harness/harness.js",
+    "lib/codex-bridge/cli-harness/normalizer.js",
+    "lib/codex-bridge/cli-harness/process-lifecycle.js",
+    "lib/codex-bridge/cli.js",
+    "lib/codex-bridge/halt-envelope.js",
+    "lib/codex-bridge/honest-reporting-marker.js",
+    "lib/codex-bridge/implementer/member-id.js",
+    "lib/codex-bridge/implementer/secret-redaction.js",
+    "lib/codex-bridge/live-validation-coverage.js",
+    "lib/codex-bridge/mailbox.js",
+    "lib/codex-bridge/models.js",
+    "lib/codex-bridge/project-config.js",
+    "lib/codex-bridge/reviewer-thread.js",
+    "lib/codex-bridge/scenario-validator.js",
+    "lib/codex-bridge/sidecar.js",
+    "lib/codex-bridge/skip-frontmatter.js",
+    "lib/codex-bridge/validation-coverage.js",
+    "lib/codex-bridge/worktree.js"
+  ],
+  "module_digest": {
+    "lib/codex-bridge/active-anchor.js": "sha256:efeec4ebb5735a634b5c2314a0ab3e4812d31a0446df9857bafbcca04fb908a5",
+    "lib/codex-bridge/cli-harness/adapters/agy.js": "sha256:382a4b360e58045da4f9cc6f7b0b8d5b37d9a8b8d365f2b7e1a045a180f29b81",
+    "lib/codex-bridge/cli-harness/adapters/claude-cli.js": "sha256:1f34639aea37ee337d497c85223cb266822d8029bddaf37b036dc6a1bc46193c",
+    "lib/codex-bridge/cli-harness/adapters/codex.js": "sha256:a92a130d27d669d627b8a756a711eafdd1b74ae08b6fb88d1190691193e41337",
+    "lib/codex-bridge/cli-harness/adapters/ollama.js": "sha256:697e56f42472f8df0e1aa63c3b20d617549bfd8e2714174fc9259d8dde0ed2ca",
+    "lib/codex-bridge/cli-harness/adapters/registry.js": "sha256:bc72918156350df68b0c9e07837f992fde4dd458878bd0128d2ff4c22a0b9817",
+    "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
+    "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",
+    "lib/codex-bridge/cli-harness/process-lifecycle.js": "sha256:d35fef32b503bc5e40f7f58e27e0599c07f96d164f36f25cd52425aae5dac978",
+    "lib/codex-bridge/cli.js": "sha256:d4c95a5be540ee5d5d3ed8df5283832af8a0bcf832de30f88c113f24e23c8041",
+    "lib/codex-bridge/halt-envelope.js": "sha256:daca46b4d7f6a5b1c6c0055751254d1bbcf66eefe711d8e5cb4c3a944a38d731",
+    "lib/codex-bridge/honest-reporting-marker.js": "sha256:a8b076f88fb440f6b0b0508f54ec16873f3d83dc46b4cee81f7c71416e89d2f2",
+    "lib/codex-bridge/implementer/member-id.js": "sha256:3dab9201d15462172d8e37247838c1c49329055caf97707a0704b711e1d21f94",
+    "lib/codex-bridge/implementer/secret-redaction.js": "sha256:c5e57d3a3a8513cb38fc1af169534806ef889e9dae7097d298a1c8d5d019e035",
+    "lib/codex-bridge/live-validation-coverage.js": "sha256:a7b8abbc4463b8d9a43ca404baae6663e00216174f51edd26334d2f8f9a5bc1e",
+    "lib/codex-bridge/mailbox.js": "sha256:786e519d904e1176f12227e403af8107071e4594b0d9178d64e5627044fd1a06",
+    "lib/codex-bridge/models.js": "sha256:2f5e000fded6907ac318e6c6e6f8d1a5eea023a5b200e4689fffa3b6cbcdcff2",
+    "lib/codex-bridge/project-config.js": "sha256:ca8cf5b84131d60113a08b63eae8e4efb28558e7ec78c09330a949b63205e11b",
+    "lib/codex-bridge/reviewer-thread.js": "sha256:62bf4c6674baafec797a72465cc453a284d24810362f79003e8ac2c6e080a764",
+    "lib/codex-bridge/scenario-validator.js": "sha256:2326e5d1b9c8f1ba9e78a9b2291dcca21211b7060a26141849f5c593a410c5f1",
+    "lib/codex-bridge/sidecar.js": "sha256:d8a5ebcdef077c09ca846d6102b1d206f0da3bd1d3e569d9d941539508b618ba",
+    "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
+    "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
+    "lib/codex-bridge/worktree.js": "sha256:d8ae95af12ae41765c1b1f55b661c52a059301a38a0f723fc08f2b97c4d9f529"
+  },
+  "input_digest": {
+    "lib/codex-bridge/cli-clients/agy.json": "sha256:b1ed7727d9dc0e80a457b9ac1dbec752dec8e7cbd7005442eb900d94962b83a4",
+    "lib/codex-bridge/cli-clients/claude-cli.json": "sha256:1e4a6a59bd66c643d0e5b822c33c144b4394aba667f92d116a2c3ab38571326f",
+    "lib/codex-bridge/cli-clients/claude.json": "sha256:f27bd9fa19a81fca71209b8a775933296cdfcd5941326d07b7cc1e9820160abb",
+    "lib/codex-bridge/cli-clients/codex.json": "sha256:76c0a1669e30496dde1779f9756788d7916370e986c7709d6ae3224e7cce31a9",
+    "lib/codex-bridge/cli-clients/ollama.json": "sha256:7d95e72bb9a72ff30b8fc0f8c2e7dfc278bd867ec2b1b31ad6052f1157292984",
+    "lib/codex-bridge/cli-clients/qwen.json": "sha256:6ba38b51b5454785584db5852473fa0a0f35fe7c1cb532a4a42750a3390c837d"
+  }
+}
+```
+
+```json public-api:wrapper
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "flags": [
+    {
+      "name": "--model-role",
+      "value_type": "string"
+    },
+    {
+      "name": "--repo-root",
+      "value_type": "path"
+    },
+    {
+      "name": "--cwd",
+      "value_type": "path"
+    },
+    {
+      "name": "--",
+      "value_type": "separator"
+    }
+  ],
+  "exit_codes": [
+    0,
+    64,
+    74,
+    78,
+    129,
+    130,
+    143,
+    "child-passthrough"
+  ],
+  "status_file": {
+    "required_fields": [
+      "completed_at",
+      "exit_code",
+      "signal",
+      "started_at",
+      "state"
+    ],
+    "optional_fields": [
+      "cli",
+      "cwd",
+      "effort",
+      "error",
+      "model",
+      "model_role"
+    ],
+    "types": {
+      "state": "started|exited",
+      "exit_code": "number|null",
+      "signal": "string|null",
+      "started_at": "string",
+      "completed_at": "string|null"
+    },
+    "lifecycle": [
+      "started",
+      "exited"
+    ]
+  }
+}
+```
+
+```json public-api:doctor
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "flag": "--json",
+  "exit": {
+    "no_fail": 0,
+    "any_fail": 1
+  },
+  "json_envelope": {
+    "keys": [
+      "availability",
+      "checks",
+      "summary"
+    ],
+    "check_fields": {
+      "status": "pass|warn|fail",
+      "name": "string",
+      "detail": "string",
+      "fix": "string|null"
+    }
+  },
+  "check_names": [
+    "platform",
+    "node",
+    "codex-cli",
+    "codex-auth",
+    "git",
+    "vendored-deps",
+    "bridge-cli",
+    "hooks",
+    "project-state-dir",
+    "models",
+    "codex-transport"
+  ],
+  "human": {
+    "one_line_per_check": true,
+    "status_prefixes": [
+      "PASS",
+      "WARN",
+      "FAIL"
+    ],
+    "wording_stable": false
+  }
+}
+```
+
+```json public-api:project-config
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": [
+      "version",
+      "app",
+      "live_verification"
+    ],
+    "properties": {
+      "version": {
+        "type": "number"
+      },
+      "app": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "web",
+              "desktop",
+              "mobile",
+              "cli",
+              "library"
+            ]
+          }
+        },
+        "additionalProperties": true
+      },
+      "live_verification": {
+        "type": "object"
+      },
+      "models": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "propertyNames": {
+              "enum": [
+                "planning",
+                "review",
+                "implement",
+                "implement_fallback"
+              ]
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "cli": {
+                  "enum": [
+                    "codex",
+                    "agy"
+                  ]
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "effort": {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                    "ultra"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        ]
+      },
+      "codex_dispatch": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "mailbox": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "additionalProperties": true
+  },
+  "runtime": [
+    {
+      "case": "minimal-defaults",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {}
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "version": 1,
+          "app": {
+            "type": "web"
+          },
+          "live_verification": {
+            "takeover": {
+              "mode": "confirm_each_phase_e",
+              "scheduled_windows": []
+            },
+            "cleanup": {
+              "on_success": "kill",
+              "on_halt": "kill",
+              "shutdown_command": null
+            },
+            "setup": {
+              "reset_command": null,
+              "seed_command": null,
+              "login_profiles": {},
+              "setup_timeout_ms": 60000
+            },
+            "logs": {
+              "include_process_output": true,
+              "max_bytes_per_source": 262144,
+              "max_excerpt_bytes_per_scenario": 32768,
+              "error_patterns": [
+                "ERROR",
+                "Unhandled",
+                "TypeError",
+                "500"
+              ],
+              "paths": []
+            }
+          },
+          "worktree_bootstrap": {
+            "symlinks": [
+              {
+                "path": "node_modules",
+                "required": false
+              },
+              {
+                "path": ".venv",
+                "required": false
+              },
+              {
+                "path": "venv",
+                "required": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "case": "version-2-permissive",
+      "input": {
+        "version": 2,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {}
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "version": 2
+        }
+      }
+    },
+    {
+      "case": "unknown-top-level-permissive",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "future_key": {
+          "ignoredByValidation": true
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "future_key": {
+            "ignoredByValidation": true
+          }
+        }
+      }
+    },
+    {
+      "case": "null-optional-blocks",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": null,
+        "codex_dispatch": null,
+        "mailbox": null
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "models": null,
+          "codex_dispatch": null,
+          "mailbox": null
+        }
+      }
+    },
+    {
+      "case": "unset-login-password-env",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "setup": {
+            "login_profiles": {
+              "primary": {
+                "password_env": "CPS_CONTRACT_MISSING_PASSWORD"
+              }
+            }
+          }
+        }
+      },
+      "env": {
+        "CPS_CONTRACT_MISSING_PASSWORD": null
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
+    },
+    {
+      "case": "error-precedence-version-before-app",
+      "input": {
+        "live_verification": {}
+      },
+      "expect": {
+        "error": "missing-field:version"
+      }
+    },
+    {
+      "case": "missing-app",
+      "input": {
+        "version": 1,
+        "live_verification": {}
+      },
+      "expect": {
+        "error": "missing-field:app"
+      }
+    },
+    {
+      "case": "malformed-models",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "implement": {
+            "model": 42
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
+    }
+  ]
+}
+```
+
+```json public-api:sidecar
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "version": 1,
+  "top_level_keys": [
+    "codex_session",
+    "created_at",
+    "feature",
+    "model",
+    "open_contentions",
+    "reasoning_effort",
+    "rounds",
+    "slice_reviews",
+    "thread_config",
+    "version"
+  ]
+}
+```
+
+```json public-api:semver
+{
+  "stability": "stable",
+  "since": "0.18.0",
+  "policy": {
+    "breaking_stable_change": "major",
+    "stable_addition": "minor",
+    "internal_change": "patch"
+  },
+  "wrapper_requirement": "role-aware invocations use --model-role",
+  "public": [
+    "commands/*.md",
+    "skills named by commands",
+    "lib/codex-bridge/cli.js",
+    "scripts/codex-exec-with-status.sh",
+    "bin/codex-paired-doctor",
+    ".codex-paired/project.json",
+    "sidecar version"
+  ],
+  "internal": [
+    "lib/** except lib/codex-bridge/cli.js"
+  ]
+}
+```
