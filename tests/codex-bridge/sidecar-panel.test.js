@@ -264,3 +264,19 @@ for (const path of ['appendRound', 'appendRoundWithAudits']) {
     rmSync(dir, { recursive: true, force: true });
   });
 }
+
+for (const path of ['appendRound', 'appendRoundWithAudits']) {
+  test(`${path}: a malformed Claude verdict in a panel round is rejected, a padded one canonicalized`, async () => {
+    const { dir, spec } = makeSpec();
+    setPanelRoster(spec, 'planning', ROSTER);
+    const memberAudits = ROSTER.map((member) => audit(member.member_id));
+    // "SHIPPED" is not SHIP for audit selection but is for prefix readers; it must never persist.
+    for (const bad of ['SHIPPED', 'ship', '', undefined]) {
+      await assert.rejects(async () => appendByPath(path, spec, round({ claude: bad, panel: panel(['SHIP', 'SHIP']) }), memberAudits), (error) => error.code === 'panel-round-invalid' && /claude verdict/.test(error.message));
+    }
+    assert.equal(loadSidecar(spec).rounds.length, 0);
+    await appendByPath(path, spec, round({ claude: ' REVISE ', panel: panel(['SHIP', 'SHIP']) }), memberAudits);
+    assert.equal(loadSidecar(spec).rounds[0].claude, 'REVISE');
+    rmSync(dir, { recursive: true, force: true });
+  });
+}
