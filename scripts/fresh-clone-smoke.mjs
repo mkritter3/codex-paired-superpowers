@@ -153,7 +153,7 @@ function findRunProcesses(runRootReal, marker) {
     process.platform === 'linux'
     && gap.source === 'proc'
     && gap.code === 'EACCES'
-    && /^\/proc\/\d+\/cwd$/.test(gap.target)
+    && /^\/proc\/\d+(?:\/cwd)?$/.test(gap.target)
   ));
   if (fatalGap) {
     throw new Error(`cwd process discovery incomplete at ${fatalGap.target}: ${fatalGap.code}`);

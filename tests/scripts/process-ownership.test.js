@@ -70,3 +70,52 @@ test('scripted linux and Darwin discovery return sorted unique cwd owners', () =
   });
   assert.deepEqual(darwin('/run/root'), { pids: [12], complete: true, gaps: [] });
 });
+
+test('linux discovery skips other users\' processes but keeps own-process permission errors as gaps', () => {
+  const owners = { '/proc/201': 1000, '/proc/202': 0, '/proc/203': 1000 };
+  const findProcessesUnder = createProcessOwnershipDiscovery({
+    platform: 'linux',
+    uid: 1000,
+    readdir: () => [dirent('201'), dirent('202'), dirent('203')],
+    ownerUid: (path) => owners[path],
+    readlink: (path) => {
+      if (path === '/proc/201/cwd') return '/run/root';
+      // Root's process: unreadable for a normal user. Must be out of scope, not a gap.
+      if (path === '/proc/202/cwd') throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      // Our own process refusing access is a genuine gap.
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    },
+    spawn: () => { throw new Error('not used'); },
+  });
+  assert.deepEqual(findProcessesUnder('/run/root'), {
+    pids: [201],
+    complete: false,
+    gaps: [{ source: 'proc', target: '/proc/203/cwd', code: 'EACCES' }],
+  });
+
+  const onlyOthersDenied = createProcessOwnershipDiscovery({
+    platform: 'linux',
+    uid: 1000,
+    readdir: () => [dirent('201'), dirent('202')],
+    ownerUid: (path) => owners[path],
+    readlink: (path) => {
+      if (path === '/proc/201/cwd') return '/elsewhere';
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    },
+    spawn: () => { throw new Error('not used'); },
+  });
+  assert.deepEqual(onlyOthersDenied('/run/root'), { pids: [], complete: true, gaps: [] });
+});
+
+test('darwin discovery scopes lsof to the injected uid', () => {
+  let seen;
+  const darwin = createProcessOwnershipDiscovery({
+    platform: 'darwin',
+    uid: 4242,
+    readdir: () => { throw new Error('not used'); },
+    readlink: () => { throw new Error('not used'); },
+    spawn: (_command, args) => { seen = args; return { status: 0, stdout: '', stderr: '' }; },
+  });
+  assert.deepEqual(darwin('/run/root'), { pids: [], complete: true, gaps: [] });
+  assert.deepEqual(seen, ['-a', '-d', 'cwd', '-u', '4242', '-F', 'pn']);
+});
