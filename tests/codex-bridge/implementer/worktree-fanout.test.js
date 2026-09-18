@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync,
+  readFileSync,
   writeFileSync,
   mkdirSync,
   symlinkSync,
@@ -31,6 +32,7 @@ import {
   appendImplementerEventLocked,
   readImplementerRun,
 } from '../../../lib/codex-bridge/sidecar.js';
+import { readMarkers } from '../../../lib/codex-bridge/checkout-markers.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -94,6 +96,13 @@ test('happy: creates 2 worktrees at correct paths; git worktree list shows them'
   });
   assert.ok(listOutput.includes(entry1.worktreePath), 'worktree list should include entry1 path');
   assert.ok(listOutput.includes(entry2.worktreePath), 'worktree list should include entry2 path');
+  for (const entry of [entry1, entry2]) {
+    const adminDir = readFileSync(join(entry.worktreePath, '.git'), 'utf8').trim().slice('gitdir: '.length);
+    const markers = readMarkers({ repoRoot, adminDir });
+    assert.equal(markers.ownership.state, 'valid');
+    assert.equal(markers.ownership.value.kind, 'fanout');
+    assert.equal(markers.ownership.value.base, baseSha);
+  }
 });
 
 // ── happy branch name: exactly implementer/<sliceId>/<memberIdSlug> ──────────
@@ -468,6 +477,11 @@ test('cleanupImplementerWorktrees({keepForensics: true}): worktrees+branches sti
     stdio: 'ignore',
   });
   assert.equal(branchCheck.status, 0, 'branch should still exist');
+  const adminDir = readFileSync(join(entry.worktreePath, '.git'), 'utf8').trim().slice('gitdir: '.length);
+  const markers = readMarkers({ repoRoot, adminDir });
+  assert.equal(markers.preservation.state, 'valid');
+  assert.equal(markers.preservation.value.reason, 'keepForensics');
+  assert.equal(markers.preservation.value.run_id, 'slice-3');
 });
 
 // ── cleanupImplementerWorktrees: keepForensics=false ─────────────────────────

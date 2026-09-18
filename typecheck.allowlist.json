@@ -2,6 +2,7 @@
   "version": 1,
   "files": [
     "lib/codex-bridge/availability/doctor-report.js",
+    "lib/codex-bridge/checkout-markers.js",
     "lib/codex-bridge/cli-harness/adapters/agy.js",
     "lib/codex-bridge/cli-harness/adapters/codex.js",
     "lib/codex-bridge/cli-harness/process-lifecycle.js",
@@ -16,6 +17,7 @@
     "lib/codex-bridge/sidecar.js",
     "lib/codex-bridge/thread-recovery.js",
     "lib/codex-bridge/types.js",
-    "lib/codex-bridge/worktree.js"
+    "lib/codex-bridge/worktree.js",
+    "scripts/lib/process-ownership.mjs"
   ]
 }

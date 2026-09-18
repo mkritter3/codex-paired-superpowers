@@ -1272,6 +1272,105 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ]
     },
+    "checkout-preserve": {
+      "stability": "stable",
+      "since": "0.19.0",
+      "flags": [
+        "path",
+        "reason",
+        "repoRoot",
+        "run"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "path",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "reason",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "run",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "2": "usage error or path is not a registered worktree"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "checkout-preserve"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "checkout-preserve",
+              "--path",
+              "$REPO",
+              "--reason",
+              "contract evidence",
+              "--run",
+              "contract-run",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "path",
+              "reason",
+              "repoRoot",
+              "run"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
     "honest-reporting-clear": {
       "stability": "stable",
       "since": "0.18.0",
@@ -10078,6 +10177,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
   },
   "closure": [
     "lib/codex-bridge/active-anchor.js",
+    "lib/codex-bridge/checkout-markers.js",
     "lib/codex-bridge/cli-harness/adapters/agy.js",
     "lib/codex-bridge/cli-harness/adapters/claude-cli.js",
     "lib/codex-bridge/cli-harness/adapters/codex.js",
@@ -10105,6 +10205,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
   ],
   "module_digest": {
     "lib/codex-bridge/active-anchor.js": "sha256:efeec4ebb5735a634b5c2314a0ab3e4812d31a0446df9857bafbcca04fb908a5",
+    "lib/codex-bridge/checkout-markers.js": "sha256:6dd57a3d7eb48b9979426739a3b2bdb546a7cc7ba63cb13231250104152983fa",
     "lib/codex-bridge/cli-harness/adapters/agy.js": "sha256:382a4b360e58045da4f9cc6f7b0b8d5b37d9a8b8d365f2b7e1a045a180f29b81",
     "lib/codex-bridge/cli-harness/adapters/claude-cli.js": "sha256:4e243005f48bf9616ab8c0da127017733cdae932eaee1d1d4ccdd04bdd0ac198",
     "lib/codex-bridge/cli-harness/adapters/codex.js": "sha256:a92a130d27d669d627b8a756a711eafdd1b74ae08b6fb88d1190691193e41337",
@@ -10113,7 +10214,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
     "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",
     "lib/codex-bridge/cli-harness/process-lifecycle.js": "sha256:d35fef32b503bc5e40f7f58e27e0599c07f96d164f36f25cd52425aae5dac978",
-    "lib/codex-bridge/cli.js": "sha256:7e795499b6b51fb69e2197a9435be5c15c1f6058ad4f35566a8ec46e01e6b644",
+    "lib/codex-bridge/cli.js": "sha256:aa44fae54cc901aebb9d875695a785db4b2c885cd6b612a1e2a00a6508631fb1",
     "lib/codex-bridge/halt-envelope.js": "sha256:daca46b4d7f6a5b1c6c0055751254d1bbcf66eefe711d8e5cb4c3a944a38d731",
     "lib/codex-bridge/honest-reporting-marker.js": "sha256:a8b076f88fb440f6b0b0508f54ec16873f3d83dc46b4cee81f7c71416e89d2f2",
     "lib/codex-bridge/implementer/member-id.js": "sha256:3dab9201d15462172d8e37247838c1c49329055caf97707a0704b711e1d21f94",
@@ -10128,7 +10229,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/sidecar.js": "sha256:4c8f0e545a22644330f864ccb84470a91e6c89626435e66ea2e1cd4cef5524d4",
     "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
     "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
-    "lib/codex-bridge/worktree.js": "sha256:e948959fc76f2917a89c52cebbe49bf2dcd6e028e52422802bc64e958e818a37"
+    "lib/codex-bridge/worktree.js": "sha256:b1e8fdb1a60e97f30b121bda853c1884434f6fcd98f96a4de03b13359fb08d42"
   },
   "input_digest": {
     "lib/codex-bridge/cli-clients/agy.json": "sha256:b1ed7727d9dc0e80a457b9ac1dbec752dec8e7cbd7005442eb900d94962b83a4",
