@@ -92,7 +92,18 @@ For the one-page mental model of drivers, splits, and review, see
 
 ## Prerequisites
 
-- **`codex` CLI** on PATH (v0.16.0 was validated against `0.153.4`; `doctor` warns on older builds), authenticated against an account with access to GPT-6 Astra and GPT-5.6. Install:
+**You bring your own CLIs and your own accounts.** This plugin orchestrates command-line coding
+tools that you install and authenticate yourself. It bundles no API keys, ships no credentials,
+and proxies nothing through any service of its own: every model call runs as a subprocess on your
+machine, signed in as you, billed to your account. Run `/superpowers-doctor` (or
+`bin/codex-paired-doctor`) at any time — it reports exactly which tools are present, which are
+authenticated, and which model roles are configured.
+
+**Required**
+
+- **`codex` CLI** on PATH, authenticated against an account with access to GPT-6 Astra and
+  GPT-5.6 (v0.16.0 was validated against `0.153.4`; `doctor` warns on older builds and on a build
+  whose MCP transport the plugin cannot use):
   ```bash
   # macOS / Linux (Homebrew):
   brew install openai/codex/codex
@@ -100,12 +111,32 @@ For the one-page mental model of drivers, splits, and review, see
   # or via npm (cross-platform):
   npm install -g @openai/codex
 
-  # then authenticate:
+  # then authenticate — this is your account, not the plugin's:
   codex login
   ```
-  See [openai/codex on GitHub](https://github.com/openai/codex) for source, alternative installers (Docker, GitHub Releases), and version requirements.
-- **Node.js v20+** on PATH (the bundled MCP server + the bridge CLI run as a Node subprocess; runtime deps are vendored in `node_modules/`, no `npm install` required). Supported platforms: **macOS and Linux** (Windows is unsupported; `doctor` reports it as FAIL). CI tests every released Node major from 20 through 26 on both platforms; `bin/codex-paired-doctor` names the same tested majors.
+  See [openai/codex on GitHub](https://github.com/openai/codex) for source, alternative installers
+  (Docker, GitHub Releases), and version requirements.
+- **Node.js v20+** on PATH (the bundled MCP server + the bridge CLI run as a Node subprocess;
+  runtime deps are vendored in `node_modules/`, no `npm install` required). Supported platforms:
+  **macOS and Linux** (Windows is unsupported; `doctor` reports it as FAIL). CI tests every
+  released Node major from 20 through 26 on both platforms; `bin/codex-paired-doctor` names the
+  same tested majors.
 - **`git` v2.5+** for worktree-based parallel slice dispatch (v0.7.0+).
+
+**Optional — only if you want the roles or reviewers that use them**
+
+Each of these is a separate install with its own sign-in. Nothing breaks if they are absent: the
+role ladders skip a CLI that is not available, and `doctor` lists it as missing rather than failing.
+
+| CLI | Install + authenticate | What it unlocks |
+|---|---|---|
+| `agy` (Antigravity, Gemini) | install per Antigravity's own instructions, then run `agy` once and complete its sign-in (it stores auth under `~/.gemini/`); check with `agy models` | any model role on Gemini via `cli: agy` (v0.17.0) — co-reviewer and/or code writer. `doctor` validates your configured model ids against `agy models` |
+| `ollama` | [ollama.com](https://ollama.com), then `ollama pull <model>` | local-model domain reviewers (e.g. `ollama{kimi-k2.6}`) in the reviewer ladders; no account needed |
+| `qwen` | per its own instructions, plus its own sign-in | the data-layer reviewer rung |
+| `claude` (Claude Code CLI) | already present if you are running Claude Code | the `claude-cli` reviewer transport and the Sonnet implementer fallback |
+
+Authentication is never automated for you. If a tool is installed but not signed in, the run stops
+with that tool's own auth error rather than silently falling back to a different account.
 
 ## Install
 

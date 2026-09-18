@@ -1444,9 +1444,11 @@ test('v0.16.0 (slice-6 r2): reviewer helper callers forward the resolved variant
 // ── v0.18.0: support policy, CI matrix, shell-suite inventory, bash-3.2 guard list, digest wiring ──
 
 function nodeMajorsFromReadme() {
-  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8');
+  // Collapse whitespace first: the sentence is prose and wraps across lines as the paragraph is
+  // edited, which must not break the check (it did on the first edit after this test landed).
+  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8').replace(/\s+/g, ' ');
   const m = readme.match(/every released Node major from (\d+) through (\d+)/);
-  assert.ok(m, 'README Prerequisites must state the tested Node major range');
+  assert.ok(m, 'README Prerequisites must state the tested Node major range, e.g. "every released Node major from 20 through 26"');
   const out = [];
   for (let n = Number(m[1]); n <= Number(m[2]); n += 1) out.push(n);
   return out;
