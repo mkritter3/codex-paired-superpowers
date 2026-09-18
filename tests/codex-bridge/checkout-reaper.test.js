@@ -495,3 +495,42 @@ test('worktree-reap CLI is dry-run by default, supports --apply, and rejects usa
     rmSync(fx.root, { recursive: true, force: true });
   }
 });
+
+test('any gitlink keeps the checkout of either kind, since submodule work is invisible to parent checks', () => {
+  const fx = fixture();
+  try {
+    // A committed gitlink on main, so the checkout's HEAD is reachable and otherwise reapable.
+    const head = git(fx.repoRoot, ['rev-parse', 'HEAD']);
+    git(fx.repoRoot, ['update-index', '--add', '--cacheinfo', `160000,${head},sub`]);
+    git(fx.repoRoot, ['commit', '-qm', 'add gitlink']);
+    const implementation = fx.addWorktree();
+    const review = fx.addWorktree({ kind: 'review', overlays: [] });
+    const result = safeReaper().reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    for (const checkout of [implementation, review]) {
+      const entry = entryFor(result.entries, checkout.path);
+      assert.ok(entry.keep.includes('contains-submodules'), JSON.stringify(entry));
+      assert.equal(entry.removed, false);
+      assert.equal(isRegistered(fx.repoRoot, checkout.path), true);
+    }
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('an ambiguous registry entry under a plugin checkout directory stays a probable plugin leftover', () => {
+  const fx = fixture();
+  try {
+    const first = fx.addWorktree({ probable: true });
+    const alias = fx.addWorktree({ probable: true });
+    writeFileSync(join(alias.adminDir, 'gitdir'), `${join(first.path, '.git')}\n`);
+    const entries = safeReaper().inventoryCheckouts({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW })
+      .filter((entry) => entry.path === first.path);
+    assert.ok(entries.length >= 1);
+    for (const entry of entries) {
+      assert.ok(entry.keep.includes('registry-ambiguous'), JSON.stringify(entry));
+      assert.ok(entry.keep.includes('probable-plugin-leftover'), JSON.stringify(entry));
+    }
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
