@@ -75,20 +75,23 @@ function configureMultiMemberReview(repoRoot) {
 }
 
 test('configured multi-member review panel blocks fan-out before any git worktree command', async () => {
-  const { repoRoot, baseSha } = makeGitRepo('cps-panel-fanout-');
+  const { repoRoot } = makeGitRepo('cps-panel-fanout-');
   configureMultiMemberReview(repoRoot);
-  let gitCalls = 0;
+  const listBefore = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' });
+  const branchesBefore = execFileSync('git', ['branch', '--list'], { cwd: repoRoot, encoding: 'utf8' });
+  // Ordering control: an empty baseSha makes input validation (the first step after the guard) throw
+  // worktree-create-failed, so only a guard that runs before every other step yields this code.
   await assert.rejects(
     () => createImplementerWorktrees({
       repoRoot,
       sliceId: 'slice-panel',
       implementers: [fakeImpl(), fakeImpl({ memberId: 'expert-implementer@codex:gpt#0' })],
-      baseSha,
-      deps: { git: () => { gitCalls += 1; return { status: 0, stdout: '', stderr: '' }; } },
+      baseSha: '',
     }),
     (error) => error.code === 'panel-unsupported-route',
   );
-  assert.equal(gitCalls, 0);
+  assert.equal(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }), listBefore);
+  assert.equal(execFileSync('git', ['branch', '--list'], { cwd: repoRoot, encoding: 'utf8' }), branchesBefore);
   rmSync(repoRoot, { recursive: true, force: true });
 });
 

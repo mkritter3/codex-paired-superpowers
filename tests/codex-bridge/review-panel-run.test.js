@@ -85,6 +85,8 @@ test('reducePanelRound: unknown or malformed verdict fields fail instead of beco
 
 test('runPanelRound dispatches independently so no prompt contains a current-round peer verdict', async () => {
   const prompts = new Map();
+  let resolveFirst;
+  const firstReturned = new Promise((resolve) => { resolveFirst = resolve; });
   const currentSecrets = new Map([
     [ROSTER[0].member_id, 'CURRENT-A-VERDICT'],
     [ROSTER[1].member_id, 'CURRENT-B-VERDICT'],
@@ -97,12 +99,20 @@ test('runPanelRound dispatches independently so no prompt contains a current-rou
     {
       dispatchMember: async ({ member, prompt }) => {
         prompts.set(member.member_id, prompt);
-        await Promise.resolve();
-        return { member_id: member.member_id, verdict: verdict(), conversation_id: member.member_id, usage: null };
+        // The second member is dispatched only after the first has already returned its verdict,
+        // so a sequential or leaking implementation would put that verdict into its prompt.
+        if (member.member_id === ROSTER[1].member_id) await firstReturned;
+        const secret = currentSecrets.get(member.member_id);
+        const memberVerdict = { ...verdict('REVISE'), critique: [`tier: critical — ${secret}`], rationale: secret };
+        if (member.member_id === ROSTER[0].member_id) resolveFirst();
+        return { member_id: member.member_id, verdict: memberVerdict, conversation_id: member.member_id, usage: null };
       },
     },
   );
-  assert.equal(result.status, 'SHIP');
+  assert.equal(result.status, 'REVISE');
+  // The markers really are in the round's results, so the absence check below is meaningful.
+  for (const secret of currentSecrets.values()) assert.ok(result.blocking.some((entry) => entry.finding.includes(secret)));
+  assert.equal(prompts.size, ROSTER.length);
   for (const [memberId, prompt] of prompts) {
     for (const [peerId, secret] of currentSecrets) {
       if (peerId !== memberId) assert.equal(prompt.includes(secret), false);
@@ -227,4 +237,49 @@ test('composeMemberReplay throws panel-replay-overflow instead of truncating', (
     }),
     (error) => error.code === 'panel-replay-overflow',
   );
+});
+
+test('a present non-boolean ok is a failed member turn, never a vote', () => {
+  for (const ok of ['false', 0, null, 'true', 1]) {
+    const malformed = members().map((entry, index) => (index === 0 ? { ...entry, ok } : entry));
+    assert.throws(
+      () => reducePanelRound({ roster: ROSTER, version: VERSION, claude: verdict(), members: malformed }),
+      (error) => error.code === 'panel-member-unavailable' && error.message.includes(ROSTER[0].member_id),
+      JSON.stringify(ok),
+    );
+  }
+  // Absent ok and ok: true remain the documented success envelope.
+  assert.equal(reducePanelRound({ roster: ROSTER, version: VERSION, claude: verdict(), members: members() }).status, 'SHIP');
+  const explicit = members().map((entry) => ({ ...entry, ok: true }));
+  assert.equal(reducePanelRound({ roster: ROSTER, version: VERSION, claude: verdict(), members: explicit }).status, 'SHIP');
+});
+
+test('the route guard ignores unrelated config errors when no review panel is activated', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { assertPanelRouteSupported } = await import('../../lib/codex-bridge/review-panel-run.js');
+  const repoRoot = mkdtempSync(join(tmpdir(), 'cps-route-guard-'));
+  const saved = process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW;
+  delete process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW;
+  try {
+    mkdirSync(join(repoRoot, '.codex-paired'));
+    // Invalid for the full loader (a library needs live_verification.skip_reason), but no panel.
+    const invalidButUnpaneled = { version: 1, app: { type: 'library' }, live_verification: { default: 'skip' } };
+    writeFileSync(join(repoRoot, '.codex-paired', 'project.json'), JSON.stringify(invalidButUnpaneled));
+    for (const split of ['single', 'two-disjoint', 'hybrid-ui-backend']) {
+      assert.doesNotThrow(() => assertPanelRouteSupported({ repoRoot, split }), split);
+    }
+    // Once the panel is explicitly activated, config errors surface instead of being skipped.
+    writeFileSync(join(repoRoot, '.codex-paired', 'project.json'), JSON.stringify({
+      ...invalidButUnpaneled, review_panel: { review: [{ cli: 'codex' }, { cli: 'agy' }] },
+    }));
+    assert.throws(() => assertPanelRouteSupported({ repoRoot, split: 'two-disjoint' }), (error) => error.code === 'models-config-malformed');
+    // single is never affected, even by an activated, malformed panel.
+    assert.doesNotThrow(() => assertPanelRouteSupported({ repoRoot, split: 'single' }));
+  } finally {
+    if (saved === undefined) delete process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW;
+    else process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW = saved;
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
 });

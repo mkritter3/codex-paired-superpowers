@@ -10693,7 +10693,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/mailbox.js": "sha256:786e519d904e1176f12227e403af8107071e4594b0d9178d64e5627044fd1a06",
     "lib/codex-bridge/models.js": "sha256:2f5e000fded6907ac318e6c6e6f8d1a5eea023a5b200e4689fffa3b6cbcdcff2",
     "lib/codex-bridge/project-config.js": "sha256:3840f68021ffc20f8add89442e41906265d08bd5ec3fdd02f9651bacb0caf445",
-    "lib/codex-bridge/review-panel-run.js": "sha256:431ff5a1cf68dff442f6f9e1fa3eb0d0886893a5ec4d3f0846a3325d0f55583b",
+    "lib/codex-bridge/review-panel-run.js": "sha256:b389f5fc60decb65cae4d410011a4f71200276a636cc293f8facbe17bbc9c593",
     "lib/codex-bridge/review-panel.js": "sha256:1f1f61f9acc74ef63996cdc6ca69d2a16ee2a5f32cdce409b07c9905af5cbf0e",
     "lib/codex-bridge/reviewer-thread.js": "sha256:6d249ddefefd04c8ee9c9341bbaa92dd46c19b80f9f0ff6c042bc4879dd54027",
     "lib/codex-bridge/role-routing/cli-clients.js": "sha256:8c8b9ecca0595566c342cc81445f55ab5fe9b749cfbb9538ec14939b6d4b0033",
