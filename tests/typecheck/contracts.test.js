@@ -140,8 +140,17 @@ test('reviewer turn readers require a phase in their public signature', () => {
 test('runChildWithLifecycle keeps its original runtime semantics for null and missing commands', async () => {
   const { runChildWithLifecycle } = await import('../../lib/codex-bridge/cli-harness/process-lifecycle.js');
   await assert.rejects(() => runChildWithLifecycle(null), TypeError);
-  const missing = await runChildWithLifecycle({});
-  assert.equal(missing.exitInfo, null);
-  assert.equal(missing.spawnError?.code, 'ERR_INVALID_ARG_TYPE');
-  assert.match(missing.spawnError.message, /"file" argument must be of type string. Received undefined/);
+  // Native Node validation is preserved for every non-string command (messages are Node's own).
+  for (const [command, suffix] of [
+    [undefined, 'Received undefined'],
+    [null, 'Received null'],
+    [42, 'Received type number (42)'],
+    [{}, 'Received an instance of Object'],
+  ]) {
+    const result = await runChildWithLifecycle(/** @type {any} */ ({ command }));
+    assert.equal(result.exitInfo, null);
+    assert.equal(result.spawnError?.code, 'ERR_INVALID_ARG_TYPE');
+    assert.ok(result.spawnError.message.endsWith(suffix), `${String(command)} → ${result.spawnError.message}`);
+    assert.ok(String(result.spawnError).startsWith('TypeError [ERR_INVALID_ARG_TYPE]'), String(result.spawnError));
+  }
 });
