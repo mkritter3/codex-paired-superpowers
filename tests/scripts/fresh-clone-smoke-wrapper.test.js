@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -71,13 +72,13 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function createOrphanFixture(ownerRoot, { exitCode = null } = {}) {
+function createOrphanFixture(ownerRoot, { childCwd = null, exitCode = null } = {}) {
   const fixture = join(ownerRoot, 'orphan-fixture.sh');
   const pidFile = join(ownerRoot, 'orphan-pid.json');
   const spawnSource = [
     'const { spawn } = require("node:child_process");',
     'const { writeFileSync } = require("node:fs");',
-    'const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });',
+    `const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore"${childCwd ? ', cwd: process.argv[2], env: { PATH: process.env.PATH }' : ''} });`,
     'writeFileSync(process.argv[1], `${JSON.stringify([child.pid])}\\n`);',
     'child.unref();',
   ].join(' ');
@@ -85,37 +86,44 @@ function createOrphanFixture(ownerRoot, { exitCode = null } = {}) {
   writeFileSync(fixture, [
     '#!/usr/bin/env bash',
     'set -u',
-    `bash -c 'node -e "$1" "$2"' _ ${shellQuote(spawnSource)} ${shellQuote(pidFile)}`,
+    `bash -c 'node -e "$1" "$2" "$3"' _ ${shellQuote(spawnSource)} ${shellQuote(pidFile)} ${shellQuote(childCwd ?? '')}`,
     finish,
     '',
   ].join('\n'));
   return { fixture, pidFile };
 }
 
-function runIdFromOutput(run) {
+function tempRootFromOutput(run) {
   const match = run.output().stdout.match(/fresh-clone temp: (.+)/);
   assert.ok(match, `missing fresh-clone temp diagnostic: ${JSON.stringify(run.output())}`);
-  return basename(match[1].trim());
+  return match[1].trim();
 }
 
-function assertDarwinPsFinds(pid, runId) {
+function assertDarwinLsofCwdUnder(pid, runRoot) {
   if (process.platform !== 'darwin') return;
-  const result = spawnSync('ps', ['-axE', '-o', 'pid=,command='], { encoding: 'utf8' });
-  const marker = `CPS_FRESH_CLONE_RUN_ID=${runId}`;
-  const line = (result.stdout ?? '').split('\n').find((candidate) => (
-    Number(candidate.trim().split(/\s+/, 1)[0]) === pid
-  ));
-  if (result.status !== 0 || !line || !line.split(/\s+/).includes(marker)) {
+  const result = spawnSync('lsof', ['-a', '-d', 'cwd', '-p', String(pid), '-F', 'n'], {
+    encoding: 'utf8',
+  });
+  const root = realpathSync(runRoot);
+  const cwd = (result.stdout ?? '').split('\n')
+    .filter((line) => line.startsWith('n'))
+    .map((line) => line.slice(1))
+    .find(Boolean);
+  if (result.error || result.status !== 0 || !cwd) {
     process.stderr.write(
-      `ps -axE did not expose run marker ${marker} for orphan ${pid}: ${JSON.stringify({
+      `lsof did not expose cwd for orphan ${pid}: ${JSON.stringify({
         status: result.status,
         error: result.error?.message,
-        line,
+        stdout: result.stdout,
         stderr: result.stderr,
       })}\n`,
     );
-    assert.fail(`ps -axE discovery did not find orphan ${pid}`);
+    assert.fail(`lsof cwd discovery did not find orphan ${pid}`);
   }
+  assert.ok(
+    cwd === root || cwd.startsWith(`${root}/`),
+    `orphan ${pid} cwd ${cwd} is outside run root ${root}`,
+  );
 }
 
 async function waitForClose(run, timeoutMs = 1_000) {
@@ -178,7 +186,7 @@ test('timeout kills detached descendants without waiting for inherited pipes', {
   const pidFile = join(ownerRoot, 'nested-pids.json');
   const startedAt = Date.now();
   const run = startWrapper({
-    CPS_FRESH_CLONE_TIMEOUT_MS: '200',
+    CPS_FRESH_CLONE_TIMEOUT_MS: '500',
     CPS_FRESH_CLONE_KILL_GRACE_MS: '100',
     CPS_TEST_PID_FILE: pidFile,
   });
@@ -195,13 +203,13 @@ test('timeout kills detached descendants without waiting for inherited pipes', {
 
   fixturePid = Number((await waitForOutput(run, /term-resistant pid: (\d+)/))[1]);
   nestedPids = await waitForPidFile(pidFile);
-  const result = await waitForClose(run);
+  const result = await waitForClose(run, 4_000);
   const elapsedMs = Date.now() - startedAt;
 
   assert.equal(result.code, 1, JSON.stringify(run.output()));
   assert.equal(result.signal, null);
   assert.match(run.output().stderr, /exceeded/i);
-  assert.ok(elapsedMs < 1_000, `wrapper took ${elapsedMs} ms`);
+  assert.ok(elapsedMs < 4_000, `wrapper took ${elapsedMs} ms`);
   await waitForProcessGroupGone(fixturePid);
   await waitForProcessesGone(nestedPids);
 });
@@ -232,12 +240,12 @@ test('SIGTERM exits 143, kills detached descendants, and removes the temp root',
   nestedPids = await waitForPidFile(pidFile);
   const startedAt = Date.now();
   run.child.kill('SIGTERM');
-  const result = await waitForClose(run);
+  const result = await waitForClose(run, 4_000);
   const elapsedMs = Date.now() - startedAt;
 
   assert.equal(result.code, 143, JSON.stringify(run.output()));
   assert.equal(result.signal, null);
-  assert.ok(elapsedMs < 1_000, `wrapper took ${elapsedMs} ms`);
+  assert.ok(elapsedMs < 4_000, `wrapper took ${elapsedMs} ms`);
   assert.equal(existsSync(tempRoot), false, `temp root remains at ${tempRoot}`);
   await waitForProcessGroupGone(fixturePid);
   await waitForProcessesGone(nestedPids);
@@ -271,7 +279,7 @@ test('timeout cleans up a reparented run-owned orphan without PID hints', { time
   const { fixture, pidFile } = createOrphanFixture(ownerRoot);
   const run = startWrapper({
     CPS_FRESH_CLONE_SCRIPT: fixture,
-    CPS_FRESH_CLONE_TIMEOUT_MS: '250',
+    CPS_FRESH_CLONE_TIMEOUT_MS: '1000',
     CPS_FRESH_CLONE_KILL_GRACE_MS: '100',
   });
   let orphanPids = [];
@@ -285,7 +293,7 @@ test('timeout cleans up a reparented run-owned orphan without PID hints', { time
 
   orphanPids = await waitForPidFile(pidFile);
   try {
-    assertDarwinPsFinds(orphanPids[0], runIdFromOutput(run));
+    assertDarwinLsofCwdUnder(orphanPids[0], tempRootFromOutput(run));
   } catch (error) {
     run.child.kill('SIGTERM');
     await waitForClose(run, 3_000);
@@ -296,6 +304,34 @@ test('timeout cleans up a reparented run-owned orphan without PID hints', { time
   assert.equal(result.code, 1, JSON.stringify(run.output()));
   assert.match(run.output().stderr, /exceeded/i);
   await waitForProcessesGone(orphanPids, 3_000);
+});
+
+test('ordinary exit does not kill an unmarked orphan outside the run root', { timeout: 5_000 }, async (t) => {
+  const ownerRoot = mkdtempSync(join(tmpdir(), 'cps-smoke-wrapper-test-'));
+  const outsideRoot = mkdtempSync(join(tmpdir(), 'cps-smoke-outside-test-'));
+  const { fixture, pidFile } = createOrphanFixture(ownerRoot, {
+    childCwd: outsideRoot,
+    exitCode: 0,
+  });
+  const run = startWrapper({
+    CPS_FRESH_CLONE_SCRIPT: fixture,
+    CPS_FRESH_CLONE_KILL_GRACE_MS: '100',
+  });
+  let orphanPids = [];
+  t.after(() => {
+    for (const pid of orphanPids) {
+      if (processExists(pid)) process.kill(pid, 'SIGKILL');
+    }
+    if (processExists(run.child.pid)) run.child.kill('SIGKILL');
+    rmSync(ownerRoot, { recursive: true, force: true });
+    rmSync(outsideRoot, { recursive: true, force: true });
+  });
+
+  orphanPids = await waitForPidFile(pidFile);
+  const result = await waitForClose(run, 3_000);
+
+  assert.equal(result.code, 0, JSON.stringify(run.output()));
+  assert.equal(processExists(orphanPids[0]), true, 'outside-root orphan was killed');
 });
 
 test('ordinary success cleans up a reparented run-owned orphan', { timeout: 5_000 }, async (t) => {

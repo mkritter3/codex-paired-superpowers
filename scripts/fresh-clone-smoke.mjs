@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +19,9 @@ const tempRootOverride = process.env.CPS_FRESH_CLONE_TMP_ROOT;
 const tempRoot = tempRootOverride
   ? resolve(tempRootOverride)
   : mkdtempSync(join(tmpdir(), 'cps-fresh-clone-'));
-const runId = basename(tempRoot);
 mkdirSync(tempRoot, { recursive: true });
+const tempRootReal = realpathSync(tempRoot);
+const runId = basename(tempRootReal);
 const shell = process.env.CPS_SHELL || 'bash';
 const scriptOverride = process.env.CPS_FRESH_CLONE_SCRIPT;
 const script = scriptOverride
@@ -63,6 +72,7 @@ function processTable() {
     encoding: 'utf8',
     timeout: 250,
   });
+  if (result.error?.code === 'EPERM') return [];
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`ps failed with exit ${result.status}: ${result.stderr.trim()}`);
@@ -73,6 +83,10 @@ function processTable() {
       ? [{ pid, ppid, pgid }]
       : [];
   });
+}
+
+function isUnderRunRoot(path, runRootReal) {
+  return path === runRootReal || path.startsWith(`${runRootReal}/`);
 }
 
 function findTreeProcesses() {
@@ -112,12 +126,55 @@ function findLinuxRunProcesses(marker) {
   return pids;
 }
 
+function findLinuxCwdProcesses(runRootReal) {
+  const pids = [];
+  for (const entry of readdirSync('/proc', { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    try {
+      if (isUnderRunRoot(readlinkSync(`/proc/${entry.name}/cwd`), runRootReal)) {
+        pids.push(Number(entry.name));
+      }
+    } catch (error) {
+      if (error.code !== 'EACCES' && error.code !== 'ENOENT') throw error;
+    }
+  }
+  return pids;
+}
+
+function findDarwinCwdProcesses(runRootReal) {
+  const result = spawnSync(
+    'lsof',
+    ['-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pn'],
+    {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 2_000,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`lsof failed with exit ${result.status}: ${result.stderr.trim()}`);
+  }
+
+  const pids = [];
+  let pid;
+  for (const line of result.stdout.split('\n')) {
+    if (line.startsWith('p')) {
+      pid = Number(line.slice(1));
+    } else if (line.startsWith('n') && isUnderRunRoot(line.slice(1), runRootReal)) {
+      pids.push(pid);
+    }
+  }
+  return pids;
+}
+
 function findDarwinRunProcesses(marker) {
   const result = spawnSync('ps', ['-axE', '-o', 'pid=,command='], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     timeout: 1_000,
   });
+  if (result.error?.code === 'EPERM') return [];
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`ps failed with exit ${result.status}: ${result.stderr.trim()}`);
@@ -129,17 +186,16 @@ function findDarwinRunProcesses(marker) {
   });
 }
 
-function findRunProcesses(id) {
-  const marker = `CPS_FRESH_CLONE_RUN_ID=${id}`;
-  let pids;
+function findRunProcesses(runRootReal, marker) {
+  const pids = new Set(findTreeProcesses());
   if (process.platform === 'linux') {
-    pids = findLinuxRunProcesses(marker);
+    for (const pid of findLinuxCwdProcesses(runRootReal)) pids.add(pid);
+    for (const pid of findLinuxRunProcesses(marker)) pids.add(pid);
   } else if (process.platform === 'darwin') {
-    pids = findDarwinRunProcesses(marker);
-  } else {
-    pids = findTreeProcesses();
+    for (const pid of findDarwinCwdProcesses(runRootReal)) pids.add(pid);
+    for (const pid of findDarwinRunProcesses(marker)) pids.add(pid);
   }
-  return [...new Set(pids)]
+  return [...pids]
     .filter((pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid)
     .sort((left, right) => left - right);
 }
@@ -163,14 +219,24 @@ function wait(delayMs) {
   return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
 }
 
-async function waitForRunProcessesExit(limitMs) {
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    if (error.code === 'EPERM') return true;
+    throw error;
+  }
+}
+
+async function waitForRunProcessesExit(knownPids, limitMs) {
   const deadline = Date.now() + limitMs;
   while (Date.now() < deadline) {
-    const survivors = findRunProcesses(runId);
-    if (survivors.length === 0) return [];
+    if (knownPids.every((pid) => !processExists(pid))) break;
     await wait(Math.min(25, Math.max(1, deadline - Date.now())));
   }
-  return findRunProcesses(runId);
+  return findRunProcesses(tempRootReal, `CPS_FRESH_CLONE_RUN_ID=${runId}`);
 }
 
 function destroyChildPipes() {
@@ -198,17 +264,26 @@ async function cleanupRunProcesses(killGraceMs, stopChild) {
   terminationPromise = (async () => {
     const errors = [];
     let survivors = [];
+    let stoppingChild;
+    if (stopChild) stoppingChild = stopDirectChild(killGraceMs);
+    destroyChildPipes();
+
+    let discoveryFailed = false;
     try {
-      if (stopChild) await stopDirectChild(killGraceMs);
+      survivors = findRunProcesses(tempRootReal, `CPS_FRESH_CLONE_RUN_ID=${runId}`);
+    } catch (error) {
+      discoveryFailed = true;
+      errors.push(error);
+    }
+    try {
+      if (stoppingChild) await stoppingChild;
     } catch (error) {
       errors.push(error);
     }
-    destroyChildPipes();
-
     try {
-      survivors = findRunProcesses(runId);
+      if (discoveryFailed) return { survivors, errors };
       if (survivors.length > 0) signalRunProcesses(survivors, 'SIGTERM');
-      survivors = await waitForRunProcessesExit(killGraceMs);
+      survivors = await waitForRunProcessesExit(survivors, killGraceMs);
     } catch (error) {
       errors.push(error);
     }
@@ -219,17 +294,11 @@ async function cleanupRunProcesses(killGraceMs, stopChild) {
         errors.push(error);
       }
       try {
-        survivors = await waitForRunProcessesExit(killGraceMs);
+        survivors = await waitForRunProcessesExit(survivors, killGraceMs);
       } catch (error) {
         errors.push(error);
       }
     }
-    try {
-      survivors = findRunProcesses(runId);
-    } catch (error) {
-      errors.push(error);
-    }
-
     return { survivors, errors };
   })();
   return terminationPromise;
@@ -291,7 +360,7 @@ try {
     shell,
     [script, '--tmp-root', tempRoot, '--repo-root', repoRoot, ...process.argv.slice(2)],
     {
-      cwd: repoRoot,
+      cwd: tempRootReal,
       detached: true,
       env: {
         ...process.env,
