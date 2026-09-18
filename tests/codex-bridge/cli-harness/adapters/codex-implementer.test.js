@@ -263,6 +263,73 @@ test('onSpawn failure reaps the spawned process group before reporting spawn fai
   }
 });
 
+// Regression: the process-group leader can exit (naturally, or promptly on
+// SIGTERM) WHILE a TERM-resistant descendant it forked is still alive in the
+// same process group. Cleanup must not treat the leader's own 'exit' as
+// "the group is reaped" — it must confirm the whole group is actually gone
+// (escalating to a group-wide SIGKILL) before settling.
+test('onSpawn failure reaps a TERM-resistant descendant even after the leader itself exits', {
+  timeout: TEST_TIMEOUT_MS,
+}, async () => {
+  const dir = makeTmpDir('cps-impl-onspawn-descendant-');
+  const descendantPidFile = join(dir, 'descendant.pid');
+  let pid = null;
+  let descendantPid = null;
+  try {
+    // The leader does NOT trap TERM (it dies promptly), but it forks a
+    // detached-in-group descendant that ignores TERM and would otherwise
+    // outlive it.
+    const script = makeFakeCli(dir, [
+      "(trap '' TERM; sleep 30) &",
+      `echo $! > '${descendantPidFile}'`,
+      'cat >/dev/null',
+    ]);
+    let onSpawnDoneAt = null;
+    const result = await dispatch('', '', {
+      command: script,
+      timeout_ms: 10_000,
+      onSpawn(childPid) {
+        pid = childPid;
+        // Wait (via a synchronous busy-poll — this callback must throw
+        // SYNCHRONOUSLY to hit the spawn-failure cleanup path, so we can't
+        // `await` a delay here) until the freshly-forked leader has actually
+        // recorded its descendant's pid, so this test exercises "descendant
+        // exists and outlives the leader" rather than racing cleanup's
+        // SIGTERM/SIGKILL against the leader's own startup. The spawned
+        // process is scheduled independently by the OS, so blocking this
+        // event loop here does not block it from making progress.
+        const deadline = Date.now() + 5000;
+        while (!existsSync(descendantPidFile) && Date.now() < deadline) { /* busy-poll */ }
+        onSpawnDoneAt = Date.now();
+        throw new Error('running evidence publish failed');
+      },
+    });
+
+    assert.equal(result.exit, 1);
+    assert.deepEqual(result.warnings, ['spawn-failed']);
+    assert.ok(onSpawnDoneAt !== null, 'onSpawn should have run before dispatch resolved');
+    assert.ok(Date.now() - onSpawnDoneAt < 3_300, 'cleanup should finish within the SIGKILL grace');
+    assert.equal(isAlive(pid), false, 'the leader must be reaped before dispatch returns');
+
+    assert.ok(existsSync(descendantPidFile), 'descendant should have recorded its pid');
+    descendantPid = parseInt(readFileSync(descendantPidFile, 'utf8').trim(), 10);
+    assert.ok(Number.isInteger(descendantPid) && descendantPid > 0);
+    assert.equal(
+      isAlive(descendantPid),
+      false,
+      'the TERM-resistant descendant must be reaped even though the leader exited first',
+    );
+  } finally {
+    if (pid && isAlive(pid)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    if (descendantPid && isAlive(descendantPid)) {
+      try { process.kill(descendantPid, 'SIGKILL'); } catch { /* gone */ }
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('external AbortSignal terminates a hanging process group as aborted', {
   timeout: TEST_TIMEOUT_MS,
 }, async () => {
@@ -290,6 +357,38 @@ test('external AbortSignal terminates a hanging process group as aborted', {
     if (pid && isAlive(pid)) {
       try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
     }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Regression: a signal that is ALREADY aborted before dispatch is called
+// must not crash the process. `spawn(..., { signal })` internally aborts an
+// AbortController tied to the child; if the child's 'error' listener isn't
+// wired up yet when we synchronously react to `signal.aborted === true`,
+// the resulting AbortError becomes an uncaught exception.
+test('dispatch with an already-aborted external signal resolves as aborted without crashing', {
+  timeout: TEST_TIMEOUT_MS,
+}, async () => {
+  const dir = makeTmpDir('cps-impl-preaborted-');
+  let uncaughtCount = 0;
+  const onUncaught = () => { uncaughtCount += 1; };
+  process.on('uncaughtException', onUncaught);
+  try {
+    const script = makeFakeCli(dir, ['sleep 5']);
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await dispatch('', '', {
+      command: script,
+      signal: controller.signal,
+      timeout_ms: 5000,
+    });
+
+    assert.equal(result.exit, 130);
+    assert.ok(result.warnings.includes('aborted'));
+    assert.equal(uncaughtCount, 0, 'an already-aborted signal must not raise an uncaught exception');
+  } finally {
+    process.removeListener('uncaughtException', onUncaught);
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -259,6 +259,149 @@ test('malformed attempt evidence is treated as missing and observes as lost', as
   } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
 
+// Regression: syntactically valid JSON that is not a plain object (null, a
+// bare number/string, or an array) must not crash `readDirectCliAttempt`
+// with a TypeError when it tries to read `.state` off a non-object — it
+// must be treated the same as a missing/malformed record.
+test('valid JSON that is not a plain object is treated as missing, never throws', async () => {
+  const f = repoFixture();
+  const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+  const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    for (const payload of ['null', '[]', '"x"', '42', 'true']) {
+      writeFileSync(path, payload);
+      assert.equal(readDirectCliAttempt(f.input), null,
+        `expected null for JSON payload ${payload}`);
+      const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10 });
+      assert.equal(observed.outcome, 'halted');
+      assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+    }
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+// Regression: a JSON object that IS a plain object but is missing the
+// terminal fields resultFromEvidence() reads (a truncated/partial "exited"
+// write) must not be accepted as a completed attempt.
+test('incomplete exited evidence is treated as lost, never surfaced as completed', async () => {
+  const f = repoFixture();
+  const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+  const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    writeFileSync(path, JSON.stringify({ state: 'exited', outcome: 'completed' }));
+    const attempt = readDirectCliAttempt(f.input);
+    assert.equal(attempt.state, 'exited');
+    assert.equal(attempt.outcome, 'completed');
+    const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10 });
+    assert.notEqual(observed.outcome, 'completed');
+    assert.equal(observed.outcome, 'halted');
+    assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+// A structurally-complete, well-typed terminal record for a successful
+// attempt — the baseline the negative-case tests below mangle one field at
+// a time, and a template for the positive case.
+function completeExitedRecord(overrides = {}) {
+  return {
+    state: 'exited',
+    pid: 4242,
+    launched_at: '2026-01-01T00:00:00.000Z',
+    spawned_at: '2026-01-01T00:00:01.000Z',
+    completed_at: '2026-01-01T00:00:02.000Z',
+    exit_code: 0,
+    outcome: 'completed',
+    head_sha: 'a'.repeat(40),
+    changed_files: ['a.txt'],
+    diff_hash: `sha256:${'b'.repeat(64)}`,
+    halt_envelope: null,
+    model_role: 'implement',
+    model: 'gpt-5.6-terra',
+    effort: 'high',
+    ...overrides,
+  };
+}
+
+async function writeAndObserve(f, record) {
+  const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+  const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(record));
+  return observeDirectCliAttempt(f.input, { poll_ms: 10 });
+}
+
+test('completed record missing the model snapshot is treated as lost, never a completed result', async () => {
+  const f = repoFixture();
+  try {
+    const record = completeExitedRecord();
+    delete record.model_role;
+    delete record.model;
+    delete record.effort;
+    const observed = await writeAndObserve(f, record);
+    assert.equal(observed.outcome, 'halted');
+    assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+test('terminal record with wrong-typed fields never becomes a completed result', async () => {
+  const f = repoFixture();
+  try {
+    const record = completeExitedRecord({
+      exit_code: { bad: true },
+      head_sha: 42,
+      changed_files: [{}],
+      diff_hash: [],
+      halt_envelope: 'not-an-object',
+      model_role: 'implement',
+      model: 'gpt-5.6-terra',
+      effort: 'high',
+    });
+    const observed = await writeAndObserve(f, record);
+    assert.notEqual(observed.outcome, 'completed');
+    assert.equal(observed.outcome, 'halted');
+    assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+    assert.equal(observed.exitCode, null);
+    assert.equal(observed.headSha, null);
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+test('terminal record with an outcome value the writer never emits is treated as lost', async () => {
+  const f = repoFixture();
+  try {
+    const record = completeExitedRecord({ outcome: 'succeeded' });
+    const observed = await writeAndObserve(f, record);
+    assert.equal(observed.outcome, 'halted');
+    assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+test('a legitimate unsuccessful terminal record with null terminal fields still observes correctly', async () => {
+  const f = repoFixture();
+  try {
+    // A spawn failure (or pre-spawn abort) never collects git evidence: the
+    // 'failed' outcome legitimately carries null exit_code/head_sha/diff_hash.
+    const record = completeExitedRecord({
+      outcome: 'failed',
+      exit_code: null,
+      head_sha: null,
+      changed_files: [],
+      diff_hash: null,
+      halt_envelope: null,
+      error: 'spawn ENOENT',
+    });
+    const observed = await writeAndObserve(f, record);
+    assert.equal(observed.outcome, 'failed');
+    assert.equal(observed.exitCode, null);
+    assert.equal(observed.headSha, null);
+    assert.equal(observed.diffHash, null);
+    assert.equal(observed.haltEnvelope, null);
+    assert.deepEqual(observed.modelSnapshot, {
+      model_role: 'implement', model: 'gpt-5.6-terra', effort: 'high',
+    });
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
 test('observer waits through the launcher finalization window', { timeout: 10_000 }, async () => {
   const f = repoFixture();
   let release;
@@ -503,4 +646,24 @@ test('required direct-Codex failure cancels a hanging sibling', { timeout: 10_00
     assert.equal(result.failed.length, 1);
     assert.equal(result.cancelled.length, 1);
   } finally { writeFileSync(release, 'go'); rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+test('running evidence without a pid and launching evidence without launched_at are lost, never polled', async () => {
+  for (const record of [
+    { state: 'running', spawned_at: new Date().toISOString() },
+    { state: 'running', pid: 'not-a-pid', spawned_at: new Date().toISOString() },
+    { state: 'launching' },
+    { state: 'bogus' },
+  ]) {
+    const f = repoFixture();
+    const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+    const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(path, JSON.stringify(record));
+      const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10, timeout_ms: 2_000 });
+      assert.equal(observed.outcome, 'halted', JSON.stringify(record));
+      assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost', JSON.stringify(record));
+    } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+  }
 });
