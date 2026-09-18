@@ -99,3 +99,9 @@ test('a long deferred list is preserved in full', () => {
   assert.equal(v.deferred.length, 25);
   assert.equal(v.deferred[24], 'deferred item 25');
 });
+
+test('an empty version field is null and never consumes the next line', () => {
+  const v = parseVerdict('<<<VERDICT>>>\nstatus: SHIP\nversion:\ncritique:\n  - tier: minor — ok\nrationale: r\n<<<END>>>');
+  assert.equal(v.version, null);
+  assert.deepEqual(v.critique, ['tier: minor — ok']);
+});

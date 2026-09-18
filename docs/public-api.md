@@ -2169,7 +2169,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         },
         {
           "name": "repoRoot",
-          "required": true,
+          "required": false,
           "value_type": "string"
         }
       ],
@@ -4146,7 +4146,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         },
         {
           "name": "repoRoot",
-          "required": false,
+          "required": true,
           "value_type": "string"
         }
       ],
