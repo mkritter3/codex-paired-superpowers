@@ -1712,3 +1712,17 @@ test('v0.19.0: a configured panel commits Phase D docs before reviewing; the unc
   assert.match(phaseCD, /4\. \*\*Apply the doc edits to the working tree but do NOT commit yet\.\*\*/);
   assert.match(phaseCD, /6\. \*\*Only on double-SHIP:\*\* commit the docs/);
 });
+
+test('v0.19.0: the panel round prompt carries the audit-efficiency directive', () => {
+  const procedure = section(
+    readFileSync(join(PLUGIN_ROOT, 'skills/brainstorming/codex-pairing.md'), 'utf8'),
+    '## Review panel rounds (v0.19.0)', null,
+  );
+  // The directive must be part of the prompt every member gets, i.e. inside the compose step,
+  // and must never license a thinner audit: verification outranks economy.
+  const compose = section(procedure, '3. **Compose the round prompt**', '4. **Dispatch every member');
+  assert.match(compose, /verify every claim you rely on, and cover everything the\s+rubric requires/);
+  assert.match(compose, /as few calls as you can/);
+  assert.match(compose, /re-read it from disk when you need to confirm its source or version/);
+  assert.ok(!/do not re-read/i.test(compose), 'the directive must not forbid re-reading outright');
+});

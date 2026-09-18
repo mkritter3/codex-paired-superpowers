@@ -212,8 +212,29 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel --phase <plann
       `review-slice:<id>` and `docs-update` — `lib/codex-bridge/prompts/validation-rubric.md`;
    2. the skill's normal review prompt for this phase (goals, artifact, diff or file references);
    3. Claude's findings for this round;
-   4. `Artifact version: V` and "include `version: V` in your verdict block".
+   4. `Artifact version: V` and "include `version: V` in your verdict block";
+   5. the audit-efficiency directive, verbatim. Verification comes first: this is about avoiding
+      redundant work, never about auditing less.
+
+      ```text
+      Your audit decides the verdict: verify every claim you rely on, and cover everything the
+      rubric requires. Within that, avoid redundant work — tool calls add to the conversation that
+      is re-sent on later turns, so they cost tokens and time. Plan the audit first, then run it in
+      as few calls as you can: combine searches into one command (grep -rnE 'a|b|c'), check several
+      paths at once, and read the line ranges you need. Material quoted above is supplied complete;
+      re-read it from disk when you need to confirm its source or version, resolve an uncertainty,
+      or see its surrounding context, not to re-read what is already in front of you. Stop auditing
+      once every claim you rely on is verified.
+      ```
+
    Repeating the instructions to a member whose thread already has them is harmless.
+
+   One paired observation (Gemini 3.8 Flash high, this repository, the same plan reviewed once with
+   and once without the directive): 172s → 107s wall-clock, 1.79M → 1.22M cached re-read tokens,
+   19.7k → 14.2k thinking tokens, and 242k → 260k fresh input tokens (up about 7%). Both returned
+   SHIP with comparable audits. One run per configuration shows no causation and no general rate;
+   treat it as the reason the directive exists, not as a measured saving.
+
 4. **Dispatch every member in the same turn**, so none sees another's current verdict:
    - **Codex member**: one persistent thread per feature, sidecar key and member, keyed
      `<sidecarKey>:<member_id>` (`paired-reviewer` for planning, `execution-reviewer` for review);
