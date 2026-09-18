@@ -36,6 +36,10 @@ import {
   remove,
   removeBranch,
 } from '../../lib/codex-bridge/worktree.js';
+import {
+  readMarkers,
+  writePreservationMarker,
+} from '../../lib/codex-bridge/checkout-markers.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -97,6 +101,32 @@ test('create: succeeds and returns worktree path with branch <slice-id>-impl', (
     const wtHead = execFileSync('git', ['-C', r.worktreePath, 'rev-parse', 'HEAD'])
       .toString().trim();
     assert.equal(wtHead, sha);
+    const adminDir = readFileSync(join(r.worktreePath, '.git'), 'utf8').trim().slice('gitdir: '.length);
+    const markers = readMarkers({ repoRoot, adminDir });
+    assert.equal(markers.ownership.state, 'valid');
+    assert.equal(markers.ownership.value.kind, 'implementation');
+    assert.equal(markers.ownership.value.base, sha);
+  } finally {
+    cleanupRepo(repoRoot);
+  }
+});
+
+test('create: idempotent success on an existing unmarked checkout leaves it unmarked and preserves keep marker', () => {
+  const { repoRoot, sha } = makeRepo();
+  try {
+    const worktreePath = join(repoRoot, '.git-worktrees', 'slice-4');
+    execFileSync('git', ['worktree', 'add', '-q', '-b', 'slice-4-impl', worktreePath, sha], { cwd: repoRoot });
+    writePreservationMarker(worktreePath, { reason: 'pre-existing evidence', run_id: 'old-run' });
+    const adminDir = readFileSync(join(worktreePath, '.git'), 'utf8').trim().slice('gitdir: '.length);
+
+    const result = create(repoRoot, 'slice-4', sha);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const markers = readMarkers({ repoRoot, adminDir });
+    assert.deepEqual(markers.ownership, { state: 'absent', value: null });
+    assert.deepEqual(markers.preservation, {
+      state: 'valid',
+      value: { owner: 'codex-paired-superpowers', reason: 'pre-existing evidence', run_id: 'old-run' },
+    });
   } finally {
     cleanupRepo(repoRoot);
   }
@@ -478,6 +508,11 @@ test('withReviewCheckout: overlays uncommitted file, cleans up checkout in final
       async (checkoutPath) => {
         recordedCheckoutPath = checkoutPath;
         assert.ok(existsSync(checkoutPath));
+        const adminDir = readFileSync(join(checkoutPath, '.git'), 'utf8').trim().slice('gitdir: '.length);
+        const markers = readMarkers({ repoRoot, adminDir });
+        assert.equal(markers.ownership.state, 'valid');
+        assert.equal(markers.ownership.value.kind, 'review');
+        assert.deepEqual(markers.ownership.value.overlays, ['docs/specs/x.md']);
         const overlaidContent = readFileSync(join(checkoutPath, 'docs', 'specs', 'x.md'), 'utf8');
         assert.equal(overlaidContent, '# uncommitted spec');
         return 'review-passed';
@@ -564,6 +599,19 @@ test('withReviewCheckout: rejects invalid overlayPaths before creating checkout 
       },
     );
 
+    // 4. Git metadata, in any case or position (v0.19.0: a copied linked-checkout `.git` pointer
+    //    would redirect the review checkout's ownership marker to another checkout's admin dir).
+    //    Present in the repo so rejection cannot come from the existence check.
+    mkdirSync(join(repoRoot, 'sub', '.GIT'), { recursive: true });
+    writeFileSync(join(repoRoot, 'sub', '.GIT', 'x'), 'x');
+    for (const overlay of ['.git', '.git/config', 'sub/.GIT/x']) {
+      await assert.rejects(
+        async () => withReviewCheckout(repoRoot, { overlayPaths: [overlay] }, async () => {}),
+        (err) => err.code === 'review-overlay-invalid' && /git metadata/.test(err.message),
+        overlay,
+      );
+    }
+
     // No worktrees were created
     const wtListAfter = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString();
     assert.equal(wtListAfter, wtListBefore);
@@ -579,7 +627,7 @@ test('withReviewCheckout: rejects invalid overlayPaths before creating checkout 
 // already removes the review's own entry, so the prune was redundant for itself and unsafe for
 // everything else. These pin that a stale entry belonging to someone else survives both paths.
 
-function makeStaleDetachedWorktree(repoRoot) {
+function makeStaleDetachedWorktree(repoRoot, { preserved = false } = {}) {
   // A detached worktree whose commit exists nowhere else, then its directory deleted: git keeps the
   // entry (and its HEAD reference) until something prunes it.
   const dir = mkdtempSync(join(tmpdir(), 'cps-stale-'));
@@ -589,6 +637,7 @@ function makeStaleDetachedWorktree(repoRoot) {
   execFileSync('git', ['add', 'only-here.txt'], { cwd: path });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'unique'], { cwd: path });
   const uniqueSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: path }).toString().trim();
+  if (preserved) writePreservationMarker(path, { reason: 'retain evidence', run_id: 'stale-run' });
   rmSync(dir, { recursive: true, force: true });
   return { path, uniqueSha };
 }
@@ -605,7 +654,9 @@ for (const [label, fn, expectRejection] of [
     const { repoRoot } = makeRepo();
     try {
       const { path: stalePath, uniqueSha } = makeStaleDetachedWorktree(repoRoot);
+      const { path: preservedPath, uniqueSha: preservedSha } = makeStaleDetachedWorktree(repoRoot, { preserved: true });
       assert.ok(staleEntryStillRegistered(repoRoot, stalePath), 'precondition: stale entry registered');
+      assert.ok(staleEntryStillRegistered(repoRoot, preservedPath), 'precondition: preserved stale entry registered');
 
       let ownPath = null;
       const run = withReviewCheckout(repoRoot, {}, async (checkoutPath) => { ownPath = checkoutPath; return fn(); });
@@ -621,6 +672,9 @@ for (const [label, fn, expectRejection] of [
       assert.ok(staleEntryStillRegistered(repoRoot, stalePath), 'another stale worktree entry must survive the review teardown');
       const present = execFileSync('git', ['cat-file', '-t', uniqueSha], { cwd: repoRoot }).toString().trim();
       assert.equal(present, 'commit');
+      assert.ok(staleEntryStillRegistered(repoRoot, preservedPath), 'preservation-marked stale entry must survive review teardown');
+      const preservedPresent = execFileSync('git', ['cat-file', '-t', preservedSha], { cwd: repoRoot }).toString().trim();
+      assert.equal(preservedPresent, 'commit');
     } finally {
       cleanupRepo(repoRoot);
     }

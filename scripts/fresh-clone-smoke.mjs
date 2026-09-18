@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   readdirSync,
   rmSync,
@@ -15,6 +14,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { reapRunProcesses as reapRunProcessesLoop } from './lib/reap-run-processes.mjs';
+import { findProcessesUnder } from './lib/process-ownership.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tempRootOverride = process.env.CPS_FRESH_CLONE_TMP_ROOT;
@@ -87,10 +87,6 @@ function processTable() {
   });
 }
 
-function isUnderRunRoot(path, runRootReal) {
-  return path === runRootReal || path.startsWith(`${runRootReal}/`);
-}
-
 function findTreeProcesses() {
   if (!child?.pid) return [];
   const trackedPids = new Set([child.pid]);
@@ -128,48 +124,6 @@ function findLinuxRunProcesses(marker) {
   return pids;
 }
 
-function findLinuxCwdProcesses(runRootReal) {
-  const pids = [];
-  for (const entry of readdirSync('/proc', { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
-    try {
-      if (isUnderRunRoot(readlinkSync(`/proc/${entry.name}/cwd`), runRootReal)) {
-        pids.push(Number(entry.name));
-      }
-    } catch (error) {
-      if (error.code !== 'EACCES' && error.code !== 'ENOENT') throw error;
-    }
-  }
-  return pids;
-}
-
-function findDarwinCwdProcesses(runRootReal) {
-  const result = spawnSync(
-    'lsof',
-    ['-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pn'],
-    {
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: 2_000,
-    },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`lsof failed with exit ${result.status}: ${result.stderr.trim()}`);
-  }
-
-  const pids = [];
-  let pid;
-  for (const line of result.stdout.split('\n')) {
-    if (line.startsWith('p')) {
-      pid = Number(line.slice(1));
-    } else if (line.startsWith('n') && isUnderRunRoot(line.slice(1), runRootReal)) {
-      pids.push(pid);
-    }
-  }
-  return pids;
-}
-
 function findDarwinRunProcesses(marker) {
   const result = spawnSync('ps', ['-axE', '-o', 'pid=,command='], {
     encoding: 'utf8',
@@ -190,11 +144,25 @@ function findDarwinRunProcesses(marker) {
 
 function findRunProcesses(runRootReal, marker) {
   const pids = new Set(findTreeProcesses());
+  const cwdDiscovery = findProcessesUnder(runRootReal);
+  for (const pid of cwdDiscovery.pids) pids.add(pid);
+  // Preserve the smoke's prior behavior while the shared helper exposes a
+  // richer fail-closed result to the reaper: Linux EACCES entries were
+  // historically skipped, while missing tools and other I/O failures threw.
+  // lsof exiting 0 with warnings was likewise accepted before the helper began reporting it.
+  const fatalGap = cwdDiscovery.gaps.find((gap) => !(
+    (process.platform === 'linux'
+      && gap.source === 'proc'
+      && gap.code === 'EACCES'
+      && /^\/proc\/\d+(?:\/cwd)?$/.test(gap.target))
+    || (gap.source === 'lsof' && gap.code === 'WARNINGS')
+  ));
+  if (fatalGap) {
+    throw new Error(`cwd process discovery incomplete at ${fatalGap.target}: ${fatalGap.code}`);
+  }
   if (process.platform === 'linux') {
-    for (const pid of findLinuxCwdProcesses(runRootReal)) pids.add(pid);
     for (const pid of findLinuxRunProcesses(marker)) pids.add(pid);
   } else if (process.platform === 'darwin') {
-    for (const pid of findDarwinCwdProcesses(runRootReal)) pids.add(pid);
     for (const pid of findDarwinRunProcesses(marker)) pids.add(pid);
   }
   return [...pids]
