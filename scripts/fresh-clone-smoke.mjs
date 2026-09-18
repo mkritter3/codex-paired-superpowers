@@ -260,7 +260,10 @@ try {
         ...process.env,
         CPS_FRESH_CLONE_RUN_ID: basename(tempRoot),
       },
-      stdio: ['inherit', 'pipe', 'pipe'],
+      // stdin must never be inherited: the fake CLIs drain stdin, so a caller whose stdin is a
+      // never-closing pipe (CI runners, background tasks) would hang the doctor step until the
+      // deadline. Nothing in the smoke reads stdin.
+      stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
   child.stdout.pipe(process.stdout);
