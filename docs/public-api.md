@@ -9694,7 +9694,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/sidecar.js": "sha256:d8a5ebcdef077c09ca846d6102b1d206f0da3bd1d3e569d9d941539508b618ba",
     "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
     "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
-    "lib/codex-bridge/worktree.js": "sha256:d8ae95af12ae41765c1b1f55b661c52a059301a38a0f723fc08f2b97c4d9f529"
+    "lib/codex-bridge/worktree.js": "sha256:e948959fc76f2917a89c52cebbe49bf2dcd6e028e52422802bc64e958e818a37"
   },
   "input_digest": {
     "lib/codex-bridge/cli-clients/agy.json": "sha256:b1ed7727d9dc0e80a457b9ac1dbec752dec8e7cbd7005442eb900d94962b83a4",

@@ -571,3 +571,58 @@ test('withReviewCheckout: rejects invalid overlayPaths before creating checkout 
     cleanupRepo(repoRoot);
   }
 });
+
+// ── v0.19.0: review teardown must not prune other worktrees ───────────────────
+// withReviewCheckout's finally block used to run `git worktree prune` after removing its own
+// checkout. prune is repository-wide, so every finished review dropped EVERY stale entry in the
+// repository — including a detached HEAD's last reference. `git worktree remove --force <own path>`
+// already removes the review's own entry, so the prune was redundant for itself and unsafe for
+// everything else. These pin that a stale entry belonging to someone else survives both paths.
+
+function makeStaleDetachedWorktree(repoRoot) {
+  // A detached worktree whose commit exists nowhere else, then its directory deleted: git keeps the
+  // entry (and its HEAD reference) until something prunes it.
+  const dir = mkdtempSync(join(tmpdir(), 'cps-stale-'));
+  const path = join(realpathSync(dir), 'stale');
+  execFileSync('git', ['worktree', 'add', '-q', '--detach', path], { cwd: repoRoot });
+  writeFileSync(join(path, 'only-here.txt'), 'unique work\n');
+  execFileSync('git', ['add', 'only-here.txt'], { cwd: path });
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'unique'], { cwd: path });
+  const uniqueSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: path }).toString().trim();
+  rmSync(dir, { recursive: true, force: true });
+  return { path, uniqueSha };
+}
+
+function staleEntryStillRegistered(repoRoot, path) {
+  return execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot }).toString().includes(`worktree ${path}`);
+}
+
+for (const [label, fn, expectRejection] of [
+  ['success path', async () => 'ok', false],
+  ['exception path', async () => { throw new Error('reviewer crashed'); }, true],
+]) {
+  test(`withReviewCheckout (${label}): removes its own checkout but leaves another stale entry and its unique commit alone`, async () => {
+    const { repoRoot } = makeRepo();
+    try {
+      const { path: stalePath, uniqueSha } = makeStaleDetachedWorktree(repoRoot);
+      assert.ok(staleEntryStillRegistered(repoRoot, stalePath), 'precondition: stale entry registered');
+
+      let ownPath = null;
+      const run = withReviewCheckout(repoRoot, {}, async (checkoutPath) => { ownPath = checkoutPath; return fn(); });
+      if (expectRejection) await assert.rejects(run, /reviewer crashed/);
+      else assert.equal(await run, 'ok');
+
+      // its own checkout is gone, directory and registry entry
+      assert.ok(ownPath);
+      assert.equal(existsSync(ownPath), false);
+      assert.ok(!staleEntryStillRegistered(repoRoot, ownPath), 'the review checkout must be deregistered');
+
+      // someone else's stale entry, and the commit only it references, survive
+      assert.ok(staleEntryStillRegistered(repoRoot, stalePath), 'another stale worktree entry must survive the review teardown');
+      const present = execFileSync('git', ['cat-file', '-t', uniqueSha], { cwd: repoRoot }).toString().trim();
+      assert.equal(present, 'commit');
+    } finally {
+      cleanupRepo(repoRoot);
+    }
+  });
+}
