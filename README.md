@@ -93,11 +93,14 @@ For the one-page mental model of drivers, splits, and review, see
 ## Prerequisites
 
 **You bring your own CLIs and your own accounts.** This plugin orchestrates command-line coding
-tools that you install and authenticate yourself. It bundles no API keys, ships no credentials,
-and proxies nothing through any service of its own: every model call runs as a subprocess on your
-machine, signed in as you, billed to your account. Run `/superpowers-doctor` (or
-`bin/codex-paired-doctor`) at any time — it reports exactly which tools are present, which are
-authenticated, and which model roles are configured.
+tools that you install and authenticate yourself. It bundles no API keys, ships no credentials, and
+proxies nothing through any service of its own: each external model call is a subprocess on your
+machine, signed in as you and billed to your account. (The one exception is Claude itself — the
+`claude` routing entry and the Sonnet implementer fallback run as Claude Code subagents through the
+Agent tool, inside the session you are already in, not as a spawned CLI. `claude-cli` is the
+separate transport that *does* spawn the Claude CLI.) Run `/superpowers-doctor` (or
+`bin/codex-paired-doctor`) at any time — it reports which tools are present, which pass their auth
+probe, and which model roles are configured.
 
 **Required**
 
@@ -125,18 +128,22 @@ authenticated, and which model roles are configured.
 
 **Optional — only if you want the roles or reviewers that use them**
 
-Each of these is a separate install with its own sign-in. Nothing breaks if they are absent: the
-role ladders skip a CLI that is not available, and `doctor` lists it as missing rather than failing.
+Each of these is a separate install with its own sign-in.
 
 | CLI | Install + authenticate | What it unlocks |
 |---|---|---|
 | `agy` (Antigravity, Gemini) | install per Antigravity's own instructions, then run `agy` once and complete its sign-in (it stores auth under `~/.gemini/`); check with `agy models` | any model role on Gemini via `cli: agy` (v0.17.0) — co-reviewer and/or code writer. `doctor` validates your configured model ids against `agy models` |
-| `ollama` | [ollama.com](https://ollama.com), then `ollama pull <model>` | local-model domain reviewers (e.g. `ollama{kimi-k2.6}`) in the reviewer ladders; no account needed |
-| `qwen` | per its own instructions, plus its own sign-in | the data-layer reviewer rung |
-| `claude` (Claude Code CLI) | already present if you are running Claude Code | the `claude-cli` reviewer transport and the Sonnet implementer fallback |
+| `ollama` | [ollama.com](https://ollama.com), then sign in to Ollama Cloud | the domain-reviewer rungs `ollama{kimi-k2.6}` and `ollama{glm-5.1}`. Note the bundled variants map to **cloud** models (`kimi-k2.6:cloud`, `glm-5.1:cloud`), so they need an Ollama Cloud account; point them at local models by editing `lib/codex-bridge/cli-clients/ollama.json` |
+| `qwen` | — | **not supported yet.** `lib/codex-bridge/cli-clients/qwen.json` is a placeholder with no adapter (dispatch throws `UNKNOWN_ADAPTER_MODULE`); it exists so role routing detects it as unavailable and falls back. Installing the CLI does not enable it |
+| `claude-cli` | already present if you are running Claude Code | the `claude-cli` reviewer transport (a spawned `claude` subprocess). Separate from the `claude` routing entry and the Sonnet implementer fallback, which are in-session subagents |
 
-Authentication is never automated for you. If a tool is installed but not signed in, the run stops
-with that tool's own auth error rather than silently falling back to a different account.
+**What happens when a tool is missing or not signed in.** A CLI that is absent — or installed but
+failing its auth probe — is treated as *unavailable*, and that is deliberate: the reviewer ladders
+walk to the next rung, so a role may silently run on a different tool than you expected (`doctor`
+and the turn's audit record name the one actually used, with a `fallback_reason`). Two cases do stop
+instead: a CLI you pinned explicitly for a role halts with `override-cli-unavailable` rather than
+substituting, and a ladder with nothing available halts with `no-supported-cli-for-role`. What the
+plugin never does is authenticate for you or reuse another tool's account.
 
 ## Install
 
