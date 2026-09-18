@@ -1,10 +1,20 @@
 {
   "version": 1,
   "files": [
+    "lib/codex-bridge/availability/doctor-report.js",
+    "lib/codex-bridge/cli-harness/adapters/agy.js",
+    "lib/codex-bridge/cli-harness/adapters/codex.js",
+    "lib/codex-bridge/cli-harness/process-lifecycle.js",
+    "lib/codex-bridge/cli.js",
     "lib/codex-bridge/dispatch-status.js",
+    "lib/codex-bridge/implementer/codex-cli-dispatch.js",
     "lib/codex-bridge/implementer/types.js",
     "lib/codex-bridge/models.js",
     "lib/codex-bridge/project-config.js",
-    "lib/codex-bridge/types.js"
+    "lib/codex-bridge/reviewer-thread.js",
+    "lib/codex-bridge/sidecar.js",
+    "lib/codex-bridge/thread-recovery.js",
+    "lib/codex-bridge/types.js",
+    "lib/codex-bridge/worktree.js"
   ]
 }
