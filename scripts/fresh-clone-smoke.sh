@@ -26,7 +26,8 @@ fail() {
 NODE_BIN=$(command -v node) || fail "0 isolation" "node is not available"
 GIT_BIN=$(command -v git) || fail "0 isolation" "git is not available"
 OUTER_NODE_VERSION=$("$NODE_BIN" --version) || fail "0 isolation" "cannot read outer node version"
-mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home" || fail "0 isolation" "cannot create isolated directories"
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/home" "$TMP_ROOT/tmp" || \
+  fail "0 isolation" "cannot create isolated directories"
 ln -s "$NODE_BIN" "$TMP_ROOT/bin/node" || fail "0 isolation" "cannot link node"
 ln -s "$GIT_BIN" "$TMP_ROOT/bin/git" || fail "0 isolation" "cannot link git"
 
@@ -37,6 +38,7 @@ for inherited_name in $(env | sed -n \
 done
 
 export HOME="$TMP_ROOT/home"
+export TMPDIR="$TMP_ROOT/tmp"
 export PATH="$TMP_ROOT/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 cat > "$HOME/.gitconfig" <<'EOF'
 [user]
@@ -161,7 +163,6 @@ node -e '
 
 node -e '
   const fs = require("node:fs");
-  const os = require("node:os");
   const path = require("node:path");
   const canonicalize = (input) => {
     let existing = path.resolve(input);
@@ -179,12 +180,13 @@ node -e '
   if (record.impl_txt_present !== true) process.exit(1);
   const reviewCwd = canonicalize(record.cwd);
   const project = canonicalize(process.argv[3]);
+  const reviewRoot = fs.realpathSync(process.argv[4]);
   if (reviewCwd === project) process.exit(1);
-  const relative = path.relative(fs.realpathSync(os.tmpdir()), reviewCwd);
+  const relative = path.relative(reviewRoot, reviewCwd);
   const checkoutDir = relative.split(path.sep)[0];
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) process.exit(1);
   if (!/^cps-review-[^/\\]+$/.test(checkoutDir)) process.exit(1);
-' "$AGY_RECORD" "$IMPL_SHA" "$PROJECT" || \
+' "$AGY_RECORD" "$IMPL_SHA" "$PROJECT" "$TMP_ROOT/tmp" || \
   fail "6 reviewer" "review did not observe the implementation in a throwaway checkout"
 
 [ -z "$(git -C "$PROJECT" status --porcelain)" ] || \

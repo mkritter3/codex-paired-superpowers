@@ -1,14 +1,16 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WRAPPER = join(ROOT, 'scripts', 'fresh-clone-smoke.mjs');
 const TERM_RESISTANT = join(ROOT, 'tests', 'scripts', 'fixtures', 'fresh-clone', 'term-resistant.sh');
 const SELF_TEST = join(ROOT, 'tests', 'scripts', 'fresh-clone-smoke.test.sh');
+const TEST_STARTED_AT = Date.now();
 
 function processGroupExists(pid) {
   try {
@@ -17,6 +19,59 @@ function processGroupExists(pid) {
   } catch (error) {
     if (error.code === 'ESRCH') return false;
     throw error;
+  }
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function waitForProcessesGone(pids, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pids.every((pid) => !processExists(pid))) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.deepEqual(pids.filter(processExists), [], 'detached descendants survived');
+}
+
+async function waitForProcessGroupGone(pid, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processGroupExists(pid)) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.equal(processGroupExists(pid), false, `process group ${pid} survived`);
+}
+
+async function waitForPidFile(path, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf8'));
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  assert.fail(`timed out waiting for nested PID file ${path}`);
+}
+
+async function waitForClose(run, timeoutMs = 1_000) {
+  let timeout;
+  try {
+    return await Promise.race([
+      run.closed,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(
+          `wrapper did not exit within ${timeoutMs} ms: ${JSON.stringify(run.output())}`,
+        )), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -59,61 +114,104 @@ async function waitForOutput(run, pattern, timeoutMs = 2_000) {
   assert.fail(`timed out waiting for ${pattern}: ${JSON.stringify(run.output())}`);
 }
 
-test('timeout kills a TERM-resistant process group within the deadline grace', { timeout: 5_000 }, async (t) => {
+test('timeout kills detached descendants without waiting for inherited pipes', { timeout: 5_000 }, async (t) => {
+  const ownerRoot = mkdtempSync(join(tmpdir(), 'cps-smoke-wrapper-test-'));
+  const pidFile = join(ownerRoot, 'nested-pids.json');
   const startedAt = Date.now();
   const run = startWrapper({
     CPS_FRESH_CLONE_TIMEOUT_MS: '200',
-    CPS_FRESH_CLONE_KILL_GRACE_MS: '2000',
+    CPS_FRESH_CLONE_KILL_GRACE_MS: '100',
+    CPS_FRESH_CLONE_PID_FILE: pidFile,
   });
   let fixturePid;
+  let nestedPids = [];
   t.after(() => {
     if (fixturePid && processGroupExists(fixturePid)) process.kill(-fixturePid, 'SIGKILL');
+    for (const pid of nestedPids) {
+      if (processExists(pid)) process.kill(pid, 'SIGKILL');
+    }
+    if (processExists(run.child.pid)) run.child.kill('SIGKILL');
+    rmSync(ownerRoot, { recursive: true, force: true });
   });
 
   fixturePid = Number((await waitForOutput(run, /term-resistant pid: (\d+)/))[1]);
-  const result = await run.closed;
+  nestedPids = await waitForPidFile(pidFile);
+  const result = await waitForClose(run);
   const elapsedMs = Date.now() - startedAt;
 
   assert.equal(result.code, 1, JSON.stringify(run.output()));
   assert.equal(result.signal, null);
   assert.match(run.output().stderr, /exceeded/i);
-  assert.ok(elapsedMs < 3_500, `wrapper took ${elapsedMs} ms`);
-  assert.equal(processGroupExists(fixturePid), false, `process group ${fixturePid} survived`);
+  assert.ok(elapsedMs < 1_000, `wrapper took ${elapsedMs} ms`);
+  await waitForProcessGroupGone(fixturePid);
+  await waitForProcessesGone(nestedPids);
 });
 
-test('SIGTERM exits 143, kills the child group, and removes the temp root', { timeout: 5_000 }, async (t) => {
-  const run = startWrapper({ CPS_FRESH_CLONE_TIMEOUT_MS: '10000' });
+test('SIGTERM exits 143, kills detached descendants, and removes the temp root', { timeout: 5_000 }, async (t) => {
+  const ownerRoot = mkdtempSync(join(tmpdir(), 'cps-smoke-wrapper-test-'));
+  const pidFile = join(ownerRoot, 'nested-pids.json');
+  const run = startWrapper({
+    CPS_FRESH_CLONE_TIMEOUT_MS: '10000',
+    CPS_FRESH_CLONE_KILL_GRACE_MS: '100',
+    CPS_FRESH_CLONE_PID_FILE: pidFile,
+  });
   let fixturePid;
+  let nestedPids = [];
   let tempRoot;
   t.after(() => {
     if (fixturePid && processGroupExists(fixturePid)) process.kill(-fixturePid, 'SIGKILL');
+    for (const pid of nestedPids) {
+      if (processExists(pid)) process.kill(pid, 'SIGKILL');
+    }
+    if (processExists(run.child.pid)) run.child.kill('SIGKILL');
     if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+    rmSync(ownerRoot, { recursive: true, force: true });
   });
 
   tempRoot = (await waitForOutput(run, /fresh-clone temp: (.+)/))[1].trim();
   fixturePid = Number((await waitForOutput(run, /term-resistant pid: (\d+)/))[1]);
+  nestedPids = await waitForPidFile(pidFile);
+  const startedAt = Date.now();
   run.child.kill('SIGTERM');
-  const result = await run.closed;
+  const result = await waitForClose(run);
+  const elapsedMs = Date.now() - startedAt;
 
   assert.equal(result.code, 143, JSON.stringify(run.output()));
   assert.equal(result.signal, null);
+  assert.ok(elapsedMs < 1_000, `wrapper took ${elapsedMs} ms`);
   assert.equal(existsSync(tempRoot), false, `temp root remains at ${tempRoot}`);
-  assert.equal(processGroupExists(fixturePid), false, `process group ${fixturePid} survived`);
+  await waitForProcessGroupGone(fixturePid);
+  await waitForProcessesGone(nestedPids);
 });
 
 test('fresh-clone shell self-test fails when wrapper cleanup is disabled', { timeout: 30_000 }, () => {
-  const result = spawnSync('bash', [SELF_TEST], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    env: { ...process.env, CPS_FRESH_CLONE_SKIP_CLEANUP: '1' },
-  });
+  const ownerRoot = mkdtempSync(join(tmpdir(), 'cps-smoke-wrapper-test-'));
+  const smokeRoot = join(ownerRoot, 'owned-smoke-root');
+  try {
+    const result = spawnSync('bash', [SELF_TEST], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CPS_FRESH_CLONE_SKIP_CLEANUP: '1',
+        CPS_FRESH_CLONE_TMP_ROOT: smokeRoot,
+      },
+    });
 
-  const output = `${result.stdout}\n${result.stderr}`;
-  const leakedRoots = [...output.matchAll(/^fresh-clone temp: (.+)$/gm)].map((match) => match[1]);
-  for (const leakedRoot of leakedRoots) {
-    rmSync(leakedRoot, { recursive: true, force: true });
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 1, output);
+    assert.match(output, /left temp directory/);
+    assert.equal(existsSync(smokeRoot), true, 'cleanup-disabled smoke root was unexpectedly removed');
+  } finally {
+    rmSync(ownerRoot, { recursive: true, force: true });
   }
+});
 
-  assert.equal(result.status, 1, output);
-  assert.match(output, /left temp directory/);
+after(() => {
+  const leaks = readdirSync(tmpdir(), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('cps-fresh-clone-'))
+    .map((entry) => join(tmpdir(), entry.name))
+    .filter((path) => statSync(path).mtimeMs >= TEST_STARTED_AT)
+    .map((path) => basename(path));
+  assert.deepEqual(leaks, [], `fresh-clone temp roots leaked: ${leaks.join(', ')}`);
 });
