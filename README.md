@@ -314,7 +314,10 @@ CODEX_PAIRED_CLI_IMPLEMENT=agy CODEX_PAIRED_MODEL_IMPLEMENT=gemini-3.8-flash-hig
 For `agy` the model id carries the effort (`gemini-3.8-flash-high|medium|low`, `gemini-3.1-pro-high|low`);
 the role's `effort` is derived from that suffix and overrides inherited efforts. Gemini reviewer
 runs execute in a throwaway checkout, never your working tree. Each `agy` call loads a large
-context (80–135k input tokens even for small prompts), so per-turn cost is higher than Codex.
+context of its own (about 14k input tokens before your prompt, measured 2026-09-18 with no MCP
+servers or plugins configured), and an agentic review's own tool calls cost far more than that: each
+call re-sends the conversation so far, so a real review round runs to hundreds of thousands of fresh
+input tokens and over a million cached re-reads.
 
 Overrides, later wins: defaults ← `.codex-paired/project.json` `models` ← env.
 

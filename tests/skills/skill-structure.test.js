@@ -1712,3 +1712,15 @@ test('v0.19.0: a configured panel commits Phase D docs before reviewing; the unc
   assert.match(phaseCD, /4\. \*\*Apply the doc edits to the working tree but do NOT commit yet\.\*\*/);
   assert.match(phaseCD, /6\. \*\*Only on double-SHIP:\*\* commit the docs/);
 });
+
+test('v0.19.0: the panel round prompt carries the audit-efficiency directive', () => {
+  const procedure = section(
+    readFileSync(join(PLUGIN_ROOT, 'skills/brainstorming/codex-pairing.md'), 'utf8'),
+    '## Review panel rounds (v0.19.0)', null,
+  );
+  assert.match(procedure, /Tool use costs tokens and time: every tool call re-sends this whole conversation\./);
+  // The directive must be part of the prompt every member gets, i.e. inside the compose step.
+  const compose = section(procedure, '3. **Compose the round prompt**', '4. **Dispatch every member');
+  assert.match(compose, /as few calls as possible/);
+  assert.match(compose, /do not re-read it from disk/);
+});
