@@ -8,6 +8,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseSplitDirective,
   parseOrchestrationMarker,
@@ -25,6 +28,18 @@ function plan(sliceSection) {
 /** Build a slice section with an optional body. */
 function slice(body) {
   return `## Slice 1: Test\n\n${body}\n`;
+}
+
+function configuredPanelRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-panel-split-'));
+  mkdirSync(join(dir, '.codex-paired'), { recursive: true });
+  writeFileSync(join(dir, '.codex-paired', 'project.json'), JSON.stringify({
+    version: 1,
+    app: { type: 'library' },
+    live_verification: { default: 'skip', skip_reason: 'library' },
+    review_panel: { review: [{ cli: 'codex', model: 'gpt-a' }, { cli: 'agy', model: 'gemini-b-high' }] },
+  }));
+  return dir;
 }
 
 /** A valid two-disjoint **Implementers:** block (claude-cli + codex-cli). */
@@ -590,6 +605,49 @@ test('slice-2 case 9b: injected deps.runSingle still wins over the default direc
   assert.deepEqual(result.outcome, { outcome: 'custom-single' });
   // The injected runner receives the driver too.
   assert.equal(runSingle.calls[0][0].driver, 'autopilot');
+});
+
+for (const split of ['two-disjoint', 'hybrid-ui-backend']) {
+  test(`configured multi-member review panel blocks ${split} before any runner`, async () => {
+    const repoRoot = configuredPanelRepo();
+    const section = split === 'two-disjoint'
+      ? slice(`**Split:** two-disjoint\n\n${twoImplementers()}`)
+      : slice(`**Split:** hybrid-ui-backend\n\n${filesBlock(['ui/app.js', 'lib/api.js'])}\n\n${hybridOwners()}`);
+    const runSingle = spy({});
+    const dispatchImplementers = spy({});
+    const runHybridSlice = spy({});
+    try {
+      await assert.rejects(
+        () => runSplit({
+          driver: 'autopilot', planPath: 'p.md', specPath: 's.md',
+          workItem: workItemFor(section), repoRoot,
+          deps: { runSingle, dispatchImplementers, runHybridSlice },
+        }),
+        (error) => error.code === 'panel-unsupported-route',
+      );
+      assert.equal(runSingle.calls.length, 0);
+      assert.equal(dispatchImplementers.calls.length, 0);
+      assert.equal(runHybridSlice.calls.length, 0);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+}
+
+test('configured multi-member review panel leaves the single route unchanged', async () => {
+  const repoRoot = configuredPanelRepo();
+  const runSingle = spy({ ok: true });
+  try {
+    const result = await runSplit({
+      driver: 'autopilot', planPath: 'p.md', specPath: 's.md',
+      workItem: workItemFor(slice('**Split:** single')), repoRoot,
+      deps: { runSingle },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(runSingle.calls.length, 1);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
 });
 
 export {

@@ -59,6 +59,42 @@ function fakeImpl(overrides = {}) {
   };
 }
 
+function configureMultiMemberReview(repoRoot) {
+  mkdirSync(join(repoRoot, '.codex-paired'), { recursive: true });
+  writeFileSync(join(repoRoot, '.codex-paired', 'project.json'), JSON.stringify({
+    version: 1,
+    app: { type: 'library' },
+    live_verification: { default: 'skip', skip_reason: 'library' },
+    review_panel: {
+      review: [
+        { cli: 'codex', model: 'gpt-a' },
+        { cli: 'agy', model: 'gemini-b-high' },
+      ],
+    },
+  }));
+}
+
+test('configured multi-member review panel blocks fan-out before any git worktree command', async () => {
+  const { repoRoot } = makeGitRepo('cps-panel-fanout-');
+  configureMultiMemberReview(repoRoot);
+  const listBefore = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' });
+  const branchesBefore = execFileSync('git', ['branch', '--list'], { cwd: repoRoot, encoding: 'utf8' });
+  // Ordering control: an empty baseSha makes input validation (the first step after the guard) throw
+  // worktree-create-failed, so only a guard that runs before every other step yields this code.
+  await assert.rejects(
+    () => createImplementerWorktrees({
+      repoRoot,
+      sliceId: 'slice-panel',
+      implementers: [fakeImpl(), fakeImpl({ memberId: 'expert-implementer@codex:gpt#0' })],
+      baseSha: '',
+    }),
+    (error) => error.code === 'panel-unsupported-route',
+  );
+  assert.equal(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }), listBefore);
+  assert.equal(execFileSync('git', ['branch', '--list'], { cwd: repoRoot, encoding: 'utf8' }), branchesBefore);
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
 // ── happy: N worktrees created in correct path ─────────────────────────────────
 
 test('happy: creates 2 worktrees at correct paths; git worktree list shows them', async () => {

@@ -601,6 +601,24 @@ test('panel: panel_min_size=1 is rejected (hard floor 2)', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('dispatchPanel: an explicit hard_min_size=1 supports a one-member review panel without changing expert defaults', async () => {
+  const { dir, spec, promptPath } = makeSpec();
+  const capturedTurns = [];
+  const only = makeWrappedDispatchFn({
+    memberId: `${ROLE}@codex`, role: ROLE, promptPath,
+    adapter: 'cli-harness:codex', verdict: 'SHIP', capturedTurns,
+  });
+  const result = await dispatchPanel(
+    ROLE,
+    baseRequest(spec, dir),
+    new Map([[`${ROLE}@codex`, only.fn]]),
+    { panel_min_size: 1, panel_max_size: 1, hard_min_size: 1, member_timeout_ms: 500 },
+  );
+  assert.equal(result.outcome, 'panel-SHIP');
+  assert.equal(result.member_results.length, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('panel: panel_max_size=1 is rejected when hard floor is 2', async () => {
   // 3 dispatchFns, panel_max_size: 1 (panel_min_size defaults to 2).
   // effectiveMax=1 < effectiveMin=2 → throws panel-config-invalid BEFORE

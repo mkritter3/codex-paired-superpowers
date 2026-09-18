@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -76,6 +76,32 @@ function makeDeps(over = {}) {
   deps._calls = calls;
   return deps;
 }
+
+function configuredPanelRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-panel-hybrid-'));
+  mkdirSync(join(dir, '.codex-paired'), { recursive: true });
+  writeFileSync(join(dir, '.codex-paired', 'project.json'), JSON.stringify({
+    version: 1,
+    app: { type: 'library' },
+    live_verification: { default: 'skip', skip_reason: 'library' },
+    review_panel: { review: [{ cli: 'codex', model: 'gpt-a' }, { cli: 'agy', model: 'gemini-b-high' }] },
+  }));
+  return dir;
+}
+
+test('configured multi-member review panel blocks hybrid before worktreeCreate', async () => {
+  const repoRoot = configuredPanelRepo();
+  const deps = makeDeps();
+  await assert.rejects(
+    () => hybridPreflight({
+      mode: 'autopilot', repoRoot, specPath: join(repoRoot, 'spec.md'), sliceId: 'slice-panel',
+      planMarkdown: '#', sliceSection: '#', sliceFiles: SLICE_FILES, sliceStartSha: 'base123', deps,
+    }),
+    (error) => error.code === 'panel-unsupported-route',
+  );
+  assert.equal(deps._calls.worktreeCreate.length, 0);
+  rmSync(repoRoot, { recursive: true, force: true });
+});
 
 // ── case 0: types witness (spec §11) ─────────────────────────────────────────
 

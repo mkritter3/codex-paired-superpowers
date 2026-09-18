@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   openReviewerThread,
+  openPanelMemberThread,
   continueReviewerThread,
 } from '../../lib/codex-bridge/reviewer-thread.js';
 import {
@@ -244,6 +245,61 @@ test('openReviewerThread with role:planning updates paired-reviewer sidecar key'
     assert.equal(sc.thread_config['paired-reviewer'].cli, 'agy');
     assert.equal(sc.thread_config['paired-reviewer'].model, 'gemini-3.8-flash-high');
     assert.equal(sc.thread_config['paired-reviewer'].effort, 'high');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('openPanelMemberThread opens a fresh agy conversation every round and never persists it', async () => {
+  const dir = setupRepo();
+  try {
+    const specRel = join('docs', 'spec.md');
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, specRel), '# Spec Content\n');
+    const specAbs = join(dir, specRel);
+    initSidecar(specAbs, {
+      feature: 'panel-fresh', codexSession: 'legacy', model: 'gpt-6-astra', reasoningEffort: 'high',
+    });
+
+    const givenConversationIds = [];
+    const givenPrompts = [];
+    let next = 0;
+    const deps = {
+      dispatch: async (_target, _sys, prompt, options) => {
+        givenConversationIds.push(options.conversationId);
+        givenPrompts.push(prompt);
+        next += 1;
+        return {
+          responseText: `<<<VERDICT>>>\nstatus: SHIP\nversion: v1\ncritique: []\ndeferred: []\nrationale: ok\n<<<END>>>`,
+          sessionId: `fresh-${next}`,
+          adapterMeta: { status: 'SUCCESS', conversation_id: `fresh-${next}`, usage: null },
+        };
+      },
+    };
+
+    const conversations = [];
+    for (let round = 1; round <= 3; round += 1) {
+      const result = await openPanelMemberThread({
+        role: 'review', specPath: specRel, repoRoot: dir,
+        member_id: 'agy:gemini-panel-high', model: 'gemini-panel-high',
+        version: 'v1', prompt: 'ROUND PROMPT: review the artifact; verdict format applies', replay: `round ${round}`,
+      }, deps);
+      conversations.push(result.threadId);
+    }
+
+    assert.deepEqual(givenConversationIds, [undefined, undefined, undefined]);
+    // Spec §2.2: the fresh agy member receives the same round prompt as every other member, plus the
+    // bounded replay and the version it must echo.
+    givenPrompts.forEach((prompt, index) => {
+      assert.match(prompt, /ROUND PROMPT: review the artifact/);
+      assert.match(prompt, new RegExp(`round ${index + 1}$`));
+      assert.match(prompt, /^Artifact version: v1/);
+    });
+    assert.deepEqual(conversations, ['fresh-1', 'fresh-2', 'fresh-3']);
+    const sc = loadSidecar(specAbs);
+    assert.equal(sc.role_sessions['execution-reviewer:agy:gemini-panel-high'], undefined);
+    assert.equal(sc.role_sessions['execution-reviewer'], undefined);
+    assert.equal(sc.codex_session, 'legacy');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -657,4 +713,16 @@ test('CLI verbs exit 1 and print status when the fake agy reports ERROR', () => 
     rmSync(dir, { recursive: true, force: true });
     rmSync(binDir, { recursive: true, force: true });
   }
+});
+
+test('openPanelMemberThread rejects a missing round prompt and an over-budget replay', async () => {
+  const base = {
+    role: 'review', specPath: 'docs/spec.md', repoRoot: process.cwd(),
+    member_id: 'agy:gemini-panel-high', model: 'gemini-panel-high', version: 'v1',
+  };
+  const deps = { dispatch: async () => { throw new Error('must not dispatch'); } };
+  await assert.rejects(() => openPanelMemberThread({ ...base, replay: 'r' }, deps), /prompt/);
+  await assert.rejects(() => openPanelMemberThread({ ...base, prompt: '   ', replay: 'r' }, deps), /prompt/);
+  // The 12,000-character budget applies to the replay only, never to the round prompt.
+  await assert.rejects(() => openPanelMemberThread({ ...base, prompt: 'p', replay: 'x'.repeat(12_001) }, deps), /replay/);
 });
