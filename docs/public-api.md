@@ -6916,11 +6916,48 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               },
               "optional": {
                 "claude": "string",
+                "claude_version": "string",
+                "panel": {
+                  "type": "object[]",
+                  "items": {
+                    "member_id": "string",
+                    "cli": "string",
+                    "model": "string",
+                    "version": "string",
+                    "status": "string",
+                    "session": "string"
+                  }
+                },
                 "codex": "string",
                 "status": "string"
               },
               "additional": false
             }
+          },
+          "panel_roster": {
+            "type": "object",
+            "required": {},
+            "optional": {
+              "planning": {
+                "type": "object[]",
+                "items": {
+                  "member_id": "string",
+                  "cli": "string",
+                  "model": "string",
+                  "effort": "string"
+                }
+              },
+              "review": {
+                "type": "object[]",
+                "items": {
+                  "member_id": "string",
+                  "cli": "string",
+                  "model": "string",
+                  "effort": "string"
+                }
+              }
+            },
+            "additional": false
           },
           "open_contentions": {
             "type": "object[]",
@@ -6958,6 +6995,18 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               },
               "optional": {
                 "claude": "string",
+                "claude_version": "string",
+                "panel": {
+                  "type": "object[]",
+                  "items": {
+                    "member_id": "string",
+                    "cli": "string",
+                    "model": "string",
+                    "version": "string",
+                    "status": "string",
+                    "session": "string"
+                  }
+                },
                 "codex": "string",
                 "status": "string"
               },
@@ -6972,7 +7021,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "additional": true
             }
           },
-          "slice_reviews": {}
+          "slice_reviews": {},
+          "panel_roster": {
+            "type": "object",
+            "required": {},
+            "optional": {
+              "planning": {
+                "type": "object[]",
+                "items": {
+                  "member_id": "string",
+                  "cli": "string",
+                  "model": "string",
+                  "effort": "string"
+                }
+              },
+              "review": {
+                "type": "object[]",
+                "items": {
+                  "member_id": "string",
+                  "cli": "string",
+                  "model": "string",
+                  "effort": "string"
+                }
+              }
+            },
+            "additional": false
+          }
         }
       },
       "exit_meanings": {},
@@ -8962,6 +9036,226 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ]
     },
+    "sidecar-set-panel-roster": {
+      "stability": "stable",
+      "since": "0.19.0",
+      "flags": [
+        "phase",
+        "roster",
+        "specPath"
+      ],
+      "exits": [
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "phase",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "roster",
+          "required": true,
+          "value_type": "json"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {},
+      "exit_meanings": {
+        "1": "roster validation or persisted-roster conflict",
+        "2": "usage or malformed JSON"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-phase",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster",
+              "--phase",
+              "planning"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "phase"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-roster",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster",
+              "--roster",
+              "[]"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "roster"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "flag-specPath",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster",
+              "--specPath",
+              "$TMP"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "invalid-empty-roster",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster",
+              "--specPath",
+              "$SPEC",
+              "--phase",
+              "planning",
+              "--roster",
+              "[]"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "malformed-roster-json",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster",
+              "--specPath",
+              "$SPEC",
+              "--phase",
+              "planning",
+              "--roster",
+              "not-json"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-panel-roster",
+              "--specPath",
+              "$SPEC",
+              "--phase",
+              "planning",
+              "--roster",
+              "[{\"member_id\":\"codex:model\",\"cli\":\"codex\",\"model\":\"model\",\"effort\":\"high\"}]"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "phase",
+              "roster",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        }
+      ]
+    },
     "sidecar-set-phase": {
       "stability": "stable",
       "since": "0.18.0",
@@ -9350,6 +9644,18 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               },
               "optional": {
                 "claude": "string",
+                "claude_version": "string",
+                "panel": {
+                  "type": "object[]",
+                  "items": {
+                    "member_id": "string",
+                    "cli": "string",
+                    "model": "string",
+                    "version": "string",
+                    "status": "string",
+                    "session": "string"
+                  }
+                },
                 "codex": "string",
                 "status": "string"
               },
@@ -9365,6 +9671,31 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             }
           },
           "slice_reviews": {},
+          "panel_roster": {
+            "type": "object",
+            "required": {},
+            "optional": {
+              "planning": {
+                "type": "object[]",
+                "items": {
+                  "member_id": "string",
+                  "cli": "string",
+                  "model": "string",
+                  "effort": "string"
+                }
+              },
+              "review": {
+                "type": "object[]",
+                "items": {
+                  "member_id": "string",
+                  "cli": "string",
+                  "model": "string",
+                  "effort": "string"
+                }
+              }
+            },
+            "additional": false
+          },
           "role_sessions": {
             "paired-reviewer": "string"
           },
@@ -9782,7 +10113,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
     "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",
     "lib/codex-bridge/cli-harness/process-lifecycle.js": "sha256:d35fef32b503bc5e40f7f58e27e0599c07f96d164f36f25cd52425aae5dac978",
-    "lib/codex-bridge/cli.js": "sha256:55cc11b8d9dd2ef4967cb8b2f5a775ebfb47af372731a323607d8244da7a7a18",
+    "lib/codex-bridge/cli.js": "sha256:7e795499b6b51fb69e2197a9435be5c15c1f6058ad4f35566a8ec46e01e6b644",
     "lib/codex-bridge/halt-envelope.js": "sha256:daca46b4d7f6a5b1c6c0055751254d1bbcf66eefe711d8e5cb4c3a944a38d731",
     "lib/codex-bridge/honest-reporting-marker.js": "sha256:a8b076f88fb440f6b0b0508f54ec16873f3d83dc46b4cee81f7c71416e89d2f2",
     "lib/codex-bridge/implementer/member-id.js": "sha256:3dab9201d15462172d8e37247838c1c49329055caf97707a0704b711e1d21f94",
@@ -9794,7 +10125,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/review-panel.js": "sha256:1f1f61f9acc74ef63996cdc6ca69d2a16ee2a5f32cdce409b07c9905af5cbf0e",
     "lib/codex-bridge/reviewer-thread.js": "sha256:62bf4c6674baafec797a72465cc453a284d24810362f79003e8ac2c6e080a764",
     "lib/codex-bridge/scenario-validator.js": "sha256:2326e5d1b9c8f1ba9e78a9b2291dcca21211b7060a26141849f5c593a410c5f1",
-    "lib/codex-bridge/sidecar.js": "sha256:d8a5ebcdef077c09ca846d6102b1d206f0da3bd1d3e569d9d941539508b618ba",
+    "lib/codex-bridge/sidecar.js": "sha256:4c8f0e545a22644330f864ccb84470a91e6c89626435e66ea2e1cd4cef5524d4",
     "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
     "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
     "lib/codex-bridge/worktree.js": "sha256:e948959fc76f2917a89c52cebbe49bf2dcd6e028e52422802bc64e958e818a37"
@@ -11952,6 +12283,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "feature",
     "model",
     "open_contentions",
+    "panel_roster",
     "reasoning_effort",
     "rounds",
     "slice_reviews",
