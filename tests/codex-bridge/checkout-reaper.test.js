@@ -6,7 +6,9 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,9 +45,11 @@ function fixture() {
   git(repoRoot, ['commit', '-qm', 'base']);
   let serial = 0;
 
-  function addWorktree({ kind = 'implementation', marked = true, createdAt = OLD, overlays, probable = false } = {}) {
+  function addWorktree({
+    kind = 'implementation', marked = true, createdAt = OLD, overlays, probable = false, pathName,
+  } = {}) {
     serial += 1;
-    const name = `wt-${serial}`;
+    const name = pathName ?? `wt-${serial}`;
     let path = probable
       ? join(repoRoot, '.git-worktrees', name)
       : join(root, 'worktrees', name);
@@ -60,7 +64,7 @@ function fixture() {
     }
     return {
       path,
-      adminDir: readFileSync(join(path, '.git'), 'utf8').trim().slice('gitdir: '.length),
+      adminDir: readFileSync(join(path, '.git'), 'utf8').slice('gitdir: '.length).replace(/\r?\n$/, ''),
     };
   }
 
@@ -81,7 +85,7 @@ function entryFor(entries, path) {
 }
 
 function isRegistered(repoRoot, path) {
-  return git(repoRoot, ['worktree', 'list', '--porcelain']).split('\n').includes(`worktree ${path}`);
+  return git(repoRoot, ['worktree', 'list', '--porcelain', '-z']).split('\0').includes(`worktree ${path}`);
 }
 
 test('a user-created worktree is never touched and a probable pre-v0.19.0 worktree is listed but kept', () => {
@@ -231,6 +235,7 @@ test('review overlays byte-identical to the primary checkout are allowed and eve
     const allowed = fx.addWorktree({ kind: 'review', overlays: ['overlay.txt'] });
     writeFileSync(join(fx.repoRoot, 'overlay.txt'), 'new overlay\n');
     writeFileSync(join(allowed.path, 'overlay.txt'), 'new overlay\n');
+    git(allowed.path, ['add', 'overlay.txt']);
 
     const mismatch = fx.addWorktree({ kind: 'review', overlays: ['overlay.txt'] });
     writeFileSync(join(mismatch.path, 'overlay.txt'), 'not the source bytes\n');
@@ -245,6 +250,124 @@ test('review overlays byte-identical to the primary checkout are allowed and eve
     assert.ok(entryFor(result.entries, extra.path).keep.includes('review-changes-outside-overlays'));
     assert.equal(isRegistered(fx.repoRoot, mismatch.path), true);
     assert.equal(isRegistered(fx.repoRoot, extra.path), true);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('a review checkout with a staged non-overlay change restored only in the working tree is kept', () => {
+  const fx = fixture();
+  try {
+    const checkout = fx.addWorktree({ kind: 'review', overlays: [] });
+    writeFileSync(join(checkout.path, 'tracked.txt'), 'staged review evidence\n');
+    git(checkout.path, ['add', 'tracked.txt']);
+    git(checkout.path, ['restore', '--worktree', '--source=HEAD', '--', 'tracked.txt']);
+    assert.equal(git(checkout.path, ['diff', '--name-only', 'HEAD', '--']), '');
+    assert.equal(git(checkout.path, ['diff', '--cached', '--name-only', 'HEAD', '--']), 'tracked.txt');
+
+    const result = safeReaper().reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    assert.ok(entryFor(result.entries, checkout.path).keep.includes('review-changes-outside-overlays'));
+    assert.equal(isRegistered(fx.repoRoot, checkout.path), true);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('a modified implementation file hidden by assume-unchanged keeps the checkout', () => {
+  const fx = fixture();
+  try {
+    const checkout = fx.addWorktree();
+    git(checkout.path, ['config', 'core.ignorestat', 'true']);
+    git(checkout.path, ['update-index', '--assume-unchanged', 'tracked.txt']);
+    writeFileSync(join(checkout.path, 'tracked.txt'), 'hidden implementation evidence\n');
+
+    const result = safeReaper().reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    assert.ok(entryFor(result.entries, checkout.path).keep.includes('index-flags-hide-changes'));
+    assert.equal(isRegistered(fx.repoRoot, checkout.path), true);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('a modified review file hidden by skip-worktree keeps the checkout', () => {
+  const fx = fixture();
+  try {
+    const checkout = fx.addWorktree({ kind: 'review', overlays: [] });
+    git(checkout.path, ['update-index', '--skip-worktree', 'tracked.txt']);
+    writeFileSync(join(checkout.path, 'tracked.txt'), 'hidden review evidence\n');
+
+    const result = safeReaper().reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    assert.ok(entryFor(result.entries, checkout.path).keep.includes('index-flags-hide-changes'));
+    assert.equal(isRegistered(fx.repoRoot, checkout.path), true);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('ambiguous admin backlinks keep every entry even when only one admin dir is preserved', () => {
+  const fx = fixture();
+  try {
+    const preserved = fx.addWorktree();
+    const alias = fx.addWorktree();
+    writePreservationMarker(preserved.path, { reason: 'ambiguous evidence', run_id: 'run-preserved' });
+    writeFileSync(join(alias.adminDir, 'gitdir'), `${join(preserved.path, '.git')}\n`);
+
+    const result = safeReaper().reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    const associated = result.entries.filter((entry) => entry.path === preserved.path);
+    assert.ok(associated.length >= 1);
+    assert.ok(associated.every((entry) => entry.keep.includes('registry-ambiguous')));
+    assert.equal(existsSync(preserved.adminDir), true);
+    assert.equal(existsSync(alias.adminDir), true);
+    assert.equal(existsSync(preserved.path), true);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('a registered checkout whose path is a symlink is kept', () => {
+  const fx = fixture();
+  try {
+    const checkout = fx.addWorktree();
+    const target = `${checkout.path}-target`;
+    renameSync(checkout.path, target);
+    symlinkSync(target, checkout.path, 'dir');
+
+    const entries = safeReaper().inventoryCheckouts({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW });
+    assert.ok(entryFor(entries, checkout.path).keep.includes('checkout-path-symlink'));
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('a checkout whose own gitdir pointer disagrees with its registry admin dir is kept', () => {
+  const fx = fixture();
+  try {
+    const checkout = fx.addWorktree();
+    const other = fx.addWorktree();
+    writeFileSync(join(checkout.path, '.git'), `gitdir: ${other.adminDir}\n`);
+
+    const entries = safeReaper().inventoryCheckouts({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW });
+    assert.ok(entryFor(entries, checkout.path).keep.includes('admin-dir-mismatch'));
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('NUL porcelain keeps a newline-containing checkout path as one safe inventory entry', () => {
+  const fx = fixture();
+  try {
+    const newline = fx.addWorktree({ pathName: 'wt-with\nnewline' });
+    const preserved = fx.addWorktree();
+    writePreservationMarker(preserved.path, { reason: 'newline neighbor', run_id: 'run-preserved' });
+
+    const inventory = safeReaper().inventoryCheckouts({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW });
+    assert.equal(inventory.filter((entry) => entry.path === newline.path).length, 1);
+    assert.equal(entryFor(inventory, preserved.path).class, 'preserved');
+
+    const result = safeReaper().reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    assert.equal(entryFor(result.entries, newline.path).removed, true);
+    assert.equal(entryFor(result.entries, preserved.path).removed, false);
+    assert.equal(isRegistered(fx.repoRoot, preserved.path), true);
   } finally {
     rmSync(fx.root, { recursive: true, force: true });
   }
@@ -286,6 +409,55 @@ test('a condition that becomes false between inventory and removal keeps the che
     assert.ok(entryFor(result.entries, checkout.path).keep.includes('in-use:991'));
     assert.equal(entryFor(result.entries, checkout.path).removed, false);
     assert.equal(isRegistered(fx.repoRoot, checkout.path), true);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('another candidate can preserve an earlier candidate before its target-only final evaluation', () => {
+  const fx = fixture();
+  try {
+    const earlier = fx.addWorktree();
+    const later = fx.addWorktree();
+    const calls = new Map();
+    const reaper = safeReaper({
+      findProcesses: (path) => {
+        calls.set(path, (calls.get(path) ?? 0) + 1);
+        if (path === later.path && calls.get(path) === 1) {
+          writePreservationMarker(earlier.path, { reason: 'late evidence', run_id: 'run-late' });
+        }
+        return { pids: [], complete: true, gaps: [] };
+      },
+    });
+
+    const result = reaper.reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    assert.ok(entryFor(result.entries, earlier.path).keep.includes('preserved:late evidence'));
+    assert.equal(entryFor(result.entries, earlier.path).removed, false);
+    assert.equal(calls.get(earlier.path), 1);
+    assert.equal(calls.get(later.path), 2, 'unrelated checkouts are not evaluated during another target refresh');
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('each candidate has exactly one final evaluation after the shared listing work', () => {
+  const fx = fixture();
+  try {
+    const first = fx.addWorktree();
+    const second = fx.addWorktree();
+    const calls = new Map();
+    const reaper = safeReaper({
+      findProcesses: (path) => {
+        calls.set(path, (calls.get(path) ?? 0) + 1);
+        return { pids: [], complete: true, gaps: [] };
+      },
+    });
+
+    const result = reaper.reap({ repoRoot: fx.repoRoot, tmpDir: fx.tmpDir, now: NOW, apply: true });
+    assert.equal(entryFor(result.entries, first.path).removed, true);
+    assert.equal(entryFor(result.entries, second.path).removed, true);
+    assert.equal(calls.get(first.path), 2);
+    assert.equal(calls.get(second.path), 2);
   } finally {
     rmSync(fx.root, { recursive: true, force: true });
   }
