@@ -54,6 +54,23 @@ test('models absent is accepted and remains absent', () => {
   assert.equal(result.config.models, undefined);
 });
 
+test('review_panel accepted shape is preserved by the project config loader', () => {
+  const review_panel = {
+    planning: [{ cli: 'codex' }, { cli: 'agy', model: 'gemini-3.8-flash-high' }],
+    review: [{ cli: 'codex', model: 'gpt-6-astra' }],
+  };
+  const result = load({ ...base(), review_panel });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.config.review_panel, review_panel);
+});
+
+test('malformed review_panel is rejected through the panel validator', () => {
+  const result = load({ ...base(), review_panel: { planning: [{ cli: 'unknown' }] } });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'models-config-malformed');
+  assert.match(result.error.detail, /review_panel\.planning\[0\]\.cli/);
+});
+
 for (const [name, models] of [
   ['string', 'x'],
   ['array', []],

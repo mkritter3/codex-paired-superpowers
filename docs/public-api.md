@@ -4120,6 +4120,107 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ]
     },
+    "review-panel": {
+      "stability": "stable",
+      "since": "0.19.0",
+      "flags": [
+        "format",
+        "phase",
+        "repoRoot"
+      ],
+      "exits": [
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "format",
+          "required": false,
+          "value_type": "json"
+        },
+        {
+          "name": "phase",
+          "required": true,
+          "value_type": "planning|review"
+        },
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "resolved-roster": {
+          "type": "object[]",
+          "items": {
+            "member_id": "string",
+            "cli": "string",
+            "model": "string",
+            "effort": "string"
+          }
+        }
+      },
+      "exit_meanings": {
+        "2": "usage or configuration failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "review-panel"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "resolved-roster",
+          "invocation": {
+            "args": [
+              "review-panel",
+              "--phase",
+              "planning",
+              "--repoRoot",
+              "$REPO",
+              "--format",
+              "json"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "format",
+              "phase",
+              "repoRoot"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "resolved-roster"
+            }
+          }
+        }
+      ]
+    },
     "reviewer-thread-open": {
       "stability": "stable",
       "since": "0.18.0",
@@ -9663,6 +9764,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/mailbox.js",
     "lib/codex-bridge/models.js",
     "lib/codex-bridge/project-config.js",
+    "lib/codex-bridge/review-panel.js",
     "lib/codex-bridge/reviewer-thread.js",
     "lib/codex-bridge/scenario-validator.js",
     "lib/codex-bridge/sidecar.js",
@@ -9680,7 +9782,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
     "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",
     "lib/codex-bridge/cli-harness/process-lifecycle.js": "sha256:d35fef32b503bc5e40f7f58e27e0599c07f96d164f36f25cd52425aae5dac978",
-    "lib/codex-bridge/cli.js": "sha256:d4c95a5be540ee5d5d3ed8df5283832af8a0bcf832de30f88c113f24e23c8041",
+    "lib/codex-bridge/cli.js": "sha256:55cc11b8d9dd2ef4967cb8b2f5a775ebfb47af372731a323607d8244da7a7a18",
     "lib/codex-bridge/halt-envelope.js": "sha256:daca46b4d7f6a5b1c6c0055751254d1bbcf66eefe711d8e5cb4c3a944a38d731",
     "lib/codex-bridge/honest-reporting-marker.js": "sha256:a8b076f88fb440f6b0b0508f54ec16873f3d83dc46b4cee81f7c71416e89d2f2",
     "lib/codex-bridge/implementer/member-id.js": "sha256:3dab9201d15462172d8e37247838c1c49329055caf97707a0704b711e1d21f94",
@@ -9688,7 +9790,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/live-validation-coverage.js": "sha256:a7b8abbc4463b8d9a43ca404baae6663e00216174f51edd26334d2f8f9a5bc1e",
     "lib/codex-bridge/mailbox.js": "sha256:786e519d904e1176f12227e403af8107071e4594b0d9178d64e5627044fd1a06",
     "lib/codex-bridge/models.js": "sha256:2f5e000fded6907ac318e6c6e6f8d1a5eea023a5b200e4689fffa3b6cbcdcff2",
-    "lib/codex-bridge/project-config.js": "sha256:ca8cf5b84131d60113a08b63eae8e4efb28558e7ec78c09330a949b63205e11b",
+    "lib/codex-bridge/project-config.js": "sha256:3840f68021ffc20f8add89442e41906265d08bd5ec3fdd02f9651bacb0caf445",
+    "lib/codex-bridge/review-panel.js": "sha256:1f1f61f9acc74ef63996cdc6ca69d2a16ee2a5f32cdce409b07c9905af5cbf0e",
     "lib/codex-bridge/reviewer-thread.js": "sha256:62bf4c6674baafec797a72465cc453a284d24810362f79003e8ac2c6e080a764",
     "lib/codex-bridge/scenario-validator.js": "sha256:2326e5d1b9c8f1ba9e78a9b2291dcca21211b7060a26141849f5c593a410c5f1",
     "lib/codex-bridge/sidecar.js": "sha256:d8a5ebcdef077c09ca846d6102b1d206f0da3bd1d3e569d9d941539508b618ba",
@@ -10157,6 +10260,70 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
                   }
                 }
               ]
+            }
+          }
+        ]
+      },
+      "review_panel": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "propertyNames": {
+              "enum": [
+                "planning",
+                "review"
+              ]
+            },
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "cli"
+                ],
+                "properties": {
+                  "cli": {
+                    "enum": [
+                      "codex",
+                      "agy"
+                    ]
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                },
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "cli": {
+                          "const": "agy"
+                        },
+                        "model": {}
+                      },
+                      "required": [
+                        "cli",
+                        "model"
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "model": {
+                          "type": "string",
+                          "pattern": "-(low|medium|high)$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
             }
           }
         ]
@@ -10631,6 +10798,55 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "model": "gemini-contract-high",
               "effort": "high"
             }
+          }
+        }
+      }
+    },
+    {
+      "case": "valid-review-panel",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "review_panel": {
+          "planning": [
+            {
+              "cli": "codex"
+            },
+            {
+              "cli": "agy",
+              "model": "gemini-contract-high"
+            }
+          ],
+          "review": [
+            {
+              "cli": "codex",
+              "model": "gpt-6-astra"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "review_panel": {
+            "planning": [
+              {
+                "cli": "codex"
+              },
+              {
+                "cli": "agy",
+                "model": "gemini-contract-high"
+              }
+            ],
+            "review": [
+              {
+                "cli": "codex",
+                "model": "gpt-6-astra"
+              }
+            ]
           }
         }
       }
@@ -11575,6 +11791,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "model": "gemini-contract-high",
             "effort": "low"
           }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
+    },
+    {
+      "case": "review-panel-cli-invalid",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "review_panel": {
+          "planning": [
+            {
+              "cli": "unknown"
+            }
+          ]
         }
       },
       "expect": {
