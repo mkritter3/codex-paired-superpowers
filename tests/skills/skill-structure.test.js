@@ -1266,8 +1266,10 @@ test('v0.16.0: an MCP "model": field in a skill snippet appears only next to mod
 });
 
 test('v0.16.0: non-Claude reviewer dispatch goes through dispatchReviewerViaHarness, never a raw harness import, in every codex-using skill', () => {
-  for (const skill of ['writing-plans', 'subagent-driven-development', 'autopilot', 'systematic-debugging', 'test-driven-development']) {
+  for (const skill of ['writing-plans', 'subagent-driven-development', 'autopilot', 'systematic-debugging', 'test-driven-development', 'brainstorming']) {
     const content = readSkill(skill);
+    assert.ok(!/harness\.dispatch\b/.test(content.replace(/Never call `harness\.dispatch` directly\.|never harness\.dispatch/g, '')),
+      `${skill}/SKILL.md must not instruct a raw harness.dispatch`);
     assert.ok(content.includes('reviewer-dispatch.js') && content.includes('dispatchReviewerViaHarness'),
       `${skill}/SKILL.md must dispatch non-Claude reviewers via dispatchReviewerViaHarness`);
     assert.ok(!content.includes("lib/codex-bridge/cli-harness/harness.js'"),
@@ -1358,4 +1360,25 @@ test('v0.17.0: no reference to the removed gemini.json placeholder; README docum
   assert.ok(readme.includes('"cli": "agy"') && readme.includes('CODEX_PAIRED_CLI'), 'README Configuration must document the cli field and env override');
   const pairing = readFileSync(join(PLUGIN_ROOT, 'skills', 'brainstorming', 'codex-pairing.md'), 'utf8');
   assert.ok(pairing.includes('Reviewer transports'), 'codex-pairing.md must describe the reviewer transports');
+});
+
+test('v0.16.0 (slice-6 r2): reviewer helper callers forward the resolved variant, recovery names the execution role, and both concurrent-review exceptions are documented', () => {
+  for (const skill of ['autopilot', 'subagent-driven-development', 'systematic-debugging', 'brainstorming']) {
+    const content = readSkill(skill);
+    const calls = content.match(/dispatchReviewerViaHarness\(request, \{[^}]*\}/g) || [];
+    assert.ok(calls.length > 0, `${skill}/SKILL.md must call dispatchReviewerViaHarness`);
+    for (const call of calls) assert.ok(call.includes('variant: resolved.variant'), `${skill}/SKILL.md drops resolved.variant: ${call}`);
+  }
+  for (const skill of ['autopilot', 'subagent-driven-development']) {
+    const content = readSkill(skill);
+    const idx = content.indexOf('--reason session-not-found');
+    assert.ok(idx > 0 && content.slice(Math.max(0, idx - 400), idx).includes('--role execution-reviewer'),
+      `${skill}/SKILL.md session-not-found recovery must rotate --role execution-reviewer`);
+  }
+  const em = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
+  assert.ok(/post-merge two-member panel/.test(em) && /merger review/.test(em), 'execution-model.md must name both concurrent-review exceptions');
+  const contract = readFileSync(join(PLUGIN_ROOT, 'docs', 'codex-implementer-contract.md'), 'utf8');
+  assert.ok(!/treat as fallback/.test(contract) && /implementer-attempt-timeout/.test(contract), 'contract must document timeout as a terminal halt');
+  const wp = readSkill('writing-plans');
+  assert.ok(!/^\s*model: [^#\n]*#/m.test(wp), 'writing-plans examples must not put comments on model: lines');
 });

@@ -382,11 +382,15 @@ Frontmatter example:
     - lib/codex-bridge/foo.js
 - member_id: expert-implementer@codex:gpt-5.6-sol#0
   adapter: codex-cli
-  model: gpt-5.6-sol   # identity label only — the effective model is the `implement` role
+  model: gpt-5.6-sol
   required: true
   files:
     - tests/foo.test.js
 ```
+
+The `model:` value (and the model segment of `member_id`) is an identity label only — the
+effective model for every Codex member comes from the `implement` role (v0.16.0). Do not put YAML
+comments on the `model:` line: the implementer-block parser keeps the whole scalar and rejects it.
 
 ## When to use hybrid orchestration (v0.14.0)
 
@@ -416,7 +420,7 @@ To turn it on, add `**Orchestration:** hybrid` to the slice and declare exactly 
 - member_id: hybrid-backend@codex:gpt-5.6-sol#0
   owner: codex-backend
   adapter: codex-background-bash
-  model: gpt-5.6-sol   # identity label only — the effective model is the `implement` role
+  model: gpt-5.6-sol
   required: true
   files:
     - lib/server/routes/account-preferences.ts

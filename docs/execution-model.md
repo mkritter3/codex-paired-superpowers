@@ -38,7 +38,10 @@ Per-transport scope of the ladder and the Claude-first rule:
 | two-disjoint members (`codex-cli` direct adapter) | `implement` | no — fan-out aborts required siblings as before | **no** — the post-merge two-member panel runs concurrently (both must SHIP) |
 | hybrid `codex-backend` (`codex-background-bash`) | `implement` | no — hybrid halts as before | n/a (UI half is Claude by construction) |
 
-Those two "no" cells are stated exceptions, not omissions.
+Those two "no" cells are stated exceptions, not omissions. Two review routes are exempt from the
+Claude-first rule because they are concurrent by design: the **post-merge two-member panel** of a
+two-disjoint slice (`panel/dispatcher.js`, `Promise.all`) and the **merger review** that follows the
+fan-out merge. Both still require every member to SHIP the same merged commit.
 
 Choose three independent things before running implementation work:
 

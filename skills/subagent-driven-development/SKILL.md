@@ -80,7 +80,13 @@ Claude reviews first; Codex second; both must SHIP the **same commit**. Bounded 
 
 ### Step C: open Codex slice review
 Use the **execution thread** (`role_sessions["execution-reviewer"]`, opened at execution entry —
-see `skills/brainstorming/codex-pairing.md` "Two threads per feature"). Build the prompt from
+see `skills/brainstorming/codex-pairing.md` "Two threads per feature"). **SDD entry check:** when this
+skill is entered directly (from `systematic-debugging`, or a `/execute` that skipped the hand-off) the
+key may be absent — run `sidecar-thread-id --specPath "<spec-path>" --role execution-reviewer` first and,
+if it prints nothing, open the thread exactly as `skills/execution/SKILL.md` steps 0–5 describe
+(`model-role --role review`, replay context, `composeSeedPrompt(..., { reason: 'execution-thread' })`,
+then `sidecar-rotate-thread-id --role execution-reviewer --reason execution-thread --threadConfig …`)
+before the first review turn. Never fall back to the planning thread for a slice review. Build the prompt from
 `slice-review-prompt.md` (in this skill folder), substituting `{{SLICE_ID}}`, `{{ROUND}}`,
 `{{SLICE_TASKS}}`, `{{SLICE_DIFF}}`, `{{TEST_OUTPUT}}`, and (rounds 2+) `{{PRIOR_CRITIQUES}}`, and
 append a `## Claude review findings` block (both lists from Step C0, verbatim) plus the line
@@ -100,7 +106,7 @@ THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id
 
 For a Codex role, invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is the reviewer's review + verdict block.
 
-**If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old> --newThreadId <new> --reason session-not-found`). Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
+**If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation **for the execution role** (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --role execution-reviewer --oldThreadId <old> --newThreadId <new> --reason session-not-found --phase "review-slice:<slice-id>" --round <n> --threadConfig '{"role":"review","cli":"codex","model":"<model>","effort":"<effort>"}'` — `--role` is mandatory here: the verb defaults to `paired-reviewer` and would overwrite the planning thread; `model`/`effort` come from `model-role --role review --format json`). Equivalent in code: `recoverStaleThread(specPath, { role: 'execution-reviewer', planPath, pendingPrompt })` from `lib/codex-bridge/thread-recovery.js`, which does all of this and follows the recorded CLI. Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
 
 Effort is fixed per thread (`codex-reply` has no config parameter): the execution thread runs at the `review` role (GPT-6 Astra, `high` by default; override via `.codex-paired/project.json` `models.review` or `CODEX_PAIRED_REASONING_REVIEW`).
 
@@ -323,7 +329,7 @@ for (const { identity, resolved, adapter } of resolutions) {
   } else {
     const { dispatchReviewerViaHarness } =
       await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
-    const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, repoRoot });
+    const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, variant: resolved.variant, repoRoot }); // variant: ollama/agy variants are lost otherwise (helper defaults to 'read-only')
     responseText = out.responseText;
     requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning) for the turn record
   }

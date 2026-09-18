@@ -138,7 +138,7 @@ for (const identity of result.selected) {
   } else {
     const { dispatchReviewerViaHarness } =
       await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
-    const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, repoRoot });
+    const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, variant: resolved.variant, repoRoot }); // forward the variant: the helper defaults to 'read-only'
     responseText = out.responseText;
     requestForTurn = out.requestForTurn; // carries adapter + modelRole (+ warning) for the turn record
   }

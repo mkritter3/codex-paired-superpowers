@@ -163,9 +163,14 @@ returns `isError: true` with `Session not found for thread_id:` (the MCP server 
 threads are process-local), do NOT halt the slice. Recover: build replay context
 (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`),
 open a NEW thread via the initial `codex` tool seeded with that replay + the pending phase prompt,
-persist the rotation (`sidecar-rotate-thread-id --specPath "<spec-path>" --oldThreadId <old>
---newThreadId <new> --reason session-not-found --phase <phase> --round <n>`), surface one line to the
-user, and continue the current phase. This is distinct from cross-session resume (re-running
+persist the rotation **for the role that owns the lost thread** (`sidecar-rotate-thread-id --specPath "<spec-path>"
+--role execution-reviewer --oldThreadId <old> --newThreadId <new> --reason session-not-found --phase <phase>
+--round <n> --threadConfig '{"role":"review","cli":"codex","model":"<model>","effort":"<effort>"}'` for Phase
+B.5/C/D turns; `--role paired-reviewer` with the `planning` role's config for Phase A turns — the verb
+defaults to `paired-reviewer`, so omitting `--role` on an execution-thread loss silently overwrites the
+planning thread and leaves the execution thread stale; `recoverStaleThread(specPath, { role, planPath,
+pendingPrompt })` in `lib/codex-bridge/thread-recovery.js` does all of this for you), surface one line to
+the user, and continue the current phase. This is distinct from cross-session resume (re-running
 `/autopilot`); it handles a thread dying *within* a live run.
 
 ### Phase A: plan-slice + test-list review
@@ -1095,7 +1100,7 @@ const drainResult = await drainPeerDMs(
       if (resolved.cli !== 'claude') {
         const { dispatchReviewerViaHarness } =
           await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
-        const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, repoRoot });
+        const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, variant: resolved.variant, repoRoot }); // forward the variant: the helper defaults to 'read-only'
         taskResponseText = out.responseText;
         requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning)
       }

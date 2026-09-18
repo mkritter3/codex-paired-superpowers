@@ -313,7 +313,7 @@ for (const identity of result.selected) {
 For each expert, build the request and dispatch via `runTurnWithDeps` (v0.9.0 — adds replay-field persistence + `suppressPeerMessages`). The orchestrator (Claude) is responsible for the underlying transport:
 
 - `claude-task` → dispatch the Task tool yourself; pass response text through `agentDispatch`.
-- `cli-harness` (`codex`, `ollama{<variant>}`, `gemini`) → wrap `harness.dispatch` in `agentDispatch`.
+- `cli-harness` (`codex`, `ollama{<variant>}`, `agy`) → call `dispatchReviewerViaHarness(request, { cli: resolved.cli, variant: resolved.variant, repoRoot })` from `lib/codex-bridge/reviewer-dispatch.js` (v0.16.0: it resolves the model role BY PHASE — `spec-review` → `planning` — assembles the real prompt, bounds the run, and returns `{ responseText, requestForTurn }` whose `requestForTurn` carries the adapter + modelRole audit fields); pass `out.responseText` through `agentDispatch` and use `out.requestForTurn` for `runTurnWithDeps`. Never call `harness.dispatch` directly.
 
 ```js
 const { runTurnWithDeps, assembleSpawnPrompt } =
@@ -334,8 +334,17 @@ const request = {
 };
 const unreadMessages = await readUnreadMessages(repoRoot, identity.id);
 const prompt = assembleSpawnPrompt({ ...request, unreadMessages });
-// ... orchestrator dispatches Task or harness, captures responseText ...
-const turnResult = await runTurnWithDeps(request, {
+let responseText, requestForTurn = request;
+if (resolved.cli === 'claude') {
+  responseText = await /* Task tool with `prompt` */;
+} else {
+  const { dispatchReviewerViaHarness } =
+    await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js');
+  const out = await dispatchReviewerViaHarness(request, { cli: resolved.cli, variant: resolved.variant, repoRoot });
+  responseText = out.responseText;
+  requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning) for the turn record
+}
+const turnResult = await runTurnWithDeps(requestForTurn, {
   agentDispatch: async () => responseText,
 });
 ```
@@ -358,9 +367,17 @@ for (const cli of ['codex', 'claude']) {
   const adapter = cli === 'claude' ? 'claude-task' : `cli-harness:${cli}`;
   dispatchFns.set(`${identity.id}@${cli}`, {
     fn: async (req) => {
-      // adapter-specific: claude → Task tool; cli-harness → harness.dispatch
-      const responseText = await /* adapter dispatch */;
-      return runTurnWithDeps({ ...req, adapter }, { agentDispatch: async () => responseText });
+      // adapter-specific: claude → Task tool; cli-harness → dispatchReviewerViaHarness
+      // (reviewer-dispatch.js), never harness.dispatch — same as single mode above.
+      let responseText, requestForTurn = { ...req, adapter };
+      if (cli === 'claude') {
+        responseText = await /* Task tool with assembleSpawnPrompt(requestForTurn) */;
+      } else {
+        const out = await dispatchReviewerViaHarness(requestForTurn, { cli, variant: resolved.variant, repoRoot });
+        responseText = out.responseText;
+        requestForTurn = out.requestForTurn; // adapter + modelRole (+ warning)
+      }
+      return runTurnWithDeps(requestForTurn, { agentDispatch: async () => responseText });
     },
     runtime_kind: cli === 'claude' ? 'claude-task' : 'cli-harness',
   });
