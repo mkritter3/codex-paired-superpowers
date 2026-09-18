@@ -8,7 +8,7 @@ The stable slash commands are derived from command filenames and their argument 
 
 ## Bridge CLI
 
-Every runtime verb is inventoried below. Cases are executable coverage records, and every flag is exercised by at least one successful case when the flag has a success path. Flag contracts describe the permissive parser; individual handlers enforce required values. A JSON case names a shape in `stdout_types`; object shapes are exact (undeclared fields fail), nested objects recursively declare their public fields, `array<T>` declares an element type, and unions use `|`. Text cases declare either an exact value or a regular expression. A manual entry means static extraction encountered an opaque construct; its region digest makes changes reviewable even when `unsupported` is currently empty.
+Every runtime verb is inventoried below. Cases are executable coverage records, and every flag is exercised by at least one successful case whose invocation actually includes `--flag` or `--flag=value` when the flag has a success path. Flag contracts describe the permissive parser; individual handlers enforce required values. A JSON case names a recursive shape in `stdout_types`. Primitive arrays use `string[]` (or another primitive element type); record arrays use `{ "type": "object[]", "items": <shape> }`. A plain object shape maps required field names to their nested types and rejects additional fields. Where fields are optional or a record is nullable, the long form is `{ "type": "object" | "object|null", "required": { ... }, "optional": { ... }, "additional": false }`; `additional` defaults to `false`. Unions use `|`. Text cases declare either an exact value or a regular expression. Any verb with non-empty `unsupported` extraction markers must carry a manual entry with a reason and handler-region digest; a digest may also document a known defensive path that executable fixtures cannot induce.
 
 An expansion may name `call`, the normalized source text of one non-literal load expression. When present it exempts only that operation at `site`; another unresolved load in the same file remains an error. The registry expansion below deliberately binds to its single computed adapter import.
 
@@ -22,7 +22,7 @@ JSON consumers may rely on the envelope and check names. Human consumers may rel
 
 ## Project configuration
 
-The schema describes accepted shape. Runtime cases separately pin permissive versions and unknown keys, defaults, environment-dependent validation, and error precedence without changing the loader.
+The schema describes the loader's accepted JSON shape. `version` is intentionally permissive: every non-null JSON value is accepted because the loader checks only presence. For non-library apps, `live_verification.default` is likewise unconstrained and may be numeric or otherwise non-string. Runtime cases separately pin those permissive branches, defaults, environment-dependent validation, validation order, and every loader/model error branch without changing the loader. The unset-password case is marked as a schema exception because JSON Schema cannot observe `process.env`.
 
 ## Sidecars
 
@@ -416,9 +416,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "stdout_types": {
         "all-flags-success": {
           "initialized_at": "string",
-          "goals": "array",
-          "plans": "array",
-          "active_plan": "object|null"
+          "goals": {
+            "type": "object[]",
+            "items": {
+              "id": "string",
+              "text": "string",
+              "audited_shipped": "boolean",
+              "shipped_by_plan": "string|null",
+              "shipped_at": "string|null"
+            }
+          },
+          "plans": {
+            "type": "object[]",
+            "items": {
+              "path": "string",
+              "shipped": "boolean",
+              "audited_goals": "string[]",
+              "shipped_at": "string|null"
+            }
+          },
+          "active_plan": "string|null"
         }
       },
       "exit_meanings": {},
@@ -522,9 +539,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "stdout_types": {
         "all-flags-success": {
           "initialized_at": "string",
-          "goals": "array",
-          "plans": "array",
-          "active_plan": "object|null"
+          "goals": {
+            "type": "object[]",
+            "items": {
+              "id": "string",
+              "text": "string",
+              "audited_shipped": "boolean",
+              "shipped_by_plan": "string|null",
+              "shipped_at": "string|null"
+            }
+          },
+          "plans": {
+            "type": "object[]",
+            "items": {
+              "path": "string",
+              "shipped": "boolean",
+              "audited_goals": "string[]",
+              "shipped_at": "string|null"
+            }
+          },
+          "active_plan": "string|null"
         }
       },
       "exit_meanings": {
@@ -669,9 +703,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "stdout_types": {
         "all-flags-success": {
           "initialized_at": "string",
-          "goals": "array",
-          "plans": "array",
-          "active_plan": "object|null"
+          "goals": {
+            "type": "object[]",
+            "items": {
+              "id": "string",
+              "text": "string",
+              "audited_shipped": "boolean",
+              "shipped_by_plan": "string|null",
+              "shipped_at": "string|null"
+            }
+          },
+          "plans": {
+            "type": "object[]",
+            "items": {
+              "path": "string",
+              "shipped": "boolean",
+              "audited_goals": "string[]",
+              "shipped_at": "string|null"
+            }
+          },
+          "active_plan": "string|null"
         }
       },
       "exit_meanings": {
@@ -839,10 +890,29 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       ],
       "stdout_types": {
         "initialized-json": {
-          "unshipped_goals": "array",
-          "shipped_goals": "array",
-          "shipped_plans": "array",
-          "active_plan": "object|null",
+          "unshipped_goals": {
+            "type": "object[]",
+            "items": {
+              "id": "string",
+              "text": "string"
+            }
+          },
+          "shipped_goals": {
+            "type": "object[]",
+            "items": {
+              "id": "string",
+              "text": "string",
+              "by_plan": "string"
+            }
+          },
+          "shipped_plans": {
+            "type": "object[]",
+            "items": {
+              "path": "string",
+              "audited_goals": "string[]"
+            }
+          },
+          "active_plan": "string|null",
           "total_goals": "number",
           "goals_shipped_count": "number"
         }
@@ -994,9 +1064,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "stdout_types": {
         "all-flags-success": {
           "initialized_at": "string",
-          "goals": "array",
-          "plans": "array",
-          "active_plan": "object|null"
+          "goals": {
+            "type": "object[]",
+            "items": {
+              "id": "string",
+              "text": "string",
+              "audited_shipped": "boolean",
+              "shipped_by_plan": "string|null",
+              "shipped_at": "string|null"
+            }
+          },
+          "plans": {
+            "type": "object[]",
+            "items": {
+              "path": "string",
+              "shipped": "boolean",
+              "audited_goals": "string[]",
+              "shipped_at": "string|null"
+            }
+          },
+          "active_plan": "string|null"
         }
       },
       "exit_meanings": {
@@ -1823,7 +1910,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "case": "all-flags-success",
           "invocation": {
             "args": [
-              "live-validation-parse"
+              "live-validation-parse",
+              "--tier",
+              "standard"
             ],
             "stdin": "[\"tier: standard\",\"live.scenarios-covered: c\",\"live.preconditions-enforced: c\",\"live.user-takeover-safe: c\",\"live.evidence-quality: c\",\"live.assertions-visible: c\",\"live.logs-reviewed: c\",\"live.flake-triaged: c\",\"live.failures-fixed: c\",\"live.regressions-rerun: c\",\"live.cleanup-recorded: c\",\"live.deferred-justified: c\",\"live.environment-reproducible: c\",\"live.residual-risk: c\"]"
           },
@@ -2172,12 +2261,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       ],
       "stdout_types": {
         "success": {
-          "marked": "array",
-          "skipped": "array<string>"
+          "marked": "string[]",
+          "skipped": "string[]"
         },
         "all-flags-success": {
-          "marked": "array",
-          "skipped": "array<string>"
+          "marked": "string[]",
+          "skipped": "string[]"
         }
       },
       "exit_meanings": {
@@ -2464,8 +2553,54 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "success": "array",
-        "all-flags-success": "array"
+        "success": {
+          "type": "object[]",
+          "items": {
+            "type": "object",
+            "required": {
+              "id": "string",
+              "from": "string",
+              "to": "string",
+              "text": "string",
+              "timestamp": "string",
+              "summary": "string|null",
+              "color": "string|null",
+              "read_at": "string|null"
+            },
+            "optional": {
+              "kind": "string",
+              "priority": "string",
+              "implementer_run_id": "string",
+              "slice_id": "string",
+              "body_hash": "string"
+            },
+            "additional": false
+          }
+        },
+        "all-flags-success": {
+          "type": "object[]",
+          "items": {
+            "type": "object",
+            "required": {
+              "id": "string",
+              "from": "string",
+              "to": "string",
+              "text": "string",
+              "timestamp": "string",
+              "summary": "string|null",
+              "color": "string|null",
+              "read_at": "string|null"
+            },
+            "optional": {
+              "kind": "string",
+              "priority": "string",
+              "implementer_run_id": "string",
+              "slice_id": "string",
+              "body_hash": "string"
+            },
+            "additional": false
+          }
+        }
       },
       "exit_meanings": {
         "0": "success",
@@ -2637,7 +2772,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "$REPO"
             ],
             "stdin": "",
-            "setup": "repo"
+            "setup": "mailbox-message"
           },
           "covers": {
             "flags": [
@@ -2673,7 +2808,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "$REPO"
             ],
             "stdin": "",
-            "setup": "repo"
+            "setup": "mailbox-message"
           },
           "covers": {
             "flags": [
@@ -3243,7 +3378,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "model": "string",
           "effort": "string",
           "command": "string",
-          "args": "array<string>",
+          "args": "string[]",
           "insertAfter": "string",
           "sources": {
             "cli": "string",
@@ -3263,7 +3398,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "model": "string",
           "effort": "string",
           "command": "string",
-          "args": "array<string>",
+          "args": "string[]",
           "insertAfter": "string",
           "sources": {
             "cli": "string",
@@ -3808,40 +3943,52 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "threadId": "string",
           "content": "string",
           "usage": {
-            "prompt_tokens": "number",
-            "completion_tokens": "number",
-            "total_tokens": "number"
+            "type": "object|null",
+            "required": {
+              "prompt_tokens": "number",
+              "completion_tokens": "number",
+              "total_tokens": "number"
+            },
+            "additional": false
           },
           "ok": "boolean",
           "exit": "number",
           "status": "string",
-          "warnings": "array"
+          "warnings": "string[]"
         },
         "agy-failure-json": {
           "threadId": "string",
           "content": "string",
           "usage": {
-            "prompt_tokens": "number",
-            "completion_tokens": "number",
-            "total_tokens": "number"
+            "type": "object|null",
+            "required": {
+              "prompt_tokens": "number",
+              "completion_tokens": "number",
+              "total_tokens": "number"
+            },
+            "additional": false
           },
           "ok": "boolean",
           "exit": "number",
           "status": "string",
-          "warnings": "array<string>"
+          "warnings": "string[]"
         },
         "all-flags-success": {
           "threadId": "string",
           "content": "string",
           "usage": {
-            "prompt_tokens": "number",
-            "completion_tokens": "number",
-            "total_tokens": "number"
+            "type": "object|null",
+            "required": {
+              "prompt_tokens": "number",
+              "completion_tokens": "number",
+              "total_tokens": "number"
+            },
+            "additional": false
           },
           "ok": "boolean",
           "exit": "number",
           "status": "string",
-          "warnings": "array"
+          "warnings": "string[]"
         }
       },
       "exit_meanings": {
@@ -4054,7 +4201,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "$REPO"
             ],
             "stdin": "review",
-            "setup": "reviewer-failure"
+            "setup": "reviewer-null-usage"
           },
           "covers": {
             "flags": [],
@@ -4183,40 +4330,52 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "threadId": "string",
           "content": "string",
           "usage": {
-            "prompt_tokens": "number",
-            "completion_tokens": "number",
-            "total_tokens": "number"
+            "type": "object|null",
+            "required": {
+              "prompt_tokens": "number",
+              "completion_tokens": "number",
+              "total_tokens": "number"
+            },
+            "additional": false
           },
           "ok": "boolean",
           "exit": "number",
           "status": "string",
-          "warnings": "array"
+          "warnings": "string[]"
         },
         "agy-failure-json": {
           "threadId": "string",
           "content": "string",
           "usage": {
-            "prompt_tokens": "number",
-            "completion_tokens": "number",
-            "total_tokens": "number"
+            "type": "object|null",
+            "required": {
+              "prompt_tokens": "number",
+              "completion_tokens": "number",
+              "total_tokens": "number"
+            },
+            "additional": false
           },
           "ok": "boolean",
           "exit": "number",
           "status": "string",
-          "warnings": "array<string>"
+          "warnings": "string[]"
         },
         "all-flags-success": {
           "threadId": "string",
           "content": "string",
           "usage": {
-            "prompt_tokens": "number",
-            "completion_tokens": "number",
-            "total_tokens": "number"
+            "type": "object|null",
+            "required": {
+              "prompt_tokens": "number",
+              "completion_tokens": "number",
+              "total_tokens": "number"
+            },
+            "additional": false
           },
           "ok": "boolean",
           "exit": "number",
           "status": "string",
-          "warnings": "array"
+          "warnings": "string[]"
         }
       },
       "exit_meanings": {
@@ -4429,7 +4588,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "$REPO"
             ],
             "stdin": "review",
-            "setup": "reviewer-failure"
+            "setup": "reviewer-null-usage"
           },
           "covers": {
             "flags": [],
@@ -4528,13 +4687,79 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "stdout_types": {
         "valid-scenario-json": {
           "ok": "boolean",
-          "scenarios": "array",
-          "deferred": "array"
+          "scenarios": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {
+                "id": "string"
+              },
+              "optional": {
+                "title": "string",
+                "risk": "string",
+                "why": "string",
+                "preconditions": {
+                  "type": "object[]",
+                  "items": {
+                    "type": "object",
+                    "required": {},
+                    "additional": true
+                  }
+                },
+                "steps": {
+                  "type": "object[]",
+                  "items": {
+                    "type": "object",
+                    "required": {},
+                    "additional": true
+                  }
+                },
+                "assertions": "string[]",
+                "diagnostic_expectations": "json[]",
+                "timeout_ms": "number"
+              },
+              "additional": true
+            }
+          },
+          "deferred": "string[]"
         },
         "all-flags-success": {
           "ok": "boolean",
-          "scenarios": "array",
-          "deferred": "array"
+          "scenarios": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {
+                "id": "string"
+              },
+              "optional": {
+                "title": "string",
+                "risk": "string",
+                "why": "string",
+                "preconditions": {
+                  "type": "object[]",
+                  "items": {
+                    "type": "object",
+                    "required": {},
+                    "additional": true
+                  }
+                },
+                "steps": {
+                  "type": "object[]",
+                  "items": {
+                    "type": "object",
+                    "required": {},
+                    "additional": true
+                  }
+                },
+                "assertions": "string[]",
+                "diagnostic_expectations": "json[]",
+                "timeout_ms": "number"
+              },
+              "additional": true
+            }
+          },
+          "deferred": "string[]"
         }
       },
       "exit_meanings": {
@@ -4595,7 +4820,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "args": [
               "scenario-validate"
             ],
-            "stdin": "{\"scenarios\":[{\"id\":\"lv-001\",\"title\":\"contract\",\"risk\":\"happy-path\",\"why\":\"contract\",\"preconditions\":[],\"steps\":[{\"action\":\"click\",\"target\":\"Button\"}],\"assertions\":[\"Visible\"],\"diagnostic_expectations\":[],\"timeout_ms\":60000}],\"deferred\":[]}"
+            "stdin": "{\"scenarios\":[{\"id\":\"lv-001\",\"title\":\"contract\",\"risk\":\"happy-path\",\"why\":\"contract\",\"preconditions\":[],\"steps\":[{\"action\":\"click\",\"target\":\"Button\"}],\"assertions\":[\"Visible\"],\"diagnostic_expectations\":[],\"timeout_ms\":60000}],\"deferred\":[\"lv-deferred\"]}"
           },
           "covers": {
             "flags": [],
@@ -4623,7 +4848,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "scenario-validate",
               "--require-scenarios"
             ],
-            "stdin": "{\"scenarios\":[{\"id\":\"lv-001\",\"title\":\"contract\",\"risk\":\"happy-path\",\"why\":\"contract\",\"preconditions\":[],\"steps\":[{\"action\":\"click\",\"target\":\"Button\"}],\"assertions\":[\"Visible\"],\"diagnostic_expectations\":[],\"timeout_ms\":60000}],\"deferred\":[]}"
+            "stdin": "{\"scenarios\":[{\"id\":\"lv-001\",\"title\":\"contract\",\"risk\":\"happy-path\",\"why\":\"contract\",\"preconditions\":[],\"steps\":[{\"action\":\"click\",\"target\":\"Button\"}],\"assertions\":[\"Visible\"],\"diagnostic_expectations\":[],\"timeout_ms\":60000}],\"deferred\":[\"lv-deferred\"]}"
           },
           "covers": {
             "flags": [
@@ -6247,8 +6472,30 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "opened_at": "string"
             }
           },
-          "rounds": "array",
-          "open_contentions": "array",
+          "rounds": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {
+                "phase": "string",
+                "round": "number"
+              },
+              "optional": {
+                "claude": "string",
+                "codex": "string",
+                "status": "string"
+              },
+              "additional": false
+            }
+          },
+          "open_contentions": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {},
+              "additional": true
+            }
+          },
           "slice_reviews": {}
         },
         "all-flags-success": {
@@ -6267,8 +6514,30 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "opened_at": "string"
             }
           },
-          "rounds": "array",
-          "open_contentions": "array",
+          "rounds": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {
+                "phase": "string",
+                "round": "number"
+              },
+              "optional": {
+                "claude": "string",
+                "codex": "string",
+                "status": "string"
+              },
+              "additional": false
+            }
+          },
+          "open_contentions": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {},
+              "additional": true
+            }
+          },
           "slice_reviews": {}
         }
       },
@@ -6490,7 +6759,54 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "all-flags-success": "array"
+        "all-flags-success": {
+          "type": "object[]",
+          "items": {
+            "type": "object",
+            "required": {
+              "phase": "string",
+              "round": "number",
+              "side": "string",
+              "commands": {
+                "type": "object[]",
+                "items": {
+                  "type": "object",
+                  "required": {
+                    "cmd": "string",
+                    "summary": "string",
+                    "kind": "string",
+                    "exit_code": "number",
+                    "ran_at": "string"
+                  },
+                  "optional": {
+                    "selection": {
+                      "type": "object",
+                      "required": {
+                        "mode": "string",
+                        "ran": "number"
+                      },
+                      "optional": {
+                        "fullyCovered": "boolean",
+                        "uncovered": "json[]",
+                        "exit": "number"
+                      },
+                      "additional": false
+                    },
+                    "attempts": "number",
+                    "flaky": "boolean"
+                  },
+                  "additional": false
+                }
+              },
+              "verdict_basis": "string|null",
+              "appended_at": "string"
+            },
+            "optional": {
+              "reviewed_sha": "string"
+            },
+            "additional": false
+          }
+        }
       },
       "exit_meanings": {},
       "cases": [
@@ -6625,7 +6941,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "codex"
             ],
             "stdin": "",
-            "setup": "sidecar"
+            "setup": "sidecar-audit"
           },
           "covers": {
             "flags": [
@@ -6731,12 +7047,42 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       ],
       "stdout_types": {
         "all-flags-success": {
-          "feature": "string",
+          "feature": "string|null",
           "artifact": "string",
-          "goals": "null",
-          "rounds": "array",
-          "open_contentions": "array",
-          "thread_rotations": "array"
+          "goals": "string|null",
+          "rounds": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {
+                "phase": "string",
+                "round": "number",
+                "claude": "string",
+                "codex": "string"
+              },
+              "additional": false
+            }
+          },
+          "open_contentions": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {},
+              "additional": true
+            }
+          },
+          "thread_rotations": {
+            "type": "object[]",
+            "items": {
+              "old_thread_id": "string|null",
+              "new_thread_id": "string",
+              "role": "string",
+              "reason": "string|null",
+              "phase": "string|null",
+              "round": "number|null",
+              "rotated_at": "string"
+            }
+          }
         }
       },
       "exit_meanings": {},
@@ -6794,7 +7140,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "$SPEC"
             ],
             "stdin": "",
-            "setup": "sidecar"
+            "setup": "sidecar-replay"
           },
           "covers": {
             "flags": [
@@ -7227,9 +7573,39 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "baseline-no-args": "array",
-        "flag-max-age-hours": "array",
-        "flag-repoRoot": "array"
+        "baseline-no-args": {
+          "type": "object[]",
+          "items": {
+            "sidecar_path": "string",
+            "current_slice": "json",
+            "current_phase": "json",
+            "last_tick_at": "string|null",
+            "idle_hours": "number",
+            "plan_path": "json"
+          }
+        },
+        "flag-max-age-hours": {
+          "type": "object[]",
+          "items": {
+            "sidecar_path": "string",
+            "current_slice": "json",
+            "current_phase": "json",
+            "last_tick_at": "string|null",
+            "idle_hours": "number",
+            "plan_path": "json"
+          }
+        },
+        "flag-repoRoot": {
+          "type": "object[]",
+          "items": {
+            "sidecar_path": "string",
+            "current_slice": "json",
+            "current_phase": "json",
+            "last_tick_at": "string|null",
+            "idle_hours": "number",
+            "plan_path": "json"
+          }
+        }
       },
       "exit_meanings": {},
       "cases": [
@@ -7239,7 +7615,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "args": [
               "sidecar-scan-stale"
             ],
-            "stdin": ""
+            "stdin": "",
+            "setup": "stale-sidecar"
           },
           "covers": {
             "flags": [],
@@ -8529,13 +8906,55 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "opened_at": "string"
             }
           },
-          "rounds": "array",
-          "open_contentions": "array",
+          "rounds": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {
+                "phase": "string",
+                "round": "number"
+              },
+              "optional": {
+                "claude": "string",
+                "codex": "string",
+                "status": "string"
+              },
+              "additional": false
+            }
+          },
+          "open_contentions": {
+            "type": "object[]",
+            "items": {
+              "type": "object",
+              "required": {},
+              "additional": true
+            }
+          },
           "slice_reviews": {},
           "role_sessions": {
             "paired-reviewer": "string"
           },
-          "migrations": "array"
+          "migrations": {
+            "type": "object[]",
+            "items": {
+              "from_schema": "string",
+              "to_schema": "string",
+              "action": "string",
+              "migrated_at": "string"
+            }
+          },
+          "thread_rotations": {
+            "type": "object[]",
+            "items": {
+              "old_thread_id": "string|null",
+              "new_thread_id": "string",
+              "role": "string",
+              "reason": "string|null",
+              "phase": "string|null",
+              "round": "number|null",
+              "rotated_at": "string"
+            }
+          }
         }
       },
       "exit_meanings": {},
@@ -8593,7 +9012,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "$SPEC"
             ],
             "stdin": "",
-            "setup": "sidecar"
+            "setup": "sidecar-replay"
           },
           "covers": {
             "flags": [
@@ -9023,8 +9442,20 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         "warn": "number",
         "fail": "number"
       },
-      "checks": "array",
-      "availability": "object|null"
+      "checks": {
+        "type": "object[]",
+        "items": {
+          "status": "string",
+          "name": "string",
+          "detail": "string",
+          "fix": "string|null"
+        }
+      },
+      "availability": {
+        "type": "object|null",
+        "required": {},
+        "additional": true
+      }
     }
   },
   "check_names": [
@@ -9066,14 +9497,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     ],
     "properties": {
       "version": {
-        "anyOf": [
-          {
-            "type": "number"
-          },
-          {
-            "type": "string"
-          }
-        ]
+        "not": {
+          "type": "null"
+        }
       },
       "app": {
         "type": "object",
@@ -9094,16 +9520,105 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         "additionalProperties": true
       },
       "live_verification": {
-        "type": "object",
-        "properties": {
-          "default": {
-            "type": "string"
+        "anyOf": [
+          {
+            "type": "array"
           },
-          "skip_reason": {
-            "type": "string"
+          {
+            "type": "object",
+            "properties": {
+          "default": {},
+          "skip_reason": {},
+          "cleanup": {
+            "anyOf": [
+              { "type": "object" },
+              { "type": "array" },
+              { "enum": [null, false, 0, ""] }
+            ]
+          },
+          "setup": {
+            "anyOf": [
+              { "type": "object" },
+              { "type": "array" },
+              { "enum": [null, false, 0, ""] }
+            ]
+          },
+          "logs": {
+            "anyOf": [
+              { "type": "object" },
+              { "type": "array" },
+              { "enum": [null, false, 0, ""] }
+            ]
+          },
+          "takeover": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "enum": [
+                      "confirm_each_phase_e",
+                      "scheduled_window"
+                    ]
+                  },
+                  "scheduled_windows": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "start": {
+                                  "type": "string",
+                                  "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                },
+                                "end": {
+                                  "type": "string",
+                                  "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                }
+                              },
+                              "additionalProperties": true
+                            },
+                            {
+                              "anyOf": [
+                                { "type": "string" },
+                                { "type": "number" },
+                                { "type": "boolean" },
+                                { "type": "array" }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "type": "array"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              },
+              {
+                "type": "array"
+              },
+              {
+                "enum": [
+                  null,
+                  false,
+                  0,
+                  ""
+                ]
+              }
+            ]
+              }
+            },
+            "additionalProperties": true
           }
-        },
-        "additionalProperties": true
+        ]
       },
       "models": {
         "anyOf": [
@@ -9131,7 +9646,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
                 },
                 "model": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9._-]+$"
                 },
                 "effort": {
                   "enum": [
@@ -9144,7 +9660,104 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
                   ]
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "cli": {
+                        "const": "agy"
+                      },
+                      "model": {
+                      }
+                    },
+                    "required": [
+                      "cli",
+                      "model"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "model": {
+                        "type": "string",
+                        "pattern": "-(low|medium|high)$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "cli": {
+                        "const": "agy"
+                      },
+                      "model": {
+                        "type": "string",
+                        "pattern": "-low$"
+                      }
+                    },
+                    "required": [
+                      "cli",
+                      "model"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "effort": {
+                        "const": "low"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "cli": {
+                        "const": "agy"
+                      },
+                      "model": {
+                        "type": "string",
+                        "pattern": "-medium$"
+                      }
+                    },
+                    "required": [
+                      "cli",
+                      "model"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "effort": {
+                        "const": "medium"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "cli": {
+                        "const": "agy"
+                      },
+                      "model": {
+                        "type": "string",
+                        "pattern": "-high$"
+                      }
+                    },
+                    "required": [
+                      "cli",
+                      "model"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "effort": {
+                        "const": "high"
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
         ]
@@ -9333,6 +9946,262 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       }
     },
     {
+      "case": "version-false-permissive",
+      "input": { "version": false, "app": { "type": "web" }, "live_verification": {} },
+      "expect": { "ok": true, "config": { "version": false } }
+    },
+    {
+      "case": "version-object-permissive",
+      "input": { "version": {}, "app": { "type": "web" }, "live_verification": {} },
+      "expect": { "ok": true, "config": { "version": {} } }
+    },
+    {
+      "case": "web-default-number-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "default": 0 } },
+      "expect": { "ok": true, "config": { "live_verification": { "default": 0 } } }
+    },
+    {
+      "case": "web-skip-reason-number-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "skip_reason": 0 } },
+      "expect": { "ok": true, "config": { "live_verification": { "skip_reason": 0 } } }
+    },
+    {
+      "case": "valid-takeover-window",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "mode": "scheduled_window", "scheduled_windows": [{ "start": "09:00", "end": "17:30" }] } } },
+      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "mode": "scheduled_window", "scheduled_windows": [{ "start": "09:00", "end": "17:30" }] } } } }
+    },
+    {
+      "case": "set-login-password-env",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "setup": { "login_profiles": { "primary": { "password_env": "CPS_CONTRACT_PASSWORD" } } } } },
+      "env": { "CPS_CONTRACT_PASSWORD": "present" },
+      "expect": { "ok": true, "config": { "live_verification": { "setup": { "login_profiles": { "primary": { "password_env": "CPS_CONTRACT_PASSWORD" } } } } } }
+    },
+    {
+      "case": "valid-worktree-opt-out",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": [] } },
+      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [] } } }
+    },
+    {
+      "case": "valid-codex-dispatch",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "max_runtime_ms": 1, "log_max_bytes": 1 } },
+      "expect": { "ok": true, "config": { "codex_dispatch": { "max_runtime_ms": 1, "log_max_bytes": 1 } } }
+    },
+    {
+      "case": "valid-mailbox",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "max_bytes": 1, "archive_policy": "drop", "archive_retention_days": 0, "archive_retention_count": 0 } },
+      "expect": { "ok": true, "config": { "mailbox": { "max_bytes": 1, "archive_policy": "drop", "archive_retention_days": 0, "archive_retention_count": 0 } } }
+    },
+    {
+      "case": "valid-codex-model",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "implement": { "cli": "codex", "model": "gpt-safe_1.0", "effort": "ultra" } } },
+      "expect": { "ok": true, "config": { "models": { "implement": { "cli": "codex", "model": "gpt-safe_1.0", "effort": "ultra" } } } }
+    },
+    {
+      "case": "valid-agy-model",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "agy", "model": "gemini-contract-high", "effort": "high" } } },
+      "expect": { "ok": true, "config": { "models": { "review": { "cli": "agy", "model": "gemini-contract-high", "effort": "high" } } } }
+    },
+    {
+      "case": "live-verification-array-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": [] },
+      "expect": { "ok": true, "config": { "version": 1 } }
+    },
+    {
+      "case": "takeover-null-defaulted",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": null } },
+      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "mode": "confirm_each_phase_e", "scheduled_windows": [] } } } }
+    },
+    {
+      "case": "takeover-array-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": [] } },
+      "expect": { "ok": true, "config": { "version": 1 } }
+    },
+    {
+      "case": "scheduled-windows-non-array-defaulted",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": "daily" } } },
+      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [] } } } }
+    },
+    {
+      "case": "scheduled-window-primitive-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [42] } } },
+      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [42] } } } }
+    },
+    {
+      "case": "worktree-null-defaulted",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": null },
+      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "node_modules", "required": false }, { "path": ".venv", "required": false }, { "path": "venv", "required": false }] } } }
+    },
+    {
+      "case": "worktree-missing-symlinks-defaulted",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": {} },
+      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "node_modules", "required": false }, { "path": ".venv", "required": false }, { "path": "venv", "required": false }] } } }
+    },
+    {
+      "case": "invalid-app-type",
+      "input": { "version": 1, "app": { "type": "service" }, "live_verification": {} },
+      "expect": { "error": "invalid-app-type" }
+    },
+    {
+      "case": "missing-live-verification",
+      "input": { "version": 1, "app": { "type": "web" } },
+      "expect": { "error": "missing-field:live_verification" }
+    },
+    {
+      "case": "invalid-takeover-mode",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "mode": "always" } } },
+      "expect": { "error": "invalid-takeover-mode" }
+    },
+    {
+      "case": "invalid-window-start",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "start": "25:00" }] } } },
+      "expect": { "error": "invalid-time-format" }
+    },
+    {
+      "case": "invalid-window-end",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "end": "12:60" }] } } },
+      "expect": { "error": "invalid-time-format" }
+    },
+    {
+      "case": "library-must-skip",
+      "input": { "version": 1, "app": { "type": "library" }, "live_verification": { "default": "run", "skip_reason": "none" } },
+      "expect": { "error": "library-must-skip" }
+    },
+    {
+      "case": "library-missing-skip-reason",
+      "input": { "version": 1, "app": { "type": "library" }, "live_verification": { "default": "skip", "skip_reason": " " } },
+      "expect": { "error": "library-missing-skip-reason" }
+    },
+    {
+      "case": "worktree-block-not-object",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": "bad" },
+      "expect": { "error": "invalid-worktree-bootstrap" }
+    },
+    {
+      "case": "worktree-symlinks-not-array",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": "bad" } },
+      "expect": { "error": "invalid-worktree-bootstrap" }
+    },
+    {
+      "case": "worktree-symlink-not-string",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": [42] } },
+      "expect": { "error": "invalid-worktree-bootstrap" }
+    },
+    {
+      "case": "worktree-symlink-empty",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": [""] } },
+      "expect": { "error": "invalid-worktree-bootstrap" }
+    },
+    {
+      "case": "worktree-symlink-absolute",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["/tmp/cache"] } },
+      "expect": { "error": "invalid-worktree-bootstrap" }
+    },
+    {
+      "case": "worktree-symlink-traversal",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["packages/../cache"] } },
+      "expect": { "error": "invalid-worktree-bootstrap" }
+    },
+    {
+      "case": "codex-dispatch-not-object",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": [] },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "codex-dispatch-runtime-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "max_runtime_ms": 0 } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "codex-dispatch-log-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "log_max_bytes": 1.5 } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "codex-dispatch-unknown-key",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "future": true } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "mailbox-not-object",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": [] },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "mailbox-max-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "max_bytes": 0 } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "mailbox-policy-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "archive_policy": "archive" } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "mailbox-retention-days-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "archive_retention_days": -1 } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "mailbox-retention-count-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "archive_retention_count": 1.5 } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "mailbox-unknown-key",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "future": true } },
+      "expect": { "error": "live-verification-config-malformed" }
+    },
+    {
+      "case": "models-not-object",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": [] },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-unknown-role",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "future": {} } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-role-not-object",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": [] } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-unknown-key",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "future": true } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-cli-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "gemini" } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-model-empty",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "model": "" } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-model-unsafe-token",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "model": "model with spaces" } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-effort-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "effort": "extreme" } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-agy-suffix-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "agy", "model": "gemini-contract" } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
+      "case": "models-agy-effort-mismatch",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "agy", "model": "gemini-contract-high", "effort": "low" } } },
+      "expect": { "error": "models-config-malformed" }
+    },
+    {
       "case": "version-2-permissive",
       "input": {
         "version": 2,
@@ -9410,6 +10279,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "env": {
         "CPS_CONTRACT_MISSING_PASSWORD": null
       },
+      "schema_runtime_exception": "password_env presence depends on process.env",
       "expect": {
         "error": "live-verification-config-malformed"
       }

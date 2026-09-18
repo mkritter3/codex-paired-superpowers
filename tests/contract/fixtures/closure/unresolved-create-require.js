@@ -1,1 +1,3 @@
-import { createRequire } from 'node:module'; export const load = createRequire(import.meta.url);
+import * as mod from 'node:module';
+const req = mod.createRequire(import.meta.url);
+req(path);

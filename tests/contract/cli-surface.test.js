@@ -108,10 +108,8 @@ test('an expansion covers only its named load expression', async () => {
 
 for (const [file, kind, line = 1] of [
   ['unresolved-import-expr.js', 'dynamic-import'],
-  ['unresolved-create-require.js', 'create-require'],
   ['unresolved-create-require-alias.js', 'create-require', 2],
   ['unresolved-create-require-dynamic-alias.js', 'create-require', 2],
-  ['unresolved-resolve.js', 'require-resolve'],
   ['unresolved-require-alias.js', 'require-resolve', 2],
   ['unresolved-meta-resolve.js', 'import-meta-resolve'],
   ['unresolved-eval.js', 'eval'],
@@ -122,6 +120,35 @@ for (const [file, kind, line = 1] of [
     const result = inspectSurface({ root: fixtures, entry: `closure/${file}`, expansions: [] });
     assert.equal(result.unresolved[0].kind, kind);
     assert.equal(result.unresolved[0].line, line);
+  });
+}
+
+for (const [file, expected] of [
+  ['unresolved-create-require.js', ['create-require', 'require-call']],
+  ['unresolved-resolve.js', ['create-require', 'require-resolve']],
+]) {
+  test(`tracks createRequire factory and resulting loader in ${file}`, async () => {
+    const { inspectSurface } = await api();
+    const result = inspectSurface({ root: fixtures, entry: `closure/${file}`, expansions: [] });
+    assert.deepEqual(result.unresolved.map((item) => item.kind), expected);
+    const cli = spawnSync(process.execPath, [script, '--root', fixtures, '--entry', `closure/${file}`], { encoding: 'utf8' });
+    assert.equal(cli.status, 3);
+    assert.match(cli.stderr, /unresolved module load/);
+  });
+}
+
+for (const [name, source] of [
+  ['dynamic namespace', "const mod = await import('module');\nconst req = mod.createRequire(import.meta.url);\nreq(path);\n"],
+  ['dynamic default', "const mod = (await import('node:module')).default;\nconst req = mod.createRequire(import.meta.url);\nreq.resolve(path);\n"],
+  ['dynamic destructured default', "const { default: mod } = await import('module');\nconst req = mod.createRequire(import.meta.url);\nreq(path);\n"],
+]) {
+  test(`tracks createRequire through ${name} module import`, async () => {
+    const { inspectSurface } = await api();
+    const temp = mkdtempSync(join(tmpdir(), 'cli-surface-create-require-'));
+    writeFileSync(join(temp, 'entry.js'), source);
+    const result = inspectSurface({ root: temp, entry: 'entry.js', expansions: [] });
+    assert.equal(result.unresolved[0].kind, 'create-require');
+    assert.ok(result.unresolved.some((item) => item.kind === 'require-call' || item.kind === 'require-resolve'));
   });
 }
 

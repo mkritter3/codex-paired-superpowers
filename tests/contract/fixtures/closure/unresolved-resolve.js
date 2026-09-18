@@ -1,1 +1,3 @@
-export const load = (request) => require.resolve(request);
+import { createRequire as makeRequire } from 'module';
+const req = makeRequire(import.meta.url);
+req.resolve(path);

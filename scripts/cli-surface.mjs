@@ -233,8 +233,32 @@ function moduleFacts(filePath, root) {
   const imports = [];
   const unresolved = [];
   const createRequireAliases = new Set(['createRequire']);
+  const moduleNamespaceAliases = new Set();
   const requireAliases = new Set(['require']);
   const requireResolveAliases = new Set();
+  function isModuleBuiltin(value) {
+    return value === 'module' || value === 'node:module';
+  }
+  function unwrapExpression(node) {
+    let value = node;
+    while (ts.isAwaitExpression(value) || ts.isParenthesizedExpression(value)) value = value.expression;
+    return value;
+  }
+  function dynamicModuleImport(node) {
+    const value = unwrapExpression(node);
+    return ts.isCallExpression(value)
+      && value.expression.kind === ts.SyntaxKind.ImportKeyword
+      && value.arguments[0]
+      && ts.isStringLiteral(value.arguments[0])
+      && isModuleBuiltin(value.arguments[0].text);
+  }
+  function isCreateRequireCallee(node) {
+    return (ts.isIdentifier(node) && createRequireAliases.has(node.text))
+      || (ts.isPropertyAccessExpression(node)
+        && node.name.text === 'createRequire'
+        && ts.isIdentifier(node.expression)
+        && moduleNamespaceAliases.has(node.expression.text));
+  }
   function normalizedCall(node) {
     return printer.printNode(ts.EmitHint.Expression, node, sourceFile).replace(/\s+/g, ' ').trim();
   }
@@ -250,26 +274,39 @@ function moduleFacts(filePath, root) {
   }
   function collectLoaderAliases(node) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
-      && node.moduleSpecifier.text === 'node:module') {
+      && isModuleBuiltin(node.moduleSpecifier.text)) {
+      if (node.importClause?.name) moduleNamespaceAliases.add(node.importClause.name.text);
       const bindings = node.importClause?.namedBindings;
       if (bindings && ts.isNamedImports(bindings)) {
         for (const element of bindings.elements) {
           if ((element.propertyName || element.name).text === 'createRequire') createRequireAliases.add(element.name.text);
         }
+      } else if (bindings && ts.isNamespaceImport(bindings)) {
+        moduleNamespaceAliases.add(bindings.name.text);
       }
     }
     if (ts.isVariableDeclaration(node) && node.initializer) {
-      let initializer = node.initializer;
-      if (ts.isAwaitExpression(initializer)) initializer = initializer.expression;
+      const initializer = unwrapExpression(node.initializer);
       if (ts.isObjectBindingPattern(node.name) && ts.isCallExpression(initializer)
         && initializer.expression.kind === ts.SyntaxKind.ImportKeyword
         && initializer.arguments[0] && ts.isStringLiteral(initializer.arguments[0])
-        && initializer.arguments[0].text === 'node:module') {
+        && isModuleBuiltin(initializer.arguments[0].text)) {
         for (const element of node.name.elements) {
           if ((element.propertyName || element.name).getText(sourceFile) === 'createRequire'
             && ts.isIdentifier(element.name)) createRequireAliases.add(element.name.text);
+          if ((element.propertyName || element.name).getText(sourceFile) === 'default'
+            && ts.isIdentifier(element.name)) moduleNamespaceAliases.add(element.name.text);
         }
       }
+      if (ts.isIdentifier(node.name) && dynamicModuleImport(node.initializer)) {
+        moduleNamespaceAliases.add(node.name.text);
+      }
+      if (ts.isIdentifier(node.name) && ts.isPropertyAccessExpression(initializer)
+        && initializer.name.text === 'default' && dynamicModuleImport(initializer.expression)) {
+        moduleNamespaceAliases.add(node.name.text);
+      }
+      if (ts.isIdentifier(node.name) && ts.isCallExpression(initializer)
+        && isCreateRequireCallee(initializer.expression)) requireAliases.add(node.name.text);
       if (ts.isIdentifier(node.name) && ts.isIdentifier(initializer) && requireAliases.has(initializer.text)) {
         requireAliases.add(node.name.text);
       }
@@ -288,10 +325,12 @@ function moduleFacts(filePath, root) {
         const arg = node.arguments[0];
         if (arg && ts.isStringLiteralLike(arg)) addSpecifier(arg);
         else addUnresolved(node, 'dynamic-import');
-      } else if (ts.isIdentifier(node.expression) && createRequireAliases.has(node.expression.text)) {
+      } else if (isCreateRequireCallee(node.expression)) {
         addUnresolved(node, 'create-require');
       } else if (ts.isIdentifier(node.expression) && node.expression.text === 'eval') {
         addUnresolved(node, 'eval');
+      } else if (ts.isIdentifier(node.expression) && requireAliases.has(node.expression.text)) {
+        addUnresolved(node, 'require-call');
       } else if (ts.isPropertyAccessExpression(node.expression)
         && ts.isIdentifier(node.expression.expression) && requireAliases.has(node.expression.expression.text)
         && node.expression.name.text === 'resolve') {

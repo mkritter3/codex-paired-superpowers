@@ -40,14 +40,44 @@ function jsonType(value) {
 
 function assertJsonShape(actual, shape, path = 'stdout') {
   if (typeof shape === 'string') {
-    const arrayMatch = shape.match(/^array<(.+)>$/);
+    if (shape === 'json') return;
+    assert.notEqual(shape, 'array', `${path} array declaration needs an element type`);
+    assert.notEqual(shape, 'object', `${path} object declaration needs a field shape`);
+    const arrayMatch = shape.match(/^(.+)\[\]$/);
     if (arrayMatch) {
+      assert.notEqual(arrayMatch[1], 'object', `${path} object[] declaration needs items`);
       assert.equal(jsonType(actual), 'array', `${path} expected ${shape}, got ${jsonType(actual)}`);
       actual.forEach((item, index) => assertJsonShape(item, arrayMatch[1], `${path}[${index}]`));
       return;
     }
     const accepted = shape.split('|');
     assert.ok(accepted.includes(jsonType(actual)), `${path} expected ${shape}, got ${jsonType(actual)}`);
+    return;
+  }
+  if ('type' in shape) {
+    const accepted = shape.type.split('|');
+    if (actual === null) {
+      assert.ok(accepted.includes('null'), `${path} expected ${shape.type}, got null`);
+      return;
+    }
+    if (accepted.includes('object[]')) {
+      assert.equal(jsonType(actual), 'array', `${path} expected ${shape.type}, got ${jsonType(actual)}`);
+      assert.ok(shape.items, `${path} object[] declaration needs items`);
+      actual.forEach((item, index) => assertJsonShape(item, shape.items, `${path}[${index}]`));
+      return;
+    }
+    assert.ok(accepted.includes('object'), `${path} has unsupported structured type ${shape.type}`);
+    assert.equal(jsonType(actual), 'object', `${path} expected ${shape.type}, got ${jsonType(actual)}`);
+    const required = shape.required || {};
+    const optional = shape.optional || {};
+    const allowed = new Set([...Object.keys(required), ...Object.keys(optional)]);
+    for (const key of Object.keys(required)) assert.ok(key in actual, `${path}.${key} missing`);
+    if (shape.additional !== true) {
+      assert.deepEqual(Object.keys(actual).filter((key) => !allowed.has(key)), [], `${path} undeclared fields`);
+    }
+    for (const [key, nested] of Object.entries({ ...required, ...optional })) {
+      if (key in actual) assertJsonShape(actual[key], nested, `${path}.${key}`);
+    }
     return;
   }
   assert.equal(jsonType(actual), 'object', `${path} must be an object`);
@@ -180,6 +210,39 @@ function setupInvocation(setup, caseTemp) {
     writeFileSync(values.$SPEC, '# spec\n');
     initSidecar(values.$SPEC, { feature: 'contract', codexSession: 'thread', model: 'model', reasoningEffort: 'high' });
   }
+  if (setup === 'sidecar-audit' || setup === 'sidecar-replay') {
+    mkdirSync(join(caseTemp, 'docs'), { recursive: true });
+    writeFileSync(values.$SPEC, '# spec\n');
+    initSidecar(values.$SPEC, { feature: 'contract', codexSession: 'thread', model: 'model', reasoningEffort: 'high' });
+    if (setup === 'sidecar-audit') {
+      const audit = JSON.stringify({
+        phase: 'contract', round: 1, side: 'codex',
+        commands: [{ cmd: 'node --test', summary: 'passed', kind: 'verification', exit_code: 0 }],
+        verdict_basis: 'contract evidence',
+      });
+      const seeded = spawnSync(process.execPath, [cli, 'sidecar-append-audit', '--specPath', values.$SPEC, '--audit', audit], { cwd: caseTemp, encoding: 'utf8' });
+      assert.equal(seeded.status, 0, seeded.stderr);
+    } else {
+      for (const args of [
+        ['sidecar-append-round', '--specPath', values.$SPEC, '--round', JSON.stringify({ phase: 'contract', round: 1, claude: 'continue', codex: 'continue' })],
+        ['sidecar-add-contention', '--specPath', values.$SPEC, '--contention', JSON.stringify({ id: 'c1', summary: 'contract' })],
+        ['sidecar-rotate-thread-id', '--specPath', values.$SPEC, '--role', 'paired-reviewer', '--oldThreadId', 'thread', '--newThreadId', 'thread-2', '--reason', 'contract', '--phase', 'contract', '--round', '1'],
+      ]) {
+        const seeded = spawnSync(process.execPath, [cli, ...args], { cwd: caseTemp, encoding: 'utf8' });
+        assert.equal(seeded.status, 0, seeded.stderr);
+      }
+    }
+  }
+  if (setup === 'stale-sidecar') {
+    const staleDir = join(caseTemp, '.superpowers-codex-paired');
+    mkdirSync(staleDir, { recursive: true });
+    writeFileSync(join(staleDir, 'stale.json'), JSON.stringify({
+      autopilot: {
+        halt_reason: null, last_tick_at: '2000-01-01T00:00:00.000Z',
+        current_slice: 'slice-1', current_phase: 'implement', plan_path: 'docs/plan.md',
+      },
+    }));
+  }
   if (setup === 'mailbox-message') {
     const written = spawnSync(process.execPath, [cli, 'mailbox-write', '--to', 'orchestrator', '--from', 'slice-1', '--text', 'contract', '--repoRoot', caseTemp], { cwd: caseTemp, encoding: 'utf8' });
     assert.equal(written.status, 0, written.stderr);
@@ -201,7 +264,18 @@ function setupInvocation(setup, caseTemp) {
     mkdirSync(bin);
     copyFileSync(join(root, 'tests/fixtures/fake-cli/agy.sh'), join(bin, 'agy'));
     chmodSync(join(bin, 'agy'), 0o755);
-    const env = { PATH: `${bin}:${process.env.PATH}`, FAKE_AGY_CONVERSATION: 'contract-thread', FAKE_AGY_RESPONSE: 'reviewed', FAKE_AGY_STATUS: setup.endsWith('failure') ? 'ERROR' : 'SUCCESS' };
+    const env = {
+      PATH: `${bin}:${process.env.PATH}`,
+      FAKE_AGY_CONVERSATION: 'contract-thread',
+      FAKE_AGY_RESPONSE: 'reviewed',
+      FAKE_AGY_STATUS: setup.endsWith('failure') ? 'ERROR' : 'SUCCESS',
+      FAKE_AGY_DENIED: setup.endsWith('failure') ? '' : 'contract-action',
+    };
+    if (setup === 'reviewer-null-usage') {
+      env.FAKE_CLI_OUTPUT = JSON.stringify({
+        conversation_id: 'contract-thread', status: 'ERROR', response: '', denied_actions: [],
+      });
+    }
     if (setup === 'reviewer-reply') {
       const opened = spawnSync(process.execPath, [cli, 'reviewer-thread-open', '--role', 'review', '--specPath', values.$SPEC, '--repoRoot', caseTemp], { cwd: caseTemp, input: 'seed', env: { ...process.env, ...env }, encoding: 'utf8' });
       assert.equal(opened.status, 0, opened.stderr);
@@ -232,7 +306,6 @@ function assertCliContract(documented, executable = cli) {
     const successful = entry.cases.filter((item) => item.expect.exit === 0);
     assert.ok(successful.length > 0, `${verb} has no successful case`);
     const coveredFlags = new Set(entry.cases.flatMap((item) => item.covers.flags));
-    const successfulFlags = new Set(successful.flatMap((item) => item.covers.flags));
     const coveredExits = new Set(entry.cases.flatMap((item) => item.covers.exits));
     const coveredKeys = new Set(entry.cases.flatMap((item) => item.covers.stdoutKeys));
     const jsonSchemas = entry.cases
@@ -247,14 +320,20 @@ function assertCliContract(documented, executable = cli) {
     for (const flag of entry.flags) {
       const flagCase = entry.cases.find((item) => item.covers.flags.includes(flag));
       assert.ok(flagCase, `${verb} flag --${flag} is uninventoried`);
-      assert.ok(flagCase.invocation.args.includes(`--${flag}`), `${verb} flag case does not invoke --${flag}`);
-      assert.ok(successfulFlags.has(flag), `${verb} flag --${flag} is not exercised on a success path`);
+      assert.ok(flagCase.invocation.args.some((arg) => arg === `--${flag}` || arg.startsWith(`--${flag}=`)),
+        `${verb} flag case does not invoke --${flag}`);
+      assert.ok(successful.some((item) => item.covers.flags.includes(flag)
+        && item.invocation.args.some((arg) => arg === `--${flag}` || arg.startsWith(`--${flag}=`))),
+      `${verb} flag --${flag} is not invoked on a success path`);
     }
     for (const exit of entry.exits) {
       assert.ok(coveredExits.has(exit), `${verb} exit ${exit} is uninventoried`);
       if (!entry.manual) assert.ok(entry.cases.some((item) => item.covers.exits.includes(exit) && item.expect.exit === exit), `${verb} exit ${exit} is not exercised`);
     }
     for (const key of entry.stdoutKeys) assert.ok(coveredKeys.has(key), `${verb} stdout key ${key} is uninventoried`);
+    if (entry.unsupported.length > 0) {
+      assert.ok(entry.manual, `${verb} requires a manual entry for unsupported extraction`);
+    }
     if (entry.manual) {
       assert.equal(typeof entry.manual.reason, 'string', `${verb} requires a manual reason`);
       assert.equal(entry.manual.region_digest, regions[verb], `${verb} manual region changed`);
@@ -293,6 +372,43 @@ test('runtime unknown-verb inventory is the documented 52-verb inventory', () =>
 test('every CLI coverage case executes and every extracted item is inventoried', () => {
   const documented = block('cli-verbs');
   assertCliContract(documented);
+});
+
+test('nested public JSON shapes reject malformed records recursively', () => {
+  const verbs = block('cli-verbs').verbs;
+  assert.throws(() => assertJsonShape(
+    [42, { renamed_message_field: true }],
+    verbs['mailbox-read'].stdout_types.success,
+  ));
+  assert.throws(() => assertJsonShape(
+    { initialized_at: 'now', goals: [42], plans: [false], active_plan: { wrong_field: 42 } },
+    verbs['app-state-get'].stdout_types['all-flags-success'],
+  ));
+  assert.throws(() => assertJsonShape(
+    {
+      threadId: 'thread', content: 'ok', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      ok: true, exit: 0, status: 'SUCCESS', warnings: [42],
+    },
+    verbs['reviewer-thread-open'].stdout_types['agy-success-json'],
+  ));
+});
+
+test('unsupported extraction requires a bound manual inventory entry', () => {
+  const documented = structuredClone(block('cli-verbs'));
+  delete documented.verbs['model-roles'].manual;
+  assert.throws(() => assertCliContract(documented), /model-roles requires a manual entry/);
+});
+
+test('successful flag coverage invokes every claimed flag', () => {
+  const documented = block('cli-verbs');
+  for (const [verb, entry] of Object.entries(documented.verbs)) {
+    for (const flag of entry.flags) {
+      assert.ok(entry.cases.some((item) => item.expect.exit === 0
+        && item.covers.flags.includes(flag)
+        && item.invocation.args.some((arg) => arg === `--${flag}` || arg.startsWith(`--${flag}=`))),
+      `${verb} --${flag} lacks an invoking success case`);
+    }
+  }
 });
 
 test('module closure, normalized module digests, and raw input digests match', () => {
@@ -399,6 +515,13 @@ function assertProjectConfigContract(contract) {
     }
     try {
       const actual = loadProjectConfig(temp);
+      const loaderAccepted = actual?.ok === true;
+      const schemaAccepted = validate(item.input);
+      if (item.schema_runtime_exception) {
+        assert.equal(typeof item.schema_runtime_exception, 'string', `${item.case}: schema exception needs a reason`);
+      } else {
+        assert.equal(schemaAccepted, loaderAccepted, `${item.case}: schema/loader disagree: ${JSON.stringify(validate.errors)}`);
+      }
       if (item.expect.error) assert.equal(actual.error.code, item.expect.error, item.case);
       else {
         assert.equal(actual.ok, true, item.case);
@@ -413,7 +536,31 @@ function assertProjectConfigContract(contract) {
 }
 
 test('project config schema and runtime cases characterize the existing loader', () => {
-  assertProjectConfigContract(block('project-config'));
+  const contract = block('project-config');
+  const expectedCases = [
+    'version-false-permissive', 'version-object-permissive', 'web-default-number-permissive',
+    'web-skip-reason-number-permissive',
+    'valid-takeover-window', 'set-login-password-env', 'valid-worktree-opt-out',
+    'valid-codex-dispatch', 'valid-mailbox', 'valid-codex-model', 'valid-agy-model',
+    'live-verification-array-permissive', 'takeover-null-defaulted', 'takeover-array-permissive',
+    'scheduled-windows-non-array-defaulted', 'scheduled-window-primitive-permissive',
+    'worktree-null-defaulted', 'worktree-missing-symlinks-defaulted',
+    'invalid-app-type', 'invalid-takeover-mode', 'invalid-window-start', 'invalid-window-end',
+    'missing-live-verification',
+    'library-must-skip', 'library-missing-skip-reason', 'unset-login-password-env',
+    'worktree-block-not-object', 'worktree-symlinks-not-array', 'worktree-symlink-not-string',
+    'worktree-symlink-empty', 'worktree-symlink-absolute', 'worktree-symlink-traversal',
+    'codex-dispatch-not-object', 'codex-dispatch-runtime-invalid', 'codex-dispatch-log-invalid',
+    'codex-dispatch-unknown-key', 'mailbox-not-object', 'mailbox-max-invalid',
+    'mailbox-policy-invalid', 'mailbox-retention-days-invalid', 'mailbox-retention-count-invalid',
+    'mailbox-unknown-key', 'models-not-object', 'models-unknown-role', 'models-role-not-object',
+    'models-unknown-key', 'models-cli-invalid', 'models-model-empty', 'models-model-unsafe-token',
+    'models-effort-invalid', 'models-agy-suffix-invalid', 'models-agy-effort-mismatch',
+  ];
+  for (const name of expectedCases) {
+    assert.ok(contract.runtime.some((item) => item.case === name), `missing characterization case ${name}`);
+  }
+  assertProjectConfigContract(contract);
 });
 
 function assertSidecarContract(contract) {
