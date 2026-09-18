@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "files": [
+    "lib/codex-bridge/dispatch-status.js",
+    "lib/codex-bridge/implementer/types.js",
+    "lib/codex-bridge/models.js",
+    "lib/codex-bridge/project-config.js",
+    "lib/codex-bridge/types.js"
+  ]
+}
