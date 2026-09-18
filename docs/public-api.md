@@ -8,7 +8,9 @@ The stable slash commands are derived from command filenames and their argument 
 
 ## Bridge CLI
 
-Every runtime verb is inventoried below. Cases are executable coverage records. Flag contracts describe the permissive parser; individual handlers enforce required values. JSON output types use JSON-domain names. A manual entry means static extraction encountered an opaque construct; its region digest makes changes reviewable.
+Every runtime verb is inventoried below. Cases are executable coverage records, and every flag is exercised by at least one successful case when the flag has a success path. Flag contracts describe the permissive parser; individual handlers enforce required values. A JSON case names a shape in `stdout_types`; object shapes are exact (undeclared fields fail), nested objects recursively declare their public fields, `array<T>` declares an element type, and unions use `|`. Text cases declare either an exact value or a regular expression. A manual entry means static extraction encountered an opaque construct; its region digest makes changes reviewable even when `unsupported` is currently empty.
+
+An expansion may name `call`, the normalized source text of one non-literal load expression. When present it exempts only that operation at `site`; another unresolved load in the same file remains an error. The registry expansion below deliberately binds to its single computed adapter import.
 
 ## Execution wrapper
 
@@ -61,10 +63,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         "argument_hint": "[plan-path]  (omit to resume the in-progress run)"
       },
       "inputs": [
-        "plan"
+        "plan",
+        "spec"
       ]
     }
-  ]
+  ],
+  "input_parse_rule": "Under ## Inputs, parse keys before : in the first fenced block. Under ## Required inputs, parse unique <name> placeholders in that section and strip a -path suffix."
 }
 ```
 
@@ -80,7 +84,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     {
       "site": "lib/codex-bridge/cli-harness/adapters/registry.js",
       "roots": "lib/codex-bridge/cli-harness/adapters/*.js",
-      "inputs": "lib/codex-bridge/cli-clients/*.json"
+      "inputs": "lib/codex-bridge/cli-clients/*.json",
+      "call": "import(pathToFileURL(modulePath).href)"
     }
   ],
   "verbs": {
@@ -165,7 +170,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "json-present": {
+          "specPath": "string"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -224,7 +233,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "repo"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "repoRoot"
+            ],
             "exits": [],
             "stdoutKeys": []
           },
@@ -247,14 +258,17 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "anchor-present"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "repoRoot"
+            ],
             "exits": [],
             "stdoutKeys": []
           },
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "json-present"
             }
           }
         }
@@ -352,6 +366,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "anchor-write",
+              "--repoRoot",
+              "$REPO",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "repoRoot",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -371,7 +413,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": {
+          "initialized_at": "string",
+          "goals": "array",
+          "plans": "array",
+          "active_plan": "object|null"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -417,6 +466,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "app-state-get",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "app-state"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -444,7 +519,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": {
+          "initialized_at": "string",
+          "goals": "array",
+          "plans": "array",
+          "active_plan": "object|null"
+        }
+      },
       "exit_meanings": {
         "2": "usage or validation failure"
       },
@@ -522,6 +604,35 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "app-state-init",
+              "--specPath",
+              "$SPEC",
+              "--goals",
+              "[{\"id\":\"g\",\"text\":\"goal\"}]"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "goals",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -555,7 +666,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": {
+          "initialized_at": "string",
+          "goals": "array",
+          "plans": "array",
+          "active_plan": "object|null"
+        }
+      },
       "exit_meanings": {
         "2": "usage or validation failure"
       },
@@ -659,6 +777,38 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "app-state-mark-goal-shipped",
+              "--specPath",
+              "$SPEC",
+              "--goalId",
+              "g",
+              "--planPath",
+              "plan.md"
+            ],
+            "stdin": "",
+            "setup": "app-state"
+          },
+          "covers": {
+            "flags": [
+              "goalId",
+              "planPath",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -688,12 +838,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "active_plan": "object|null",
-        "goals_shipped_count": "number",
-        "shipped_goals": "array",
-        "shipped_plans": "array",
-        "total_goals": "number",
-        "unshipped_goals": "array"
+        "initialized-json": {
+          "unshipped_goals": "array",
+          "shipped_goals": "array",
+          "shipped_plans": "array",
+          "active_plan": "object|null",
+          "total_goals": "number",
+          "goals_shipped_count": "number"
+        }
       },
       "exit_meanings": {
         "2": "usage or validation failure"
@@ -755,7 +907,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "app-state"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "specPath"
+            ],
             "exits": [],
             "stdoutKeys": [
               "active_plan",
@@ -769,7 +923,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "initialized-json"
             }
           }
         },
@@ -836,7 +991,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "boolean"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": {
+          "initialized_at": "string",
+          "goals": "array",
+          "plans": "array",
+          "active_plan": "object|null"
+        }
+      },
       "exit_meanings": {
         "2": "usage or validation failure"
       },
@@ -962,6 +1124,39 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "app-state-set-plan",
+              "--specPath",
+              "$SPEC",
+              "--planPath",
+              "plan.md",
+              "--started",
+              "--shipped"
+            ],
+            "stdin": "",
+            "setup": "app-state"
+          },
+          "covers": {
+            "flags": [
+              "planPath",
+              "shipped",
+              "specPath",
+              "started"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -981,7 +1176,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "baseline-no-args": {
+          "path": "string",
+          "cleared": "boolean"
+        },
+        "flag-cwd": {
+          "path": "string",
+          "cleared": "boolean"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -1000,7 +1204,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "baseline-no-args"
             }
           }
         },
@@ -1024,7 +1229,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-cwd"
             }
           }
         }
@@ -1046,7 +1252,18 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "baseline-no-args": {
+          "active": "boolean",
+          "reason": "string",
+          "marker": "null"
+        },
+        "flag-cwd": {
+          "active": "boolean",
+          "reason": "string",
+          "marker": "null"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -1065,7 +1282,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "baseline-no-args"
             }
           }
         },
@@ -1089,7 +1307,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-cwd"
             }
           }
         }
@@ -1135,8 +1354,23 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "marker": "object",
-        "path": "string"
+        "flag-skill": {
+          "path": "string",
+          "marker": {
+            "skillName": "string",
+            "sessionStartedAt": "string",
+            "expiresAt": "string"
+          }
+        },
+        "all-flags-success": {
+          "path": "string",
+          "marker": {
+            "skillName": "string",
+            "sessionStartedAt": "string",
+            "expiresAt": "string",
+            "specPath": "string"
+          }
+        }
       },
       "exit_meanings": {
         "2": "usage or validation failure"
@@ -1213,7 +1447,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-skill"
             }
           }
         },
@@ -1268,6 +1503,44 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "honest-reporting-mark-active",
+              "--skill",
+              "contract",
+              "--spec",
+              "$SPEC",
+              "--ttl-hours",
+              "1",
+              "--cwd",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "cwd",
+              "skill",
+              "spec",
+              "ttl-hours"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "marker",
+              "path"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -1306,7 +1579,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "text"
+              "kind": "text",
+              "pattern": "^/.*/\\.codex-paired/honest-reporting-active\\.json$"
             }
           }
         },
@@ -1330,7 +1604,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "text"
+              "kind": "text",
+              "pattern": "^/.*/\\.codex-paired/honest-reporting-active\\.json$"
             }
           }
         }
@@ -1424,8 +1699,42 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "coverage": "object",
-        "tier": "string"
+        "valid-standard-json": {
+          "tier": "string",
+          "coverage": {
+            "live.scenarios-covered": "string",
+            "live.preconditions-enforced": "string",
+            "live.user-takeover-safe": "string",
+            "live.evidence-quality": "string",
+            "live.assertions-visible": "string",
+            "live.logs-reviewed": "string",
+            "live.flake-triaged": "string",
+            "live.failures-fixed": "string",
+            "live.regressions-rerun": "string",
+            "live.cleanup-recorded": "string",
+            "live.deferred-justified": "string",
+            "live.environment-reproducible": "string",
+            "live.residual-risk": "string"
+          }
+        },
+        "all-flags-success": {
+          "tier": "string",
+          "coverage": {
+            "live.scenarios-covered": "string",
+            "live.preconditions-enforced": "string",
+            "live.user-takeover-safe": "string",
+            "live.evidence-quality": "string",
+            "live.assertions-visible": "string",
+            "live.logs-reviewed": "string",
+            "live.flake-triaged": "string",
+            "live.failures-fixed": "string",
+            "live.regressions-rerun": "string",
+            "live.cleanup-recorded": "string",
+            "live.deferred-justified": "string",
+            "live.environment-reproducible": "string",
+            "live.residual-risk": "string"
+          }
+        }
       },
       "exit_meanings": {
         "0": "success",
@@ -1484,12 +1793,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "case": "valid-standard-json",
           "invocation": {
             "args": [
-              "live-validation-parse"
+              "live-validation-parse",
+              "--tier",
+              "standard"
             ],
             "stdin": "[\"tier: standard\",\"live.scenarios-covered: c\",\"live.preconditions-enforced: c\",\"live.user-takeover-safe: c\",\"live.evidence-quality: c\",\"live.assertions-visible: c\",\"live.logs-reviewed: c\",\"live.flake-triaged: c\",\"live.failures-fixed: c\",\"live.regressions-rerun: c\",\"live.cleanup-recorded: c\",\"live.deferred-justified: c\",\"live.environment-reproducible: c\",\"live.residual-risk: c\"]"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "tier"
+            ],
             "exits": [
               0
             ],
@@ -1501,7 +1814,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "valid-standard-json"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "live-validation-parse"
+            ],
+            "stdin": "[\"tier: standard\",\"live.scenarios-covered: c\",\"live.preconditions-enforced: c\",\"live.user-takeover-safe: c\",\"live.evidence-quality: c\",\"live.assertions-visible: c\",\"live.logs-reviewed: c\",\"live.flake-triaged: c\",\"live.failures-fixed: c\",\"live.regressions-rerun: c\",\"live.cleanup-recorded: c\",\"live.deferred-justified: c\",\"live.environment-reproducible: c\",\"live.residual-risk: c\"]"
+          },
+          "covers": {
+            "flags": [
+              "tier"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "coverage",
+              "tier"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -1545,7 +1885,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "success": {
+          "alreadyRead": "boolean"
+        },
+        "all-flags-success": {
+          "alreadyRead": "boolean"
+        }
+      },
       "exit_meanings": {
         "0": "success",
         "1": "operation failure",
@@ -1696,7 +2043,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "mailbox-message"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "actor",
+              "for",
+              "id",
+              "repoRoot"
+            ],
             "exits": [
               0
             ],
@@ -1705,7 +2057,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "success"
             }
           }
         },
@@ -1737,6 +2090,43 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 1,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--id",
+              "$MESSAGE_ID",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "mailbox-message"
+          },
+          "covers": {
+            "flags": [
+              "actor",
+              "for",
+              "id",
+              "repoRoot"
+            ],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -1780,7 +2170,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "success": {
+          "marked": "array",
+          "skipped": "array<string>"
+        },
+        "all-flags-success": {
+          "marked": "array",
+          "skipped": "array<string>"
+        }
+      },
       "exit_meanings": {
         "0": "success",
         "1": "operation failure",
@@ -1931,7 +2330,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "repo"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "actor",
+              "for",
+              "message-ids",
+              "repoRoot"
+            ],
             "exits": [
               0
             ],
@@ -1940,7 +2344,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "success"
             }
           }
         },
@@ -1972,6 +2377,43 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 1,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "mailbox-mark-read-batch",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--message-ids",
+              "msg-2026-01-01T00-00-00-000Z-0001",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "actor",
+              "for",
+              "message-ids",
+              "repoRoot"
+            ],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -2021,7 +2463,10 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "boolean"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "success": "array",
+        "all-flags-success": "array"
+      },
       "exit_meanings": {
         "0": "success",
         "1": "operation failure",
@@ -2195,7 +2640,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "repo"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "actor",
+              "for",
+              "repoRoot"
+            ],
             "exits": [
               0
             ],
@@ -2204,7 +2653,46 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "success"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "mailbox-read",
+              "--for",
+              "orchestrator",
+              "--actor",
+              "orchestrator",
+              "--json",
+              "--unread",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "actor",
+              "for",
+              "json",
+              "repoRoot",
+              "unread"
+            ],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -2276,7 +2764,20 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "success": {
+          "id": "string"
+        },
+        "text-flags-success": {
+          "id": "string"
+        },
+        "text-stdin-success": {
+          "id": "string"
+        },
+        "message-json-stdin-success": {
+          "id": "string"
+        }
+      },
       "exit_meanings": {
         "0": "success",
         "1": "operation failure",
@@ -2529,7 +3030,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "repo"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "from",
+              "repoRoot",
+              "text",
+              "to"
+            ],
             "exits": [
               0
             ],
@@ -2538,7 +3044,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "success"
             }
           }
         },
@@ -2570,6 +3077,121 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 1,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "text-flags-success",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--to",
+              "orchestrator",
+              "--from",
+              "slice-1",
+              "--text",
+              "contract",
+              "--summary",
+              "summary",
+              "--color",
+              "blue",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "to",
+              "from",
+              "text",
+              "summary",
+              "color",
+              "repoRoot"
+            ],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "text-flags-success"
+            }
+          }
+        },
+        {
+          "case": "text-stdin-success",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--to",
+              "orchestrator",
+              "--from",
+              "slice-1",
+              "--text-stdin",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "contract",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "to",
+              "from",
+              "text-stdin",
+              "repoRoot"
+            ],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "text-stdin-success"
+            }
+          }
+        },
+        {
+          "case": "message-json-stdin-success",
+          "invocation": {
+            "args": [
+              "mailbox-write",
+              "--to",
+              "orchestrator",
+              "--from",
+              "slice-1",
+              "--message-json-stdin",
+              "--repoRoot",
+              "$REPO"
+            ],
+            "stdin": "{\"text\":\"contract\",\"summary\":\"summary\",\"color\":\"blue\"}",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "to",
+              "from",
+              "message-json-stdin",
+              "repoRoot"
+            ],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "message-json-stdin-success"
             }
           }
         }
@@ -2615,14 +3237,40 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "args": "array",
-        "cli": "string",
-        "command": "string",
-        "effort": "string",
-        "insertAfter": "string|null",
-        "model": "string",
-        "role": "string",
-        "sources": "object"
+        "planning-json": {
+          "role": "string",
+          "cli": "string",
+          "model": "string",
+          "effort": "string",
+          "command": "string",
+          "args": "array<string>",
+          "insertAfter": "string",
+          "sources": {
+            "cli": "string",
+            "model": "string",
+            "effort": "string"
+          }
+        },
+        "planning-mcp": {
+          "model": "string",
+          "config": {
+            "model_reasoning_effort": "string"
+          }
+        },
+        "all-flags-success": {
+          "role": "string",
+          "cli": "string",
+          "model": "string",
+          "effort": "string",
+          "command": "string",
+          "args": "array<string>",
+          "insertAfter": "string",
+          "sources": {
+            "cli": "string",
+            "model": "string",
+            "effort": "string"
+          }
+        }
       },
       "exit_meanings": {
         "2": "usage or validation failure"
@@ -2682,7 +3330,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "planning-json"
             }
           }
         },
@@ -2709,7 +3358,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "text"
+              "kind": "text",
+              "exact": "-m gpt-6-astra -c model_reasoning_effort=xhigh"
             }
           }
         },
@@ -2736,7 +3386,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "planning-mcp"
             }
           }
         },
@@ -2817,6 +3468,47 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "model-role",
+              "--role",
+              "planning",
+              "--repoRoot",
+              "$REPO",
+              "--format",
+              "json"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "format",
+              "repoRoot",
+              "role"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "args",
+              "cli",
+              "command",
+              "effort",
+              "insertAfter",
+              "model",
+              "role",
+              "sources"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -2841,7 +3533,100 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "validated_cli_version": "string"
+        "baseline-no-args": {
+          "roles": {
+            "planning": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "review": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement_fallback": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            }
+          },
+          "sources": {
+            "planning": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "review": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement_fallback": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            }
+          },
+          "validated_cli_version": "string"
+        },
+        "flag-repoRoot": {
+          "roles": {
+            "planning": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "review": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement_fallback": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            }
+          },
+          "sources": {
+            "planning": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "review": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            },
+            "implement_fallback": {
+              "cli": "string",
+              "model": "string",
+              "effort": "string"
+            }
+          },
+          "validated_cli_version": "string"
+        }
       },
       "exit_meanings": {},
       "cases": [
@@ -2863,7 +3648,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "baseline-no-args"
             }
           }
         },
@@ -2887,7 +3673,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-repoRoot"
             }
           }
         }
@@ -2908,7 +3695,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "stdoutKeys": [],
       "unsupported": [],
       "flag_contract": [],
-      "stdout_types": {},
+      "stdout_types": {
+        "baseline-no-args": {
+          "skip": "boolean"
+        }
+      },
       "exit_meanings": {
         "0": "success",
         "2": "usage or validation failure"
@@ -2932,7 +3723,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "baseline-no-args"
             }
           }
         },
@@ -3012,13 +3804,45 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "content": "string",
-        "exit": "number",
-        "ok": "boolean",
-        "status": "string",
-        "threadId": "string",
-        "usage": "object|null",
-        "warnings": "array"
+        "agy-success-json": {
+          "threadId": "string",
+          "content": "string",
+          "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number"
+          },
+          "ok": "boolean",
+          "exit": "number",
+          "status": "string",
+          "warnings": "array"
+        },
+        "agy-failure-json": {
+          "threadId": "string",
+          "content": "string",
+          "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number"
+          },
+          "ok": "boolean",
+          "exit": "number",
+          "status": "string",
+          "warnings": "array<string>"
+        },
+        "all-flags-success": {
+          "threadId": "string",
+          "content": "string",
+          "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number"
+          },
+          "ok": "boolean",
+          "exit": "number",
+          "status": "string",
+          "warnings": "array"
+        }
       },
       "exit_meanings": {
         "1": "operation failure",
@@ -3193,7 +4017,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "reviewer-success"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "repoRoot",
+              "role",
+              "specPath"
+            ],
             "exits": [],
             "stdoutKeys": [
               "content",
@@ -3208,7 +4036,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "agy-success-json"
             }
           }
         },
@@ -3245,7 +4074,54 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 1,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "agy-failure-json"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "reviewer-thread-open",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO",
+              "--sha",
+              "$HEAD",
+              "--planPath",
+              "$SPEC"
+            ],
+            "stdin": "review",
+            "setup": "reviewer-success"
+          },
+          "covers": {
+            "flags": [
+              "planPath",
+              "repoRoot",
+              "role",
+              "sha",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "content",
+              "exit",
+              "ok",
+              "status",
+              "threadId",
+              "usage",
+              "warnings"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -3303,13 +4179,45 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "content": "string",
-        "exit": "number",
-        "ok": "boolean",
-        "status": "string",
-        "threadId": "string",
-        "usage": "object|null",
-        "warnings": "array"
+        "agy-success-json": {
+          "threadId": "string",
+          "content": "string",
+          "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number"
+          },
+          "ok": "boolean",
+          "exit": "number",
+          "status": "string",
+          "warnings": "array"
+        },
+        "agy-failure-json": {
+          "threadId": "string",
+          "content": "string",
+          "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number"
+          },
+          "ok": "boolean",
+          "exit": "number",
+          "status": "string",
+          "warnings": "array<string>"
+        },
+        "all-flags-success": {
+          "threadId": "string",
+          "content": "string",
+          "usage": {
+            "prompt_tokens": "number",
+            "completion_tokens": "number",
+            "total_tokens": "number"
+          },
+          "ok": "boolean",
+          "exit": "number",
+          "status": "string",
+          "warnings": "array"
+        }
       },
       "exit_meanings": {
         "1": "operation failure",
@@ -3484,7 +4392,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "setup": "reviewer-reply"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "repoRoot",
+              "role",
+              "specPath"
+            ],
             "exits": [],
             "stdoutKeys": [
               "content",
@@ -3499,7 +4411,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "agy-success-json"
             }
           }
         },
@@ -3536,7 +4449,54 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 1,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "agy-failure-json"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "reviewer-thread-reply",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO",
+              "--sha",
+              "$HEAD",
+              "--planPath",
+              "$SPEC"
+            ],
+            "stdin": "review",
+            "setup": "reviewer-reply"
+          },
+          "covers": {
+            "flags": [
+              "planPath",
+              "repoRoot",
+              "role",
+              "sha",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "content",
+              "exit",
+              "ok",
+              "status",
+              "threadId",
+              "usage",
+              "warnings"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -3566,9 +4526,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "deferred": "array",
-        "ok": "boolean",
-        "scenarios": "array"
+        "valid-scenario-json": {
+          "ok": "boolean",
+          "scenarios": "array",
+          "deferred": "array"
+        },
+        "all-flags-success": {
+          "ok": "boolean",
+          "scenarios": "array",
+          "deferred": "array"
+        }
       },
       "exit_meanings": {
         "0": "success",
@@ -3644,7 +4611,36 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "valid-scenario-json"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "scenario-validate",
+              "--require-scenarios"
+            ],
+            "stdin": "{\"scenarios\":[{\"id\":\"lv-001\",\"title\":\"contract\",\"risk\":\"happy-path\",\"why\":\"contract\",\"preconditions\":[],\"steps\":[{\"action\":\"click\",\"target\":\"Button\"}],\"assertions\":[\"Visible\"],\"diagnostic_expectations\":[],\"timeout_ms\":60000}],\"deferred\":[]}"
+          },
+          "covers": {
+            "flags": [
+              "require-scenarios"
+            ],
+            "exits": [],
+            "stdoutKeys": [
+              "deferred",
+              "ok",
+              "scenarios"
+            ]
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -3738,6 +4734,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-add-contention",
+              "--specPath",
+              "$SPEC",
+              "--contention",
+              "{\"topic\":\"contract\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "contention",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -3843,6 +4867,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-append-audit",
+              "--specPath",
+              "$SPEC",
+              "--audit",
+              "{\"phase\":\"contract\",\"round\":1,\"side\":\"codex\",\"commands\":[{\"cmd\":\"npm test\",\"summary\":\"green\",\"kind\":\"verification\",\"exit_code\":0}]}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "audit",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -3968,6 +5020,37 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-append-implement-dispatch",
+              "--specPath",
+              "$SPEC",
+              "--sliceId",
+              "slice-1",
+              "--dispatch",
+              "{\"slice_id\":\"slice-1\",\"agent\":\"codex\",\"dispatched_at\":\"2026-01-01T00:00:00Z\",\"worktree\":\"/tmp/worktree\",\"outcome\":\"shipped\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "dispatch",
+              "sliceId",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -4151,6 +5234,41 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-append-round",
+              "--specPath",
+              "$SPEC",
+              "--round",
+              "{\"phase\":\"contract\",\"round\":1}",
+              "--force-round",
+              "--allow-over-budget",
+              "--headSha",
+              "abc"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "allow-over-budget",
+              "force-round",
+              "headSha",
+              "round",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -4354,6 +5472,41 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-append-round-with-audits",
+              "--specPath",
+              "$SPEC",
+              "--payload",
+              "{\"audits\":[],\"round\":{\"phase\":\"contract\",\"round\":1}}",
+              "--force-round",
+              "--allow-over-budget",
+              "--headSha",
+              "abc"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "allow-over-budget",
+              "force-round",
+              "headSha",
+              "payload",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -4415,6 +5568,31 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-get-autopilot",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -4484,6 +5662,31 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-get-dependency-graph",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -4549,6 +5752,31 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-get-goals",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -4588,7 +5816,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": "boolean"
+      },
       "exit_meanings": {
         "2": "usage or validation failure"
       },
@@ -4718,6 +5948,41 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-has-audit",
+              "--specPath",
+              "$SPEC",
+              "--phase",
+              "contract",
+              "--round",
+              "1",
+              "--side",
+              "codex"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "phase",
+              "round",
+              "side",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -4757,7 +6022,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": "boolean"
+      },
       "exit_meanings": {
         "2": "usage or validation failure"
       },
@@ -4887,6 +6154,41 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-has-executed-verification",
+              "--specPath",
+              "$SPEC",
+              "--phase",
+              "contract",
+              "--round",
+              "1",
+              "--side",
+              "codex"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "phase",
+              "round",
+              "side",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -4930,7 +6232,46 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "flag-specPath": {
+          "version": "number",
+          "model": "string",
+          "reasoning_effort": "string",
+          "created_at": "string",
+          "thread_config": {
+            "paired-reviewer": {
+              "role": "string",
+              "cli": "string",
+              "model": "string",
+              "effort": "string",
+              "opened_at": "string"
+            }
+          },
+          "rounds": "array",
+          "open_contentions": "array",
+          "slice_reviews": {}
+        },
+        "all-flags-success": {
+          "version": "number",
+          "feature": "string",
+          "codex_session": "string",
+          "model": "string",
+          "reasoning_effort": "string",
+          "created_at": "string",
+          "thread_config": {
+            "paired-reviewer": {
+              "role": "string",
+              "cli": "string",
+              "model": "string",
+              "effort": "string",
+              "opened_at": "string"
+            }
+          },
+          "rounds": "array",
+          "open_contentions": "array",
+          "slice_reviews": {}
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5045,7 +6386,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-specPath"
             }
           }
         },
@@ -5070,6 +6412,44 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 1,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-init",
+              "--specPath",
+              "$SPEC",
+              "--feature",
+              "contract",
+              "--threadId",
+              "thread",
+              "--model",
+              "model",
+              "--reasoning",
+              "high"
+            ],
+            "stdin": "",
+            "setup": "repo"
+          },
+          "covers": {
+            "flags": [
+              "feature",
+              "model",
+              "reasoning",
+              "specPath",
+              "threadId"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -5109,7 +6489,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": "array"
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5227,6 +6609,41 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-list-audits",
+              "--specPath",
+              "$SPEC",
+              "--phase",
+              "contract",
+              "--round",
+              "1",
+              "--side",
+              "codex"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "phase",
+              "round",
+              "side",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -5289,7 +6706,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "text"
+              "kind": "text",
+              "pattern": "^/.+\\.codex\\.json$"
             }
           }
         }
@@ -5311,7 +6729,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": {
+          "feature": "string",
+          "artifact": "string",
+          "goals": "null",
+          "rounds": "array",
+          "open_contentions": "array",
+          "thread_rotations": "array"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5357,6 +6784,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-replay-context",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
+            }
+          }
         }
       ]
     },
@@ -5376,7 +6829,10 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "baseline-no-args": "boolean",
+        "flag-phase": "boolean"
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5395,7 +6851,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "baseline-no-args"
             }
           }
         },
@@ -5419,7 +6876,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-phase"
             }
           }
         }
@@ -5697,6 +7155,52 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-rotate-thread-id",
+              "--specPath",
+              "$SPEC",
+              "--role",
+              "paired-reviewer",
+              "--oldThreadId",
+              "thread",
+              "--newThreadId",
+              "thread-2",
+              "--reason",
+              "session-not-found",
+              "--phase",
+              "contract",
+              "--round",
+              "1",
+              "--threadConfig",
+              "{\"role\":\"review\",\"cli\":\"codex\",\"model\":\"model\",\"effort\":\"high\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "newThreadId",
+              "oldThreadId",
+              "phase",
+              "reason",
+              "role",
+              "round",
+              "specPath",
+              "threadConfig"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -5722,7 +7226,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "baseline-no-args": "array",
+        "flag-max-age-hours": "array",
+        "flag-repoRoot": "array"
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5741,7 +7249,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "baseline-no-args"
             }
           }
         },
@@ -5765,7 +7274,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-max-age-hours"
             }
           }
         },
@@ -5789,7 +7299,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "flag-repoRoot"
             }
           }
         }
@@ -5887,6 +7398,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-autopilot",
+              "--specPath",
+              "$SPEC",
+              "--block",
+              "{\"current_phase\":\"contract\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "block",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -5978,6 +7517,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-dependency-graph",
+              "--specPath",
+              "$SPEC",
+              "--graph",
+              "{\"digest\":\"abc\",\"dag\":{}}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "graph",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -6081,6 +7648,34 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-goals",
+              "--specPath",
+              "$SPEC",
+              "--block",
+              "<<<GOALS>>>contract<<<END_GOALS>>>"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "block",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -6210,6 +7805,37 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-bootstrap",
+              "--specPath",
+              "$SPEC",
+              "--sliceId",
+              "slice-1",
+              "--bootstrap",
+              "{\"symlinks\":[],\"completed_at\":\"2026-01-01T00:00:00Z\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "bootstrap",
+              "sliceId",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -6335,6 +7961,37 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-implement-meta",
+              "--specPath",
+              "$SPEC",
+              "--sliceId",
+              "slice-1",
+              "--meta",
+              "{\"preferred_implementer\":\"codex\",\"fallback_implementer\":\"sonnet\",\"parallel_group\":null,\"parallel_suppressed_reason\":null,\"worktree\":\"/tmp/worktree\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "meta",
+              "sliceId",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -6456,6 +8113,37 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-live-verification",
+              "--specPath",
+              "$SPEC",
+              "--sliceId",
+              "slice-1",
+              "--block",
+              "{\"shipped\":true}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "block",
+              "sliceId",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -6615,6 +8303,40 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-phase",
+              "--specPath",
+              "$SPEC",
+              "--sliceId",
+              "slice-1",
+              "--phase",
+              "contract",
+              "--state",
+              "{\"status\":\"done\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "phase",
+              "sliceId",
+              "specPath",
+              "state"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -6740,6 +8462,37 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-set-slice",
+              "--specPath",
+              "$SPEC",
+              "--sliceId",
+              "slice-1",
+              "--state",
+              "{\"status\":\"done\"}"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "sliceId",
+              "specPath",
+              "state"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
         }
       ]
     },
@@ -6759,7 +8512,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "all-flags-success": {
+          "version": "number",
+          "feature": "string",
+          "codex_session": "string",
+          "model": "string",
+          "reasoning_effort": "string",
+          "created_at": "string",
+          "thread_config": {
+            "paired-reviewer": {
+              "role": "string",
+              "cli": "string",
+              "model": "string",
+              "effort": "string",
+              "opened_at": "string"
+            }
+          },
+          "rounds": "array",
+          "open_contentions": "array",
+          "slice_reviews": {},
+          "role_sessions": {
+            "paired-reviewer": "string"
+          },
+          "migrations": "array"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -6803,6 +8581,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 1,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-show",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "all-flags-success"
             }
           }
         }
@@ -6900,6 +8704,35 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "sidecar-thread-id",
+              "--specPath",
+              "$SPEC",
+              "--role",
+              "paired-reviewer"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "role",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "text",
+              "exact": "thread"
+            }
+          }
         }
       ]
     },
@@ -6926,8 +8759,24 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "coverage": "object",
-        "tier": "string"
+        "valid-standard-json": {
+          "tier": "string",
+          "coverage": {
+            "happy": "string",
+            "edge.zero-null-empty": "string",
+            "edge.boundary": "string",
+            "edge.large-input": "string",
+            "edge.concurrent": "string",
+            "edge.adversarial": "string",
+            "fail.dependency": "string",
+            "fail.malformed-input": "string",
+            "fail.exception-path": "string",
+            "integration.cross-module": "string",
+            "stress.scale": "string",
+            "perf.slo": "string",
+            "compat.breaking": "string"
+          }
+        }
       },
       "exit_meanings": {
         "0": "success",
@@ -6986,12 +8835,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "case": "valid-standard-json",
           "invocation": {
             "args": [
-              "validation-parse"
+              "validation-parse",
+              "--tier",
+              "standard"
             ],
             "stdin": "[\"tier: standard\",\"happy: c\",\"edge.zero-null-empty: c\",\"edge.boundary: c\",\"edge.large-input: c\",\"edge.concurrent: c\",\"edge.adversarial: c\",\"fail.dependency: c\",\"fail.malformed-input: c\",\"fail.exception-path: c\",\"integration.cross-module: c\",\"stress.scale: not triggered\",\"perf.slo: not triggered\",\"compat.breaking: not triggered\"]"
           },
           "covers": {
-            "flags": [],
+            "flags": [
+              "tier"
+            ],
             "exits": [
               0
             ],
@@ -7003,7 +8856,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "expect": {
             "exit": 0,
             "stdout": {
-              "kind": "json"
+              "kind": "json",
+              "schema": "valid-standard-json"
             }
           }
         }
@@ -7126,7 +8980,13 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "exit_code": "number|null",
       "signal": "string|null",
       "started_at": "string",
-      "completed_at": "string|null"
+      "completed_at": "string|null",
+      "model_role": "string",
+      "model": "string",
+      "effort": "string",
+      "error": "string",
+      "cli": "string",
+      "cwd": "string"
     },
     "lifecycle": [
       "started",
@@ -7156,6 +9016,15 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "name": "string",
       "detail": "string",
       "fix": "string|null"
+    },
+    "types": {
+      "summary": {
+        "pass": "number",
+        "warn": "number",
+        "fail": "number"
+      },
+      "checks": "array",
+      "availability": "object|null"
     }
   },
   "check_names": [
@@ -7197,7 +9066,14 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     ],
     "properties": {
       "version": {
-        "type": "number"
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          }
+        ]
       },
       "app": {
         "type": "object",
@@ -7218,7 +9094,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         "additionalProperties": true
       },
       "live_verification": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "default": {
+            "type": "string"
+          },
+          "skip_reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
       },
       "models": {
         "anyOf": [
@@ -7265,19 +9150,122 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         ]
       },
       "codex_dispatch": {
-        "type": [
-          "object",
-          "null"
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "max_runtime_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "log_max_bytes": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
         ]
       },
       "mailbox": {
-        "type": [
-          "object",
-          "null"
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "archive_policy": {
+                "enum": [
+                  "rotate",
+                  "drop"
+                ]
+              },
+              "archive_retention_days": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "archive_retention_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "worktree_bootstrap": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "symlinks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
         ]
       }
     },
-    "additionalProperties": true
+    "additionalProperties": true,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "app": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "library"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "app"
+          ]
+        },
+        "then": {
+          "properties": {
+            "live_verification": {
+              "type": "object",
+              "properties": {
+                "default": {
+                  "const": "skip"
+                },
+                "skip_reason": {
+                  "type": "string",
+                  "pattern": ".*\\S.*"
+                }
+              },
+              "required": [
+                "default",
+                "skip_reason"
+              ]
+            }
+          }
+        }
+      }
+    ]
   },
   "runtime": [
     {

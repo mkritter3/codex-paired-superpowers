@@ -10,6 +10,7 @@ const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_ENTRY = 'lib/codex-bridge/cli.js';
 const DEFAULT_EXPANSIONS = [{
   site: 'lib/codex-bridge/cli-harness/adapters/registry.js',
+  call: 'import(pathToFileURL(modulePath).href)',
   roots: 'lib/codex-bridge/cli-harness/adapters/*.js',
   inputs: 'lib/codex-bridge/cli-clients/*.json',
 }];
@@ -86,6 +87,10 @@ function extractHandler(member) {
   }
 
   function visit(node) {
+    if (argsName && ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)
+      && node.initializer && ts.isIdentifier(node.initializer) && node.initializer.text === argsName) {
+      collectBindingFlags(node.name, flags, unsupported);
+    }
     if (argsName && ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === argsName) {
       flags.add(node.name.text);
     }
@@ -102,6 +107,20 @@ function extractHandler(member) {
     }
     if (argsName && ts.isCallExpression(node)) {
       if (node.arguments.some((arg) => ts.isIdentifier(arg) && arg.text === argsName)) unsupported.add('args-pass-through');
+    }
+    if (argsName && ts.isIdentifier(node) && node.text === argsName) {
+      const parent = node.parent;
+      const supported = (ts.isPropertyAccessExpression(parent) && parent.expression === node)
+        || (ts.isElementAccessExpression(parent) && parent.expression === node)
+        || (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === node)
+        || (ts.isVariableDeclaration(parent) && ts.isObjectBindingPattern(parent.name) && parent.initializer === node);
+      if (!supported) {
+        if ((ts.isSpreadAssignment(parent) && parent.expression === node)
+          || (ts.isSpreadElement(parent) && parent.expression === node)) unsupported.add('args-spread');
+        else if (ts.isCallExpression(parent) && parent.arguments.includes(node)) unsupported.add('args-pass-through');
+        else if (ts.isVariableDeclaration(parent) && parent.initializer === node) unsupported.add('args-alias');
+        else unsupported.add('args-opaque-use');
+      }
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
       && isAccess(node.expression, 'process', 'exit')) {
@@ -210,11 +229,18 @@ function resolveLocalModule(fromFile, specifier, root) {
 
 function moduleFacts(filePath, root) {
   const sourceFile = parseModule(filePath);
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   const imports = [];
   const unresolved = [];
+  const createRequireAliases = new Set(['createRequire']);
+  const requireAliases = new Set(['require']);
+  const requireResolveAliases = new Set();
+  function normalizedCall(node) {
+    return printer.printNode(ts.EmitHint.Expression, node, sourceFile).replace(/\s+/g, ' ').trim();
+  }
   function addUnresolved(node, kind) {
     const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
-    unresolved.push({ path: repoPath(root, filePath), line, kind });
+    unresolved.push({ path: repoPath(root, filePath), line, kind, call: normalizedCall(node) });
   }
   function addSpecifier(node) {
     if (node && ts.isStringLiteralLike(node)) {
@@ -222,6 +248,39 @@ function moduleFacts(filePath, root) {
       if (resolved) imports.push(resolved);
     }
   }
+  function collectLoaderAliases(node) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
+      && node.moduleSpecifier.text === 'node:module') {
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if ((element.propertyName || element.name).text === 'createRequire') createRequireAliases.add(element.name.text);
+        }
+      }
+    }
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      let initializer = node.initializer;
+      if (ts.isAwaitExpression(initializer)) initializer = initializer.expression;
+      if (ts.isObjectBindingPattern(node.name) && ts.isCallExpression(initializer)
+        && initializer.expression.kind === ts.SyntaxKind.ImportKeyword
+        && initializer.arguments[0] && ts.isStringLiteral(initializer.arguments[0])
+        && initializer.arguments[0].text === 'node:module') {
+        for (const element of node.name.elements) {
+          if ((element.propertyName || element.name).getText(sourceFile) === 'createRequire'
+            && ts.isIdentifier(element.name)) createRequireAliases.add(element.name.text);
+        }
+      }
+      if (ts.isIdentifier(node.name) && ts.isIdentifier(initializer) && requireAliases.has(initializer.text)) {
+        requireAliases.add(node.name.text);
+      }
+      if (ts.isIdentifier(node.name) && ts.isPropertyAccessExpression(initializer)
+        && ts.isIdentifier(initializer.expression) && requireAliases.has(initializer.expression.text)
+        && initializer.name.text === 'resolve') requireResolveAliases.add(node.name.text);
+    }
+    ts.forEachChild(node, collectLoaderAliases);
+  }
+  collectLoaderAliases(sourceFile);
+
   function visit(node) {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) addSpecifier(node.moduleSpecifier);
     if (ts.isCallExpression(node)) {
@@ -229,13 +288,15 @@ function moduleFacts(filePath, root) {
         const arg = node.arguments[0];
         if (arg && ts.isStringLiteralLike(arg)) addSpecifier(arg);
         else addUnresolved(node, 'dynamic-import');
-      } else if (ts.isIdentifier(node.expression) && node.expression.text === 'createRequire') {
+      } else if (ts.isIdentifier(node.expression) && createRequireAliases.has(node.expression.text)) {
         addUnresolved(node, 'create-require');
       } else if (ts.isIdentifier(node.expression) && node.expression.text === 'eval') {
         addUnresolved(node, 'eval');
       } else if (ts.isPropertyAccessExpression(node.expression)
-        && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'require'
+        && ts.isIdentifier(node.expression.expression) && requireAliases.has(node.expression.expression.text)
         && node.expression.name.text === 'resolve') {
+        addUnresolved(node, 'require-resolve');
+      } else if (ts.isIdentifier(node.expression) && requireResolveAliases.has(node.expression.text)) {
         addUnresolved(node, 'require-resolve');
       } else if (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'resolve'
         && ts.isMetaProperty(node.expression.expression)) {
@@ -276,7 +337,7 @@ function rawDigest(filePath) {
 /**
  * Inspect the CLI surface and its expanded repository-local module closure.
  * Implements robustness spec §2 "Backstop: module digests".
- * @param {{root?: string, entry?: string, expansions?: Array<{site:string, roots:string, inputs:string}>}} options
+ * @param {{root?: string, entry?: string, expansions?: Array<{site:string, call?:string, roots:string, inputs:string}>}} options
  */
 export function inspectSurface({ root = SCRIPT_ROOT, entry = DEFAULT_ENTRY, expansions = DEFAULT_EXPANSIONS } = {}) {
   root = resolve(root);
@@ -293,8 +354,17 @@ export function inspectSurface({ root = SCRIPT_ROOT, entry = DEFAULT_ENTRY, expa
     queue.push(...facts.imports);
     unresolved.push(...facts.unresolved);
   }
-  const coveredSites = new Set(expansions.map((rule) => rule.site));
-  const remaining = unresolved.filter((item) => !coveredSites.has(item.path));
+  const coveredLoads = new Set();
+  for (const rule of expansions) {
+    const atSite = unresolved.filter((item) => item.path === rule.site);
+    const covered = rule.call
+      ? atSite.find((item) => item.call === rule.call)
+      : (atSite.length === 1 ? atSite[0] : null);
+    if (covered) coveredLoads.add(covered);
+  }
+  const remaining = unresolved
+    .filter((item) => !coveredLoads.has(item))
+    .map(({ path, line, kind }) => ({ path, line, kind }));
   const closure = [...visited].map((path) => repoPath(root, path)).sort();
   const module_digest = Object.fromEntries(closure.map((path) => [path, normalizedDigest(resolve(root, path))]));
   const inputPaths = sorted(expansions.flatMap((rule) => expandGlob(root, rule.inputs).map((path) => repoPath(root, path))));

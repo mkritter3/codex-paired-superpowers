@@ -36,6 +36,19 @@ function readSkill(name) {
   return readFileSync(join(PLUGIN_ROOT, 'skills', name, 'SKILL.md'), 'utf8');
 }
 
+function documentedSkillInputs(body) {
+  const inputs = body.match(/^## Inputs\s*$([\s\S]*?)(?=^## |(?![\s\S]))/m);
+  if (inputs) {
+    const fenced = inputs[1].match(/```[^\n]*\n([\s\S]*?)\n```/);
+    assert.ok(fenced, '## Inputs must start with a fenced key/value inventory');
+    return [...fenced[1].matchAll(/^([a-z][a-z0-9_-]*):/gm)].map((match) => match[1]).sort();
+  }
+  const required = body.match(/^## Required inputs\s*$([\s\S]*?)(?=^## |(?![\s\S]))/m);
+  assert.ok(required, 'skill must contain ## Inputs or ## Required inputs');
+  return [...new Set([...required[1].matchAll(/<([a-z][a-z0-9-]*)>/g)]
+    .map((match) => match[1].replace(/-path$/, '')))].sort();
+}
+
 // ── Per-skill structural requirements (single source of truth) ─────────────
 
 const SKILL_STRUCTURE_REQUIREMENTS = {
@@ -269,6 +282,7 @@ test('autopilot declares all 5 v0.9.0 halt reasons', () => {
 
 test('public API skills block matches commands and documented skill-body inputs', () => {
   const contract = publicApiSkills();
+  assert.equal(contract.input_parse_rule, 'Under ## Inputs, parse keys before : in the first fenced block. Under ## Required inputs, parse unique <name> placeholders in that section and strip a -path suffix.');
   const commandNames = readdirSync(join(PLUGIN_ROOT, 'commands'))
     .filter((name) => name.endsWith('.md'))
     .map((name) => name.slice(0, -3))
@@ -277,10 +291,7 @@ test('public API skills block matches commands and documented skill-body inputs'
   for (const item of contract.items) {
     assert.deepEqual(item.command, commandFrontmatter(item.command.name));
     const body = readSkill(item.skill);
-    for (const input of item.inputs) {
-      assert.match(body, new RegExp(`\\b${input}\\b`, 'm'),
-        `${item.skill} must document input ${input}`);
-    }
+    assert.deepEqual([...item.inputs].sort(), documentedSkillInputs(body), `${item.skill} input set`);
   }
 });
 

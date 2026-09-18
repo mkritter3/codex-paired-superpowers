@@ -25,6 +25,13 @@ test('extracts dot and string-literal member flags', async () => {
   assert.deepEqual(extractVerbSurface(join(fixtures, 'surface/member-access.js')).verbs.alpha.flags, ['one', 'three', 'two']);
 });
 
+test('extracts flags from body destructuring of the args binding', async () => {
+  const { extractVerbSurface } = await api();
+  const surface = extractVerbSurface(join(fixtures, 'surface/body-destructured.js')).verbs.alpha;
+  assert.deepEqual(surface.flags, ['newFlag', 'renamed']);
+  assert.deepEqual(surface.unsupported, []);
+});
+
 test('extracts only integer-literal exits', async () => {
   const { extractVerbSurface } = await api();
   assert.deepEqual(extractVerbSurface(join(fixtures, 'surface/exit-literals.js')).verbs.alpha.exits, [0, 2]);
@@ -48,6 +55,8 @@ for (const [name, expected] of [
   ['unsupported-computed.js', 'computed-key'],
   ['unsupported-spread.js', 'stdout-spread'],
   ['unsupported-pass-through.js', 'args-pass-through'],
+  ['unsupported-alias.js', 'args-spread'],
+  ['unsupported-argument-spread.js', 'args-spread'],
 ]) {
   test(`reports ${expected} without inventing coverage`, async () => {
     const { extractVerbSurface } = await api();
@@ -60,7 +69,12 @@ test('builds a sorted literal-import closure and applies roots/inputs expansion'
   const result = inspectSurface({
     root: fixtures,
     entry: 'closure/entry.js',
-    expansions: [{ site: 'closure/registry-like.js', roots: 'closure/adapters/*.js', inputs: 'closure/clients/*.json' }],
+    expansions: [{
+      site: 'closure/registry-like.js',
+      call: 'import(path)',
+      roots: 'closure/adapters/*.js',
+      inputs: 'closure/clients/*.json',
+    }],
   });
   assert.deepEqual(result.closure, [
     'closure/adapters/a.js', 'closure/adapters/b.js', 'closure/entry.js',
@@ -70,10 +84,35 @@ test('builds a sorted literal-import closure and applies roots/inputs expansion'
   assert.deepEqual(result.unresolved, []);
 });
 
-for (const [file, kind] of [
+test('an expansion covers only its named load expression', async () => {
+  const { inspectSurface } = await api();
+  const temp = mkdtempSync(join(tmpdir(), 'cli-surface-expansion-call-'));
+  mkdirSync(join(temp, 'closure/adapters'), { recursive: true });
+  mkdirSync(join(temp, 'closure/clients'), { recursive: true });
+  writeFileSync(join(temp, 'closure/entry.js'), "import './registry.js';\n");
+  writeFileSync(join(temp, 'closure/registry.js'), 'import(coveredPath);\nimport(outsideExpansion());\n');
+  writeFileSync(join(temp, 'closure/adapters/a.js'), 'export default {};\n');
+  writeFileSync(join(temp, 'closure/clients/a.json'), '{}\n');
+  const result = inspectSurface({
+    root: temp,
+    entry: 'closure/entry.js',
+    expansions: [{
+      site: 'closure/registry.js',
+      call: 'import(coveredPath)',
+      roots: 'closure/adapters/*.js',
+      inputs: 'closure/clients/*.json',
+    }],
+  });
+  assert.deepEqual(result.unresolved, [{ path: 'closure/registry.js', line: 2, kind: 'dynamic-import' }]);
+});
+
+for (const [file, kind, line = 1] of [
   ['unresolved-import-expr.js', 'dynamic-import'],
   ['unresolved-create-require.js', 'create-require'],
+  ['unresolved-create-require-alias.js', 'create-require', 2],
+  ['unresolved-create-require-dynamic-alias.js', 'create-require', 2],
   ['unresolved-resolve.js', 'require-resolve'],
+  ['unresolved-require-alias.js', 'require-resolve', 2],
   ['unresolved-meta-resolve.js', 'import-meta-resolve'],
   ['unresolved-eval.js', 'eval'],
   ['unresolved-new-function.js', 'new-function'],
@@ -82,7 +121,7 @@ for (const [file, kind] of [
     const { inspectSurface } = await api();
     const result = inspectSurface({ root: fixtures, entry: `closure/${file}`, expansions: [] });
     assert.equal(result.unresolved[0].kind, kind);
-    assert.equal(result.unresolved[0].line, 1);
+    assert.equal(result.unresolved[0].line, line);
   });
 }
 
@@ -91,6 +130,14 @@ test('CLI exits 3 when an unresolved load has no expansion', () => {
   assert.equal(result.status, 3);
   assert.match(result.stderr, /unresolved module load/);
 });
+
+for (const file of ['unresolved-create-require-alias.js', 'unresolved-require-alias.js']) {
+  test(`CLI exits 3 for aliased loader in ${file}`, () => {
+    const result = spawnSync(process.execPath, [script, '--root', fixtures, '--entry', `closure/${file}`], { encoding: 'utf8' });
+    assert.equal(result.status, 3);
+    assert.match(result.stderr, /unresolved module load/);
+  });
+}
 
 test('--digest prints only the three frozen digest keys', () => {
   const result = spawnSync(process.execPath, [script, '--digest'], { cwd: root, encoding: 'utf8' });
