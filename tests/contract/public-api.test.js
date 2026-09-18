@@ -776,6 +776,10 @@ test('tampered CLI and wrapper implementations fail documented behavioral cases'
   const temp = mkdtempSync(join(tmpdir(), 'public-api-implementation-tamper-'));
   cpSync(join(root, 'lib'), join(temp, 'lib'), { recursive: true });
   symlinkSync(join(root, 'node_modules'), join(temp, 'node_modules'));
+  // The copy must be an ES module package or Node loads cli.js as CommonJS and dies with a
+  // SyntaxError before reaching the tampered handler — which would make this control assert the
+  // wrong failure. Node >= 22 guesses module syntax and masked this; Node 21 did not (CI, macOS).
+  writeFileSync(join(temp, 'package.json'), `${JSON.stringify({ type: 'module' })}\n`);
   const tamperedCli = join(temp, 'lib/codex-bridge/cli.js');
   const cliSource = readFileSync(tamperedCli, 'utf8');
   const changedCliSource = cliSource.replace(
