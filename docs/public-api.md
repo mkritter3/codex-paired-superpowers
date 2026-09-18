@@ -22,7 +22,7 @@ JSON consumers may rely on the envelope and check names. Human consumers may rel
 
 ## Project configuration
 
-The schema describes the loader's accepted JSON shape. `version` is intentionally permissive: every non-null JSON value is accepted because the loader checks only presence. For non-library apps, `live_verification.default` is likewise unconstrained and may be numeric or otherwise non-string. Scheduled-window times preserve the loader's existing JavaScript coercion: a single-element string array is accepted when its `String()` value is a valid `HH:MM` time. Worktree symlink strings preserve the loader's prefix and slash-segment checks exactly, including embedded newlines and the permissive trailing-newline `"..\n"` case. Runtime cases separately pin those permissive branches, defaults, environment-dependent validation, validation order, and every loader/model error branch without changing the loader. The unset-password case is marked as a schema exception because JSON Schema cannot observe `process.env`.
+The schema describes the loader's accepted JSON shape. `version` is intentionally permissive: every non-null JSON value is accepted because the loader checks only presence. For non-library apps, `live_verification.default` is likewise unconstrained and may be numeric or otherwise non-string. Scheduled-window times preserve the loader's existing JavaScript coercion: `String(value)` is tested against `HH:MM`, so a single-element array — nested to any depth — is accepted when it stringifies to a valid time (`[["09:00"]]`), while a multi-element array stringifies with a comma and is rejected; the schema expresses this with the recursive `$defs.window_time`. Worktree symlink strings preserve the loader's prefix and slash-segment checks exactly, including embedded newlines and the permissive trailing-newline `"..\n"` case. Runtime cases separately pin those permissive branches, defaults, environment-dependent validation, validation order, and every loader/model error branch without changing the loader. The unset-password case is marked as a schema exception because JSON Schema cannot observe `process.env`.
 
 ## Sidecars
 
@@ -9888,119 +9888,132 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           {
             "type": "object",
             "properties": {
-          "default": {},
-          "skip_reason": {},
-          "cleanup": {
-            "anyOf": [
-              { "type": "object" },
-              { "type": "array" },
-              { "enum": [null, false, 0, ""] }
-            ]
-          },
-          "setup": {
-            "anyOf": [
-              { "type": "object" },
-              { "type": "array" },
-              { "enum": [null, false, 0, ""] }
-            ]
-          },
-          "logs": {
-            "anyOf": [
-              { "type": "object" },
-              { "type": "array" },
-              { "enum": [null, false, 0, ""] }
-            ]
-          },
-          "takeover": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "mode": {
-                    "enum": [
-                      "confirm_each_phase_e",
-                      "scheduled_window"
-                    ]
+              "default": {},
+              "skip_reason": {},
+              "cleanup": {
+                "anyOf": [
+                  {
+                    "type": "object"
                   },
-                  "scheduled_windows": {
-                    "anyOf": [
-                      {
-                        "type": "array",
-                        "items": {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "start": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string",
-                                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                  {
+                    "type": "array"
+                  },
+                  {
+                    "enum": [
+                      null,
+                      false,
+                      0,
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "setup": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "array"
+                  },
+                  {
+                    "enum": [
+                      null,
+                      false,
+                      0,
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "logs": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "array"
+                  },
+                  {
+                    "enum": [
+                      null,
+                      false,
+                      0,
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "takeover": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "enum": [
+                          "confirm_each_phase_e",
+                          "scheduled_window"
+                        ]
+                      },
+                      "scheduled_windows": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "$ref": "#/$defs/window_time"
                                     },
-                                    {
-                                      "type": "array",
-                                      "minItems": 1,
-                                      "maxItems": 1,
-                                      "items": {
-                                        "type": "string",
-                                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
-                                      }
+                                    "end": {
+                                      "$ref": "#/$defs/window_time"
                                     }
-                                  ]
+                                  },
+                                  "additionalProperties": true
                                 },
-                                "end": {
+                                {
                                   "anyOf": [
                                     {
-                                      "type": "string",
-                                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                      "type": "string"
                                     },
                                     {
-                                      "type": "array",
-                                      "minItems": 1,
-                                      "maxItems": 1,
-                                      "items": {
-                                        "type": "string",
-                                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
-                                      }
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "array"
                                     }
                                   ]
                                 }
-                              },
-                              "additionalProperties": true
-                            },
-                            {
-                              "anyOf": [
-                                { "type": "string" },
-                                { "type": "number" },
-                                { "type": "boolean" },
-                                { "type": "array" }
                               ]
                             }
-                          ]
-                        }
-                      },
-                      {
-                        "not": {
-                          "type": "array"
-                        }
+                          },
+                          {
+                            "not": {
+                              "type": "array"
+                            }
+                          }
+                        ]
                       }
+                    },
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "array"
+                  },
+                  {
+                    "enum": [
+                      null,
+                      false,
+                      0,
+                      ""
                     ]
                   }
-                },
-                "additionalProperties": true
-              },
-              {
-                "type": "array"
-              },
-              {
-                "enum": [
-                  null,
-                  false,
-                  0,
-                  ""
                 ]
-              }
-            ]
               }
             },
             "additionalProperties": true
@@ -10055,8 +10068,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
                       "cli": {
                         "const": "agy"
                       },
-                      "model": {
-                      }
+                      "model": {}
                     },
                     "required": [
                       "cli",
@@ -10265,7 +10277,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           }
         }
       }
-    ]
+    ],
+    "$defs": {
+      "window_time": {
+        "description": "Loader coercion is String(value) tested against HH:MM; a singleton array (recursively) stringifies to its element.",
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          },
+          {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "$ref": "#/$defs/window_time"
+            }
+          }
+        ]
+      }
+    }
   },
   "runtime": [
     {
@@ -10334,279 +10365,1221 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     },
     {
       "case": "version-false-permissive",
-      "input": { "version": false, "app": { "type": "web" }, "live_verification": {} },
-      "expect": { "ok": true, "config": { "version": false } }
+      "input": {
+        "version": false,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {}
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "version": false
+        }
+      }
     },
     {
       "case": "version-object-permissive",
-      "input": { "version": {}, "app": { "type": "web" }, "live_verification": {} },
-      "expect": { "ok": true, "config": { "version": {} } }
+      "input": {
+        "version": {},
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {}
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "version": {}
+        }
+      }
     },
     {
       "case": "web-default-number-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "default": 0 } },
-      "expect": { "ok": true, "config": { "live_verification": { "default": 0 } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "default": 0
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "default": 0
+          }
+        }
+      }
     },
     {
       "case": "web-skip-reason-number-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "skip_reason": 0 } },
-      "expect": { "ok": true, "config": { "live_verification": { "skip_reason": 0 } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "skip_reason": 0
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "skip_reason": 0
+          }
+        }
+      }
     },
     {
       "case": "valid-takeover-window",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "mode": "scheduled_window", "scheduled_windows": [{ "start": "09:00", "end": "17:30" }] } } },
-      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "mode": "scheduled_window", "scheduled_windows": [{ "start": "09:00", "end": "17:30" }] } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "mode": "scheduled_window",
+            "scheduled_windows": [
+              {
+                "start": "09:00",
+                "end": "17:30"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "takeover": {
+              "mode": "scheduled_window",
+              "scheduled_windows": [
+                {
+                  "start": "09:00",
+                  "end": "17:30"
+                }
+              ]
+            }
+          }
+        }
+      }
     },
     {
       "case": "set-login-password-env",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "setup": { "login_profiles": { "primary": { "password_env": "CPS_CONTRACT_PASSWORD" } } } } },
-      "env": { "CPS_CONTRACT_PASSWORD": "present" },
-      "expect": { "ok": true, "config": { "live_verification": { "setup": { "login_profiles": { "primary": { "password_env": "CPS_CONTRACT_PASSWORD" } } } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "setup": {
+            "login_profiles": {
+              "primary": {
+                "password_env": "CPS_CONTRACT_PASSWORD"
+              }
+            }
+          }
+        }
+      },
+      "env": {
+        "CPS_CONTRACT_PASSWORD": "present"
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "setup": {
+              "login_profiles": {
+                "primary": {
+                  "password_env": "CPS_CONTRACT_PASSWORD"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
       "case": "valid-worktree-opt-out",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": [] } },
-      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [] } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": []
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "worktree_bootstrap": {
+            "symlinks": []
+          }
+        }
+      }
     },
     {
       "case": "valid-codex-dispatch",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "max_runtime_ms": 1, "log_max_bytes": 1 } },
-      "expect": { "ok": true, "config": { "codex_dispatch": { "max_runtime_ms": 1, "log_max_bytes": 1 } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "codex_dispatch": {
+          "max_runtime_ms": 1,
+          "log_max_bytes": 1
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "codex_dispatch": {
+            "max_runtime_ms": 1,
+            "log_max_bytes": 1
+          }
+        }
+      }
     },
     {
       "case": "valid-mailbox",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "max_bytes": 1, "archive_policy": "drop", "archive_retention_days": 0, "archive_retention_count": 0 } },
-      "expect": { "ok": true, "config": { "mailbox": { "max_bytes": 1, "archive_policy": "drop", "archive_retention_days": 0, "archive_retention_count": 0 } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": {
+          "max_bytes": 1,
+          "archive_policy": "drop",
+          "archive_retention_days": 0,
+          "archive_retention_count": 0
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "mailbox": {
+            "max_bytes": 1,
+            "archive_policy": "drop",
+            "archive_retention_days": 0,
+            "archive_retention_count": 0
+          }
+        }
+      }
     },
     {
       "case": "valid-codex-model",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "implement": { "cli": "codex", "model": "gpt-safe_1.0", "effort": "ultra" } } },
-      "expect": { "ok": true, "config": { "models": { "implement": { "cli": "codex", "model": "gpt-safe_1.0", "effort": "ultra" } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "implement": {
+            "cli": "codex",
+            "model": "gpt-safe_1.0",
+            "effort": "ultra"
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "models": {
+            "implement": {
+              "cli": "codex",
+              "model": "gpt-safe_1.0",
+              "effort": "ultra"
+            }
+          }
+        }
+      }
     },
     {
       "case": "valid-agy-model",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "agy", "model": "gemini-contract-high", "effort": "high" } } },
-      "expect": { "ok": true, "config": { "models": { "review": { "cli": "agy", "model": "gemini-contract-high", "effort": "high" } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "cli": "agy",
+            "model": "gemini-contract-high",
+            "effort": "high"
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "models": {
+            "review": {
+              "cli": "agy",
+              "model": "gemini-contract-high",
+              "effort": "high"
+            }
+          }
+        }
+      }
     },
     {
       "case": "live-verification-array-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": [] },
-      "expect": { "ok": true, "config": { "version": 1 } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": []
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "version": 1
+        }
+      }
     },
     {
       "case": "takeover-null-defaulted",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": null } },
-      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "mode": "confirm_each_phase_e", "scheduled_windows": [] } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": null
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "takeover": {
+              "mode": "confirm_each_phase_e",
+              "scheduled_windows": []
+            }
+          }
+        }
+      }
     },
     {
       "case": "takeover-array-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": [] } },
-      "expect": { "ok": true, "config": { "version": 1 } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": []
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "version": 1
+        }
+      }
     },
     {
       "case": "scheduled-windows-non-array-defaulted",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": "daily" } } },
-      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [] } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": "daily"
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "takeover": {
+              "scheduled_windows": []
+            }
+          }
+        }
+      }
     },
     {
       "case": "scheduled-window-primitive-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [42] } } },
-      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [42] } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              42
+            ]
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "takeover": {
+              "scheduled_windows": [
+                42
+              ]
+            }
+          }
+        }
+      }
     },
     {
       "case": "scheduled-window-array-coercion",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "start": ["09:00"], "end": ["17:30"] }] } } },
-      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [{ "start": ["09:00"], "end": ["17:30"] }] } } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "start": [
+                  "09:00"
+                ],
+                "end": [
+                  "17:30"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "takeover": {
+              "scheduled_windows": [
+                {
+                  "start": [
+                    "09:00"
+                  ],
+                  "end": [
+                    "17:30"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
     },
     {
       "case": "scheduled-window-array-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "start": ["25:00"] }] } } },
-      "expect": { "error": "invalid-time-format" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "start": [
+                  "25:00"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "error": "invalid-time-format"
+      }
+    },
+    {
+      "case": "scheduled-window-nested-array-coercion",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "start": [
+                  [
+                    "09:00"
+                  ]
+                ],
+                "end": [
+                  [
+                    [
+                      "17:30"
+                    ]
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "live_verification": {
+            "takeover": {
+              "scheduled_windows": [
+                {
+                  "start": [
+                    [
+                      "09:00"
+                    ]
+                  ],
+                  "end": [
+                    [
+                      [
+                        "17:30"
+                      ]
+                    ]
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "case": "scheduled-window-nested-array-invalid",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "start": [
+                  [
+                    "25:00"
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "error": "invalid-time-format"
+      }
+    },
+    {
+      "case": "scheduled-window-multi-element-array-invalid",
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "start": [
+                  "09:00",
+                  "10:00"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "error": "invalid-time-format"
+      }
     },
     {
       "case": "worktree-null-defaulted",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": null },
-      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "node_modules", "required": false }, { "path": ".venv", "required": false }, { "path": "venv", "required": false }] } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": null
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "worktree_bootstrap": {
+            "symlinks": [
+              {
+                "path": "node_modules",
+                "required": false
+              },
+              {
+                "path": ".venv",
+                "required": false
+              },
+              {
+                "path": "venv",
+                "required": false
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "case": "worktree-missing-symlinks-defaulted",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": {} },
-      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "node_modules", "required": false }, { "path": ".venv", "required": false }, { "path": "venv", "required": false }] } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {}
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "worktree_bootstrap": {
+            "symlinks": [
+              {
+                "path": "node_modules",
+                "required": false
+              },
+              {
+                "path": ".venv",
+                "required": false
+              },
+              {
+                "path": "venv",
+                "required": false
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "case": "worktree-newline-name-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["a\nb"] } },
-      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "a\nb", "required": true }] } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": [
+            "a\nb"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "worktree_bootstrap": {
+            "symlinks": [
+              {
+                "path": "a\nb",
+                "required": true
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "case": "worktree-trailing-newline-parent-permissive",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["..\n"] } },
-      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "..\n", "required": true }] } } }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": [
+            "..\n"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true,
+        "config": {
+          "worktree_bootstrap": {
+            "symlinks": [
+              {
+                "path": "..\n",
+                "required": true
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "case": "invalid-app-type",
-      "input": { "version": 1, "app": { "type": "service" }, "live_verification": {} },
-      "expect": { "error": "invalid-app-type" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "service"
+        },
+        "live_verification": {}
+      },
+      "expect": {
+        "error": "invalid-app-type"
+      }
     },
     {
       "case": "missing-live-verification",
-      "input": { "version": 1, "app": { "type": "web" } },
-      "expect": { "error": "missing-field:live_verification" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        }
+      },
+      "expect": {
+        "error": "missing-field:live_verification"
+      }
     },
     {
       "case": "invalid-takeover-mode",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "mode": "always" } } },
-      "expect": { "error": "invalid-takeover-mode" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "mode": "always"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalid-takeover-mode"
+      }
     },
     {
       "case": "invalid-window-start",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "start": "25:00" }] } } },
-      "expect": { "error": "invalid-time-format" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "start": "25:00"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "error": "invalid-time-format"
+      }
     },
     {
       "case": "invalid-window-end",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "end": "12:60" }] } } },
-      "expect": { "error": "invalid-time-format" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {
+          "takeover": {
+            "scheduled_windows": [
+              {
+                "end": "12:60"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "error": "invalid-time-format"
+      }
     },
     {
       "case": "library-must-skip",
-      "input": { "version": 1, "app": { "type": "library" }, "live_verification": { "default": "run", "skip_reason": "none" } },
-      "expect": { "error": "library-must-skip" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "library"
+        },
+        "live_verification": {
+          "default": "run",
+          "skip_reason": "none"
+        }
+      },
+      "expect": {
+        "error": "library-must-skip"
+      }
     },
     {
       "case": "library-missing-skip-reason",
-      "input": { "version": 1, "app": { "type": "library" }, "live_verification": { "default": "skip", "skip_reason": " " } },
-      "expect": { "error": "library-missing-skip-reason" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "library"
+        },
+        "live_verification": {
+          "default": "skip",
+          "skip_reason": " "
+        }
+      },
+      "expect": {
+        "error": "library-missing-skip-reason"
+      }
     },
     {
       "case": "worktree-block-not-object",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": "bad" },
-      "expect": { "error": "invalid-worktree-bootstrap" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": "bad"
+      },
+      "expect": {
+        "error": "invalid-worktree-bootstrap"
+      }
     },
     {
       "case": "worktree-symlinks-not-array",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": "bad" } },
-      "expect": { "error": "invalid-worktree-bootstrap" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": "bad"
+        }
+      },
+      "expect": {
+        "error": "invalid-worktree-bootstrap"
+      }
     },
     {
       "case": "worktree-symlink-not-string",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": [42] } },
-      "expect": { "error": "invalid-worktree-bootstrap" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": [
+            42
+          ]
+        }
+      },
+      "expect": {
+        "error": "invalid-worktree-bootstrap"
+      }
     },
     {
       "case": "worktree-symlink-empty",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": [""] } },
-      "expect": { "error": "invalid-worktree-bootstrap" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": [
+            ""
+          ]
+        }
+      },
+      "expect": {
+        "error": "invalid-worktree-bootstrap"
+      }
     },
     {
       "case": "worktree-symlink-absolute",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["/tmp/cache"] } },
-      "expect": { "error": "invalid-worktree-bootstrap" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": [
+            "/tmp/cache"
+          ]
+        }
+      },
+      "expect": {
+        "error": "invalid-worktree-bootstrap"
+      }
     },
     {
       "case": "worktree-symlink-traversal",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["packages/../cache"] } },
-      "expect": { "error": "invalid-worktree-bootstrap" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "worktree_bootstrap": {
+          "symlinks": [
+            "packages/../cache"
+          ]
+        }
+      },
+      "expect": {
+        "error": "invalid-worktree-bootstrap"
+      }
     },
     {
       "case": "codex-dispatch-not-object",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": [] },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "codex_dispatch": []
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "codex-dispatch-runtime-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "max_runtime_ms": 0 } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "codex_dispatch": {
+          "max_runtime_ms": 0
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "codex-dispatch-log-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "log_max_bytes": 1.5 } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "codex_dispatch": {
+          "log_max_bytes": 1.5
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "codex-dispatch-unknown-key",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "codex_dispatch": { "future": true } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "codex_dispatch": {
+          "future": true
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "mailbox-not-object",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": [] },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": []
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "mailbox-max-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "max_bytes": 0 } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": {
+          "max_bytes": 0
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "mailbox-policy-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "archive_policy": "archive" } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": {
+          "archive_policy": "archive"
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "mailbox-retention-days-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "archive_retention_days": -1 } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": {
+          "archive_retention_days": -1
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "mailbox-retention-count-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "archive_retention_count": 1.5 } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": {
+          "archive_retention_count": 1.5
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "mailbox-unknown-key",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "mailbox": { "future": true } },
-      "expect": { "error": "live-verification-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "mailbox": {
+          "future": true
+        }
+      },
+      "expect": {
+        "error": "live-verification-config-malformed"
+      }
     },
     {
       "case": "models-not-object",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": [] },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": []
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-unknown-role",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "future": {} } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "future": {}
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-role-not-object",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": [] } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": []
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-unknown-key",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "future": true } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "future": true
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-cli-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "gemini" } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "cli": "gemini"
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-model-empty",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "model": "" } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "model": ""
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-model-unsafe-token",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "model": "model with spaces" } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "model": "model with spaces"
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-effort-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "effort": "extreme" } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "effort": "extreme"
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-agy-suffix-invalid",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "agy", "model": "gemini-contract" } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "cli": "agy",
+            "model": "gemini-contract"
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "models-agy-effort-mismatch",
-      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "models": { "review": { "cli": "agy", "model": "gemini-contract-high", "effort": "low" } } },
-      "expect": { "error": "models-config-malformed" }
+      "input": {
+        "version": 1,
+        "app": {
+          "type": "web"
+        },
+        "live_verification": {},
+        "models": {
+          "review": {
+            "cli": "agy",
+            "model": "gemini-contract-high",
+            "effort": "low"
+          }
+        }
+      },
+      "expect": {
+        "error": "models-config-malformed"
+      }
     },
     {
       "case": "version-2-permissive",

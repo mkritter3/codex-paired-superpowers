@@ -528,6 +528,7 @@ function assertProjectConfigContract(contract) {
     ['accepted-codex-dispatch-positive.json', true],
     ['accepted-mailbox-policy.json', true],
     ['accepted-worktree-symlinks.json', true],
+    ['accepted-nested-window-time.json', true],
     ['rejected-missing-version.json', false, 'missing-field:version'],
     ['rejected-missing-app.json', false, 'missing-field:app'],
     ['rejected-bad-models.json', false, 'models-config-malformed'],
@@ -535,6 +536,7 @@ function assertProjectConfigContract(contract) {
     ['rejected-codex-dispatch-negative.json', false, 'live-verification-config-malformed'],
     ['rejected-mailbox-policy.json', false, 'live-verification-config-malformed'],
     ['rejected-worktree-numeric-symlink.json', false, 'invalid-worktree-bootstrap'],
+    ['rejected-nested-window-time.json', false, 'invalid-time-format'],
   ];
   assert.deepEqual(
     fixtureCases.map(([name]) => name).sort(),
