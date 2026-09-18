@@ -28,6 +28,7 @@ else
 fi
 
 FAILURES=0
+SUITES_EXECUTED=0
 
 resolve_test_path() {
   case "$1" in
@@ -36,8 +37,12 @@ resolve_test_path() {
   esac
 }
 
-while IFS= read -r suite; do
+ORIGINAL_IFS=$IFS
+set -f
+IFS=$'\n'
+for suite in $SUITES; do
   [ -n "$suite" ] || continue
+  SUITES_EXECUTED=$((SUITES_EXECUTED + 1))
   suite_path=$(resolve_test_path "$suite")
   if "$SHELL_BIN" "$suite_path"; then
     echo "PASS suite $suite"
@@ -46,11 +51,9 @@ while IFS= read -r suite; do
     echo "FAIL suite $suite (exit $status)" >&2
     FAILURES=$((FAILURES + 1))
   fi
-done <<EOF
-$SUITES
-EOF
+done
 
-while IFS= read -r probe; do
+for probe in $PROBES; do
   [ -n "$probe" ] || continue
   probe_path=${probe%|*}
   expected=${probe##*|}
@@ -63,9 +66,14 @@ while IFS= read -r probe; do
     echo "FAIL probe $probe_path: expected $expected, got $actual" >&2
     FAILURES=$((FAILURES + 1))
   fi
-done <<EOF
-$PROBES
-EOF
+done
+IFS=$ORIGINAL_IFS
+set +f
+
+if [ -n "$SUITES" ] && [ "$SUITES_EXECUTED" -eq 0 ]; then
+  echo "FAIL: no suites executed" >&2
+  FAILURES=$((FAILURES + 1))
+fi
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "$FAILURES shell test failure(s)" >&2

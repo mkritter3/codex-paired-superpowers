@@ -45,7 +45,7 @@ outer_node=$(node --version)
 grep -q "node $outer_node" "$happy_output" || { cat "$happy_output" >&2; exit 1; }
 echo "  PASS: isolated node version matches outer node"
 
-assert_removed "$happy_output" "happy path"
+assert_removed "$happy_output" "happy path" || exit 1
 echo "  PASS: happy-path temp directory removed"
 
 stale_result=$(run_smoke stale --sha stale)
@@ -56,7 +56,21 @@ if [ "$stale_status" -eq 0 ]; then
   exit 1
 fi
 grep -q 'FAIL step 6 reviewer' "$stale_output" || { cat "$stale_output" >&2; exit 1; }
-assert_removed "$stale_output" "stale-sha path"
+assert_removed "$stale_output" "stale-sha path" || exit 1
 echo "  PASS: stale --sha fails at reviewer step and cleans up"
 
-echo "All 4 fresh-clone smoke checks passed."
+aliased_result=$(CPS_FRESH_CLONE_FAKE_RECORD_CWD=project run_smoke aliased)
+aliased_status=${aliased_result%%|*}
+aliased_output=${aliased_result#*|}
+if [ "$aliased_status" -eq 0 ]; then
+  cat "$aliased_output" >&2
+  exit 1
+fi
+grep -q 'FAIL step 6 reviewer.*throwaway checkout' "$aliased_output" || {
+  cat "$aliased_output" >&2
+  exit 1
+}
+assert_removed "$aliased_output" "aliased-project path" || exit 1
+echo "  PASS: aliased project cwd fails the throwaway-checkout assertion and cleans up"
+
+echo "All 5 fresh-clone smoke checks passed."

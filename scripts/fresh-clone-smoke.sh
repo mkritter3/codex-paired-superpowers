@@ -131,6 +131,22 @@ if ! printf '%s' 'Review the implementation.' | FAKE_AGY_RECORD="$AGY_RECORD" \
   fail "6 reviewer" "reviewer-thread-open returned non-zero"
 fi
 
+if [ "${CPS_FRESH_CLONE_FAKE_RECORD_CWD:-}" = project ]; then
+  node -e '
+    const fs = require("node:fs");
+    const recordPath = process.argv[1];
+    const project = process.argv[2];
+    const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+    const alias = project.startsWith("/private/") ? project.slice(8) : `/private${project}`;
+    try {
+      record.cwd = fs.realpathSync(alias) === fs.realpathSync(project) ? alias : project;
+    } catch {
+      record.cwd = project;
+    }
+    fs.writeFileSync(recordPath, `${JSON.stringify(record)}\n`);
+  ' "$AGY_RECORD" "$PROJECT" || fail "6 reviewer" "could not create cwd negative control"
+fi
+
 node -e '
   const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   if (value.ok !== true || typeof value.threadId !== "string" || value.threadId.length === 0) process.exit(1);
@@ -144,10 +160,30 @@ node -e '
   fail "6 reviewer" "sidecar did not record the execution reviewer thread"
 
 node -e '
-  const record = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const canonicalize = (input) => {
+    let existing = path.resolve(input);
+    const missing = [];
+    while (!fs.existsSync(existing)) {
+      const parent = path.dirname(existing);
+      if (parent === existing) throw new Error(`cannot canonicalize ${input}`);
+      missing.unshift(path.basename(existing));
+      existing = parent;
+    }
+    return path.join(fs.realpathSync(existing), ...missing);
+  };
+  const record = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (record.head !== process.argv[2]) process.exit(1);
   if (record.impl_txt_present !== true) process.exit(1);
-  if (record.cwd === process.argv[3]) process.exit(1);
+  const reviewCwd = canonicalize(record.cwd);
+  const project = canonicalize(process.argv[3]);
+  if (reviewCwd === project) process.exit(1);
+  const relative = path.relative(fs.realpathSync(os.tmpdir()), reviewCwd);
+  const checkoutDir = relative.split(path.sep)[0];
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) process.exit(1);
+  if (!/^cps-review-[^/\\]+$/.test(checkoutDir)) process.exit(1);
 ' "$AGY_RECORD" "$IMPL_SHA" "$PROJECT" || \
   fail "6 reviewer" "review did not observe the implementation in a throwaway checkout"
 

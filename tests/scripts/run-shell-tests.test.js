@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,4 +52,34 @@ test('a probe with the right expected exit passes', () => {
   const result = run({ probes: probe });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /PASS probe/);
+});
+
+test('an unwritable TMPDIR cannot hide a failing suite', (t) => {
+  const lockedTmp = mkdtempSync(join(tmpdir(), 'cps-shell-runner-'));
+  t.after(() => {
+    chmodSync(lockedTmp, 0o700);
+    rmSync(lockedTmp, { recursive: true, force: true });
+  });
+  chmodSync(lockedTmp, 0o000);
+
+  const result = spawnSync('bash', [RUNNER], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      TMPDIR: lockedTmp,
+      CPS_SHELL: 'bash',
+      CPS_SHELL_SUITES: join(FIXTURES, 'fail.sh'),
+      CPS_SHELL_PROBES: '',
+    },
+  });
+
+  assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+  assert.match(`${result.stdout}\n${result.stderr}`, /FAIL suite.*fail\.sh/);
+});
+
+test('a non-empty suite list cannot report success when no suite executes', () => {
+  const result = run({ suites: '\n\n' });
+  assert.equal(result.status, 1);
+  assert.match(`${result.stdout}\n${result.stderr}`, /no suites executed/);
 });
