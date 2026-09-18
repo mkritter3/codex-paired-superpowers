@@ -4429,6 +4429,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         "member-id",
         "model",
         "planPath",
+        "prompt-file",
         "repoRoot",
         "role",
         "sha",
@@ -4457,6 +4458,11 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "name": "planPath",
           "required": false,
           "value_type": "string"
+        },
+        {
+          "name": "prompt-file",
+          "required": true,
+          "value_type": "path"
         },
         {
           "name": "repoRoot",
@@ -4546,7 +4552,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "--model",
               "gemini-3.8-flash-high",
               "--version",
-              "v1"
+              "v1",
+              "--prompt-file",
+              "$SPEC"
             ],
             "stdin": "round 1",
             "setup": "reviewer-failure"
@@ -4582,6 +4590,8 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "gemini-3.8-flash-high",
               "--version",
               "v1",
+              "--prompt-file",
+              "$SPEC",
               "--sha",
               "$HEAD",
               "--planPath",
@@ -4600,6 +4610,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "member-id",
               "model",
               "planPath",
+              "prompt-file",
               "repoRoot",
               "role",
               "sha",
@@ -10673,7 +10684,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
     "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",
     "lib/codex-bridge/cli-harness/process-lifecycle.js": "sha256:d35fef32b503bc5e40f7f58e27e0599c07f96d164f36f25cd52425aae5dac978",
-    "lib/codex-bridge/cli.js": "sha256:d73b2ecee9e785ff5157a9b47bdafa5f2d0d96846737da4943ae9baf62df7a43",
+    "lib/codex-bridge/cli.js": "sha256:d69c16fc61818278132913c8c175cac74c6d42cadc1345bacb8fbcaba6aa8fa9",
     "lib/codex-bridge/halt-envelope.js": "sha256:daca46b4d7f6a5b1c6c0055751254d1bbcf66eefe711d8e5cb4c3a944a38d731",
     "lib/codex-bridge/honest-reporting-marker.js": "sha256:a8b076f88fb440f6b0b0508f54ec16873f3d83dc46b4cee81f7c71416e89d2f2",
     "lib/codex-bridge/implementer/member-id.js": "sha256:3dab9201d15462172d8e37247838c1c49329055caf97707a0704b711e1d21f94",
@@ -10682,9 +10693,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/mailbox.js": "sha256:786e519d904e1176f12227e403af8107071e4594b0d9178d64e5627044fd1a06",
     "lib/codex-bridge/models.js": "sha256:2f5e000fded6907ac318e6c6e6f8d1a5eea023a5b200e4689fffa3b6cbcdcff2",
     "lib/codex-bridge/project-config.js": "sha256:3840f68021ffc20f8add89442e41906265d08bd5ec3fdd02f9651bacb0caf445",
-    "lib/codex-bridge/review-panel-run.js": "sha256:79554912d762f683dd0ad563ccca842b34a31374e1fa7a955b3ab690d68671e4",
+    "lib/codex-bridge/review-panel-run.js": "sha256:431ff5a1cf68dff442f6f9e1fa3eb0d0886893a5ec4d3f0846a3325d0f55583b",
     "lib/codex-bridge/review-panel.js": "sha256:1f1f61f9acc74ef63996cdc6ca69d2a16ee2a5f32cdce409b07c9905af5cbf0e",
-    "lib/codex-bridge/reviewer-thread.js": "sha256:269ec5d97edc48c4e614f712f4bddcf7c5896fc8b024a67618fc0eb1f4cfc945",
+    "lib/codex-bridge/reviewer-thread.js": "sha256:6d249ddefefd04c8ee9c9341bbaa92dd46c19b80f9f0ff6c042bc4879dd54027",
     "lib/codex-bridge/role-routing/cli-clients.js": "sha256:8c8b9ecca0595566c342cc81445f55ab5fe9b749cfbb9538ec14939b6d4b0033",
     "lib/codex-bridge/role-routing/config-loader.js": "sha256:e8e773d8a0f58bb8a3106e73515ff723cca6cf24664c4a43ced4747318023b00",
     "lib/codex-bridge/role-routing/errors.js": "sha256:2f79bc7d21eb6d5c0670b853a8e840437c6160f196ce0f3063f1e69fc6235cb9",
