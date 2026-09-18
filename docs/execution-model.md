@@ -89,7 +89,7 @@ diff touches, not from how big it feels.
 | Lane | Applies when the diff touches | Reviewers | Round cap | Writer |
 | --- | --- | --- | --- | --- |
 | **standard** | anything under `lib/`, `scripts/`, `bin/`, `tests/`, `skills/`, or any contract document (below) | Claude first, then the `review` role; both must approve the same commit | 7 | dispatched per the implementer contract |
-| **prose** | only paths in the prose allowlist (below) | the `review` role once; Claude's own read is the first pass as always | 2 | none — the orchestrator edits directly |
+| **prose** | only paths in the prose allowlist (below), **interactive driver only** | the `review` role once; Claude's own read is the first pass as always | 2 | none — the orchestrator edits directly |
 
 **Prose allowlist** (a path qualifies only if it matches the first line and none of the exclusions):
 
@@ -111,6 +111,14 @@ what the drivers follow). Other documents also have structural assertions —
 `docs/integration/v0.10.0-ecosystem-notes.md` and `docs/integration/future-grep-policy.md` have
 heading and command checks — and those assertions keep protecting them in either lane; they are
 excluded from the prose lane out of caution, not because an edit to them is a behaviour change.
+
+**The prose lane is available to the `interactive` driver only.** Autopilot always uses the
+standard lane, whatever the diff touches. Its Phase B.5 reconciles *returned subagents* and Phase
+B.8 requires a successful reconciliation before integrating and advancing a work item, so a
+no-dispatch path would need a parallel completion route through the engine. That is a real feature,
+not a lane, and the payoff is small: unattended runs are for plans, and a plan of pure prose is
+rare. If you want a documentation change made unattended, run it in the standard lane or make it
+interactively.
 
 Three rules keep the prose lane honest:
 1. `npm test` must pass. The structural tests already assert on README and the contract documents,

@@ -458,12 +458,11 @@ for (const identity of result.selected) {
 
 #### Phase B.1 — Pre-dispatch checklist (Claude reads the slice section)
 
-**0. Pick the review lane (v0.18.1 — this decides whether a writer is dispatched).** Read
-`docs/execution-model.md` "Review lanes" and choose a provisional lane from the slice's **Files:**
-list. If every path is on the prose allowlist, the slice runs in the **prose lane**: no writer
-dispatch (skip B.4 for this slice and edit the files yourself), one reviewer in Phase C, cap 2
-rounds, fixes are your own edits. Anything else is the **standard lane** as written below. Phase C
-rechecks the lane against the real diff and escalates if it changed.
+**0. Lane (v0.18.1).** Autopilot always runs the **standard lane**: both reviewers, unanimous on the
+same commit, cap 7, writer dispatched per B.4 — whatever the slice touches. The prose lane's
+no-dispatch path exists only in the interactive driver, because B.5 reconciles returned subagents
+and B.8 requires a successful reconciliation before integration; see `docs/execution-model.md`
+"Review lanes". Do not skip B.4 for a documentation-only slice here.
 
 Before any worktree work, read the current slice section directly from the plan markdown. Apply these checks **literally** — paraphrase or guesswork is non-conforming.
 
@@ -1433,10 +1432,9 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
 
 ### Phase C: review-slice
 
-**Recheck the lane (v0.18.1).** Rules: `docs/execution-model.md` "Review lanes". The provisional lane was chosen in Phase B.1 from the slice's
-**Files:** list; confirm it against the actual committed diff now. A prose-lane slice whose diff
-touches `lib/`, `scripts/`, `bin/`, `tests/`, `skills/` or a contract document re-enters the
-standard lane from round 1 (both reviewers, unanimous on one commit, cap 7).
+**Lane (v0.18.1).** Rules: `docs/execution-model.md` "Review lanes". Autopilot is always standard
+lane: both reviewers must approve the same commit, cap 7. There is no lane to recheck here; the
+prose lane belongs to the interactive driver.
 
 **Deferred findings are batched (v0.18.1).** The reviewer classifies every finding as blocking or
 deferred (`lib/codex-bridge/prompts/verdict-format.md`); a deferred item never opens its own round.

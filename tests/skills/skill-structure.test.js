@@ -1562,13 +1562,21 @@ test('v0.18.1: the lane is chosen before any writer dispatch, and rechecked befo
   assert.ok(/skip Step A entirely/i.test(sdd.slice(a0, stepA)), 'the prose lane must skip the writer dispatch');
   assert.ok(/Recheck the lane/i.test(sdd.slice(stepC, stepC + 800)), 'Step C must recheck the lane against the real diff');
 
+  // Autopilot is standard-lane only: its B.5 reconciles returned subagents and B.8 requires a
+  // reconciliation, so a no-dispatch slice has no completion route through the engine.
   const ap = readSkill('autopilot');
   const b1 = ap.indexOf('#### Phase B.1');
   const b4 = ap.indexOf('#### Phase B.4');
   const phaseC = ap.indexOf('### Phase C: review-slice');
   assert.ok(b1 > 0 && b1 < b4, 'autopilot B.1 must come before the B.4 dispatch');
-  assert.ok(/Pick the review lane/i.test(ap.slice(b1, b4)), 'autopilot must pick the lane in B.1, before dispatch');
-  assert.ok(/Recheck the lane/i.test(ap.slice(phaseC, phaseC + 800)), 'Phase C must recheck the lane');
+  const b1Text = ap.slice(b1, b4).replace(/\s+/g, ' ');
+  assert.ok(/always runs the \*\*standard lane\*\*/.test(b1Text), 'autopilot B.1 must state it is standard-lane only');
+  assert.ok(/Do not skip B\.4/.test(b1Text), 'autopilot must forbid skipping the dispatch for a prose slice');
+  const phaseCText = ap.slice(phaseC, phaseC + 900).replace(/\s+/g, ' ');
+  assert.ok(/always standard lane/.test(phaseCText), 'autopilot Phase C must state the standard lane');
+  const em2 = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(/prose lane is available to the `interactive` driver only/i.test(em2),
+    'execution-model must scope the prose lane to the interactive driver');
 });
 
 test('v0.18.1: deferred findings survive parsing and have a durable home', () => {
