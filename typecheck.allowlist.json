@@ -3,6 +3,7 @@
   "files": [
     "lib/codex-bridge/availability/doctor-report.js",
     "lib/codex-bridge/checkout-markers.js",
+    "lib/codex-bridge/checkout-reaper.js",
     "lib/codex-bridge/cli-harness/adapters/agy.js",
     "lib/codex-bridge/cli-harness/adapters/codex.js",
     "lib/codex-bridge/cli-harness/process-lifecycle.js",

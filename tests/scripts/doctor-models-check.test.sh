@@ -14,6 +14,7 @@ unset CODEX_PAIRED_MODEL_IMPLEMENT CODEX_PAIRED_REASONING_IMPLEMENT
 unset CODEX_PAIRED_MODEL_IMPLEMENT_FALLBACK CODEX_PAIRED_REASONING_IMPLEMENT_FALLBACK
 unset CODEX_PAIRED_CLI CODEX_PAIRED_CLI_PLANNING CODEX_PAIRED_CLI_REVIEW
 unset CODEX_PAIRED_CLI_IMPLEMENT CODEX_PAIRED_CLI_IMPLEMENT_FALLBACK
+unset CODEX_PAIRED_REVIEW_PANEL_PLANNING CODEX_PAIRED_REVIEW_PANEL_REVIEW
 
 FAKE_BIN="$TEST_ROOT/bin"
 mkdir -p "$FAKE_BIN"
@@ -151,11 +152,22 @@ echo "Doctor model/catalog and transport checks"
 
 new_case fresh
 write_catalog good
+(
+  cd "$CASE_ROOT/repo"
+  git init -q -b main
+  git config user.name "Doctor Test"
+  git config user.email doctor@example.invalid
+  printf 'tracked\n' > tracked.txt
+  git add tracked.txt
+  git commit -qm initial
+)
 fresh_output=$(CODEX_PAIRED_MODEL_IMPLEMENT=gpt-6-astra run_doctor)
 assert_check "$fresh_output" node pass "20 21 22 23 24 25 26" \
   "node pass detail names every CI-tested major"
 assert_check "$fresh_output" models pass "implement: gpt-6-astra high (env" \
   "fresh compatible catalog passes and reports env source"
+assert_check "$fresh_output" worktrees pass "other users' processes are not inspected" \
+  "no repository checkouts passes and discloses current-user discovery scope"
 
 new_case missing
 write_catalog missing
@@ -283,4 +295,51 @@ agy_no_bin_output=$(TEST_PATH="$FAKE_BIN:$PATH_WITHOUT_AGY" CODEX_PAIRED_CLI_REV
 assert_check "$agy_no_bin_output" models warn "role review uses agy but agy is not installed" \
   "agy role with no agy binary warns"
 
-echo "All 25 doctor model/catalog, transport, and platform checks passed."
+new_case worktree_leftover
+write_catalog good
+(
+  cd "$CASE_ROOT/repo"
+  git init -q -b main
+  git config user.name "Doctor Test"
+  git config user.email doctor@example.invalid
+  printf 'tracked\n' > tracked.txt
+  git add tracked.txt
+  git commit -qm initial
+  mkdir -p .git-worktrees
+  git worktree add -q -b leftover .git-worktrees/leftover HEAD
+)
+leftover_output=$(run_doctor)
+assert_check "$leftover_output" worktrees warn "probable-plugin-leftover" \
+  "leftover checkout warns"
+node -e '
+  const report = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  const check = report.checks.find((item) => item.name === "worktrees");
+  if (check.status === "fail") throw new Error("worktrees check must never fail");
+' "$leftover_output"
+echo "  PASS: worktrees check never fails"
+
+new_case worktree_user_created
+write_catalog good
+(
+  cd "$CASE_ROOT/repo"
+  git init -q -b main
+  git config user.name "Doctor Test"
+  git config user.email doctor@example.invalid
+  printf 'tracked\n' > tracked.txt
+  git add tracked.txt
+  git commit -qm initial
+  git worktree add -q -b feature "$CASE_ROOT/feature-checkout" HEAD
+)
+user_wt_output=$(run_doctor)
+assert_check "$user_wt_output" worktrees pass "1 user-created worktree(s) ignored" \
+  "a user's own worktree does not warn"
+
+new_case self_review
+write_catalog good
+mkdir -p "$CASE_ROOT/repo/.codex-paired"
+printf '%s\n' '{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"library"},"review_panel":{"review":[{"cli":"codex","model":"gpt-5.6-sol"}]}}' \
+  > "$CASE_ROOT/repo/.codex-paired/project.json"
+assert_check "$(run_doctor)" review-panel warn "self-review:codex:gpt-5.6-sol" \
+  "configured self-review warns"
+
+echo "All 30 doctor model/catalog, transport, platform, panel, and worktree checks passed."
