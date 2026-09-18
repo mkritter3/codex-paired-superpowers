@@ -10352,7 +10352,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
   "module_digest": {
     "lib/codex-bridge/active-anchor.js": "sha256:efeec4ebb5735a634b5c2314a0ab3e4812d31a0446df9857bafbcca04fb908a5",
     "lib/codex-bridge/checkout-markers.js": "sha256:a37c9fa77bfab898f7abb25551c5057912c53fb1b6b140b8f798425906b7cf48",
-    "lib/codex-bridge/checkout-reaper.js": "sha256:b091fb9018f89c5b4bac0a0ddef524b1b85f4c01804ea4d7b09bd2857e11f294",
+    "lib/codex-bridge/checkout-reaper.js": "sha256:979444537058a8fe27d45fcfc1e3a6416695527c0497b6d6b1521ffba4f30035",
     "lib/codex-bridge/cli-harness/adapters/agy.js": "sha256:382a4b360e58045da4f9cc6f7b0b8d5b37d9a8b8d365f2b7e1a045a180f29b81",
     "lib/codex-bridge/cli-harness/adapters/claude-cli.js": "sha256:4e243005f48bf9616ab8c0da127017733cdae932eaee1d1d4ccdd04bdd0ac198",
     "lib/codex-bridge/cli-harness/adapters/codex.js": "sha256:a92a130d27d669d627b8a756a711eafdd1b74ae08b6fb88d1190691193e41337",

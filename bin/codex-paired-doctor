@@ -436,17 +436,23 @@ if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js
     WORKTREE_CHECK=$(node -e '
       const result = JSON.parse(process.argv[1]);
       const scope = process.argv[2];
-      if (!result.entries.length) {
-        process.stdout.write(`pass|no leftover checkouts; ${scope}`);
+      // A worktree the user made themselves is not a leftover: only plugin-owned checkouts
+      // (candidate / preserved) and probable pre-marker plugin leftovers are reported.
+      const relevant = result.entries.filter((entry) => entry.class !== "not-ours"
+        || entry.keep.includes("probable-plugin-leftover"));
+      const others = result.entries.length - relevant.length;
+      const ignoredNote = others ? `; ${others} user-created worktree(s) ignored` : "";
+      if (!relevant.length) {
+        process.stdout.write(`pass|no leftover checkouts${ignoredNote}; ${scope}`);
         process.exit(0);
       }
-      const details = result.entries.map((entry) => {
+      const details = relevant.map((entry) => {
         const age = entry.age_ms === null ? "unknown age" : `${Math.floor(entry.age_ms / 60000)}m old`;
         const kind = entry.kind || "unknown kind";
         const reasons = entry.keep.length ? entry.keep.join(",") : "reapable";
         return `${entry.path} [${entry.class}; ${kind}; ${age}; ${reasons}]`;
       });
-      process.stdout.write(`warn|${details.join("; ")}; ${scope}`);
+      process.stdout.write(`warn|${details.join("; ")}${ignoredNote}; ${scope}`);
     ' "$WORKTREE_JSON" "$WORKTREE_SCOPE" 2>&1) || WORKTREE_CHECK="warn|inventory output unreadable; $WORKTREE_SCOPE"
   else
     WORKTREE_ERROR=$(printf '%s' "$WORKTREE_JSON" | tr '\n' ' ' | cut -c1-300)

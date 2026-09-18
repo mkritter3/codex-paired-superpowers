@@ -318,6 +318,22 @@ node -e '
 ' "$leftover_output"
 echo "  PASS: worktrees check never fails"
 
+new_case worktree_user_created
+write_catalog good
+(
+  cd "$CASE_ROOT/repo"
+  git init -q -b main
+  git config user.name "Doctor Test"
+  git config user.email doctor@example.invalid
+  printf 'tracked\n' > tracked.txt
+  git add tracked.txt
+  git commit -qm initial
+  git worktree add -q -b feature "$CASE_ROOT/feature-checkout" HEAD
+)
+user_wt_output=$(run_doctor)
+assert_check "$user_wt_output" worktrees pass "1 user-created worktree(s) ignored" \
+  "a user's own worktree does not warn"
+
 new_case self_review
 write_catalog good
 mkdir -p "$CASE_ROOT/repo/.codex-paired"
@@ -326,4 +342,4 @@ printf '%s\n' '{"version":1,"app":{"type":"library"},"live_verification":{"defau
 assert_check "$(run_doctor)" review-panel warn "self-review:codex:gpt-5.6-sol" \
   "configured self-review warns"
 
-echo "All 29 doctor model/catalog, transport, platform, panel, and worktree checks passed."
+echo "All 30 doctor model/catalog, transport, platform, panel, and worktree checks passed."
