@@ -25,6 +25,15 @@ set -u
 # can fail to receive piped stdin under some sandboxes.
 dd if=/dev/stdin of=/dev/null bs=65536 count=64 status=none 2>/dev/null || true
 
+if [ "${FAKE_CODEX_COMMIT:-}" = "1" ]; then
+  if ! printf '%s\n' 'implemented' > impl.txt; then
+    exit 1
+  fi
+  if ! git add impl.txt || ! git commit -qm 'fake: implement'; then
+    exit 1
+  fi
+fi
+
 if [ "${FAKE_CLI_HANG:-}" != "" ]; then
   # Sleep until killed. `exec` so SIGTERM from the test harness kills
   # sleep directly instead of bash (which wouldn't forward signals to

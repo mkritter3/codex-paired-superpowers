@@ -15,6 +15,7 @@ set -uo pipefail
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 WANT_JSON=0
 FORCE_AVAILABILITY=0
+TESTED_NODE_MAJORS="20 21 22 23 24 25 26"
 for arg in "$@"; do
   case "$arg" in
     --json)  WANT_JSON=1 ;;
@@ -39,7 +40,28 @@ record() {
   RESULTS+=("$status|$name|$detail|$fix")
 }
 
-# ── Check 1: node v20+ ────────────────────────────────────────────────────
+# ── Check 1: supported platform ───────────────────────────────────────────
+if [ -n "${CPS_DOCTOR_PLATFORM_OVERRIDE:-}" ]; then
+  PLATFORM="$CPS_DOCTOR_PLATFORM_OVERRIDE"
+else
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    Darwin) PLATFORM="darwin" ;;
+    Linux) PLATFORM="linux" ;;
+    *) PLATFORM="unknown" ;;
+  esac
+fi
+
+case "$PLATFORM" in
+  darwin|linux)
+    record pass "platform" "$PLATFORM is supported" ""
+    ;;
+  *)
+    record fail "platform" "$PLATFORM is unsupported; supported platforms are darwin and linux" \
+      "Use macOS or Linux"
+    ;;
+esac
+
+# ── Check 2: node v20+ ────────────────────────────────────────────────────
 if ! command -v node >/dev/null 2>&1; then
   record fail "node" "node not on PATH" \
     "Install Node 20+ from https://nodejs.org or via: brew install node@20"
@@ -50,7 +72,7 @@ else
     record fail "node" "node $NODE_V found; v20+ required" \
       "brew upgrade node OR install v20+ from https://nodejs.org"
   else
-    record pass "node" "v$NODE_V (>=v20 OK)" ""
+    record pass "node" "v$NODE_V (>=v20 OK; CI-tested majors: $TESTED_NODE_MAJORS)" ""
   fi
 fi
 

@@ -16,6 +16,25 @@
 #   FAKE_AGY_MODELS_OUTPUT  custom output for `agy models`
 set -u
 
+if [ -n "${FAKE_AGY_RECORD:-}" ]; then
+  FAKE_AGY_HEAD=$(git rev-parse HEAD 2>/dev/null || printf '%s' unknown)
+  if [ -f impl.txt ]; then
+    FAKE_AGY_IMPL_PRESENT=true
+  else
+    FAKE_AGY_IMPL_PRESENT=false
+  fi
+  if ! node -e '
+    const fs = require("node:fs");
+    fs.writeFileSync(process.argv[1], JSON.stringify({
+      cwd: process.argv[2],
+      head: process.argv[3],
+      impl_txt_present: process.argv[4] === "true",
+    }) + "\n");
+  ' "$FAKE_AGY_RECORD" "$PWD" "$FAKE_AGY_HEAD" "$FAKE_AGY_IMPL_PRESENT"; then
+    exit 1
+  fi
+fi
+
 if [ -n "${FAKE_AGY_ARGS_FILE:-}" ]; then
   printf '%s\n' "$@" > "$FAKE_AGY_ARGS_FILE"
 fi

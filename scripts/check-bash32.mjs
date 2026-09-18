@@ -10,6 +10,8 @@ const USER_FACING_SCRIPTS = [
   'scripts/codex-exec-with-status.sh',
   'scripts/migrate-sidecars-to-hidden-dir.sh',
   'bin/codex-paired-doctor',
+  'scripts/run-shell-tests.sh',
+  'scripts/fresh-clone-smoke.sh',
 ];
 
 const INCOMPATIBLE = [

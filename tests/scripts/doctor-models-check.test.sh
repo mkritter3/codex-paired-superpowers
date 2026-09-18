@@ -88,16 +88,32 @@ write_catalog() {
 }
 
 run_doctor() {
-  local output="$CASE_ROOT/doctor.json"
-  (
+  local output="$CASE_ROOT/doctor.json" status
+  if (
     cd "$CASE_ROOT/repo"
     HOME="$CASE_ROOT/home" \
       CODEX_HOME="$CASE_ROOT/codex" \
       CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+      CPS_DOCTOR_PLATFORM_OVERRIDE="${TEST_PLATFORM_OVERRIDE:-}" \
       PATH="${TEST_PATH:-$FAKE_BIN:$BASE_PATH}" \
       "$PLUGIN_ROOT/bin/codex-paired-doctor" --json
-  ) > "$output"
+  ) > "$output"; then
+    status=0
+  else
+    status=$?
+  fi
   printf '%s' "$output"
+  return "$status"
+}
+
+run_platform_case() {
+  local platform="$1" output="$CASE_ROOT/doctor.json" status
+  if TEST_PLATFORM_OVERRIDE="$platform" run_doctor >/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s|%s' "$status" "$output"
 }
 
 run_doctor_allow_failure() {
@@ -136,6 +152,8 @@ echo "Doctor model/catalog and transport checks"
 new_case fresh
 write_catalog good
 fresh_output=$(CODEX_PAIRED_MODEL_IMPLEMENT=gpt-6-astra run_doctor)
+assert_check "$fresh_output" node pass "20 21 22 23 24 25 26" \
+  "node pass detail names every CI-tested major"
 assert_check "$fresh_output" models pass "implement: gpt-6-astra high (env" \
   "fresh compatible catalog passes and reports env source"
 
@@ -218,6 +236,32 @@ node -e '
 ' "$null_output"
 echo "  PASS: malformed entry keeps summary accounting valid"
 
+new_case platform_darwin
+write_catalog good
+platform_darwin=$(run_platform_case darwin)
+assert_check "${platform_darwin#*|}" platform pass darwin "darwin platform passes"
+
+new_case platform_linux
+write_catalog good
+platform_linux=$(run_platform_case linux)
+assert_check "${platform_linux#*|}" platform pass linux "linux platform passes"
+
+new_case platform_win32
+write_catalog good
+platform_win32=$(run_platform_case win32)
+assert_check "${platform_win32#*|}" platform fail win32 "win32 platform fails"
+
+new_case platform_other
+write_catalog good
+platform_other=$(run_platform_case freebsd)
+assert_check "${platform_other#*|}" platform fail freebsd "other platforms fail"
+
+[ "${platform_darwin%%|*}" -eq 0 ]
+[ "${platform_linux%%|*}" -eq 0 ]
+[ "${platform_win32%%|*}" -eq 1 ]
+[ "${platform_other%%|*}" -eq 1 ]
+echo "  PASS: doctor exits 0 without FAIL and 1 with platform FAIL"
+
 new_case agy_role_model_listed
 apply_fake_agy
 write_catalog good
@@ -239,4 +283,4 @@ agy_no_bin_output=$(TEST_PATH="$FAKE_BIN:$PATH_WITHOUT_AGY" CODEX_PAIRED_CLI_REV
 assert_check "$agy_no_bin_output" models warn "role review uses agy but agy is not installed" \
   "agy role with no agy binary warns"
 
-echo "All 19 doctor model/catalog and transport checks passed."
+echo "All 25 doctor model/catalog, transport, and platform checks passed."
