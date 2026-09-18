@@ -393,6 +393,76 @@ else
   record warn "codex-transport" "codex not on PATH; transport compatibility checks skipped" ""
 fi
 
+# ── Check 11: configured review panels and self-review ─────────────────
+# The resolver owns the warning rule, so doctor consumes the same CLI result
+# users see rather than duplicating model comparison logic in shell.
+PANEL_WARNINGS=""
+PANEL_RESOLUTION_ERROR=""
+if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js" ]; then
+  for PANEL_PHASE in planning review; do
+    PANEL_OUTPUT=$(node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" review-panel \
+      --phase "$PANEL_PHASE" --repoRoot "$PWD" --format json 2>&1 >/dev/null)
+    PANEL_STATUS=$?
+    if [ "$PANEL_STATUS" -ne 0 ]; then
+      PANEL_RESOLUTION_ERROR=$(printf '%s' "$PANEL_OUTPUT" | tr '\n' ' ')
+      break
+    fi
+    PANEL_SELF_REVIEW=$(printf '%s\n' "$PANEL_OUTPUT" | sed -n 's/^warning: \(self-review:.*\)$/\1/p')
+    if [ -n "$PANEL_SELF_REVIEW" ]; then
+      if [ -n "$PANEL_WARNINGS" ]; then PANEL_WARNINGS="$PANEL_WARNINGS; "; fi
+      PANEL_WARNINGS="$PANEL_WARNINGS$(printf '%s' "$PANEL_SELF_REVIEW" | tr '\n' ';' | sed 's/;$//')"
+    fi
+  done
+else
+  PANEL_RESOLUTION_ERROR="node or bridge CLI unavailable"
+fi
+if [ -n "$PANEL_RESOLUTION_ERROR" ]; then
+  record warn "review-panel" "panel resolution unavailable: $PANEL_RESOLUTION_ERROR" \
+    "Fix .codex-paired/project.json review_panel or model configuration"
+elif [ -n "$PANEL_WARNINGS" ]; then
+  record warn "review-panel" "$PANEL_WARNINGS" \
+    "Choose a review model different from the implement model when independent review is required"
+else
+  record pass "review-panel" "no self-review members detected" ""
+fi
+
+# ── Check 12: orphaned plugin checkouts ────────────────────────────────
+# This check is deliberately warn-only. Inventory failures and leftovers are
+# diagnostic; neither makes the plugin installation itself unusable.
+WORKTREE_SCOPE="other users' processes are not inspected"
+if command -v node >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/lib/codex-bridge/cli.js" ] \
+  && git rev-parse --git-common-dir >/dev/null 2>&1; then
+  if WORKTREE_JSON=$(node "$PLUGIN_ROOT/lib/codex-bridge/cli.js" worktree-reap --repoRoot "$PWD" 2>&1); then
+    WORKTREE_CHECK=$(node -e '
+      const result = JSON.parse(process.argv[1]);
+      const scope = process.argv[2];
+      if (!result.entries.length) {
+        process.stdout.write(`pass|no leftover checkouts; ${scope}`);
+        process.exit(0);
+      }
+      const details = result.entries.map((entry) => {
+        const age = entry.age_ms === null ? "unknown age" : `${Math.floor(entry.age_ms / 60000)}m old`;
+        const kind = entry.kind || "unknown kind";
+        const reasons = entry.keep.length ? entry.keep.join(",") : "reapable";
+        return `${entry.path} [${entry.class}; ${kind}; ${age}; ${reasons}]`;
+      });
+      process.stdout.write(`warn|${details.join("; ")}; ${scope}`);
+    ' "$WORKTREE_JSON" "$WORKTREE_SCOPE" 2>&1) || WORKTREE_CHECK="warn|inventory output unreadable; $WORKTREE_SCOPE"
+  else
+    WORKTREE_ERROR=$(printf '%s' "$WORKTREE_JSON" | tr '\n' ' ' | cut -c1-300)
+    WORKTREE_CHECK="warn|checkout inventory unavailable: $WORKTREE_ERROR; $WORKTREE_SCOPE"
+  fi
+else
+  WORKTREE_CHECK="pass|not in a git repository; $WORKTREE_SCOPE"
+fi
+IFS='|' read -r WORKTREE_STATUS WORKTREE_DETAIL <<< "$WORKTREE_CHECK"
+case "$WORKTREE_STATUS" in
+  pass|warn) ;;
+  *) WORKTREE_STATUS=warn; WORKTREE_DETAIL="checkout inventory unavailable; $WORKTREE_SCOPE" ;;
+esac
+record "$WORKTREE_STATUS" "worktrees" "$WORKTREE_DETAIL" \
+  "$PLUGIN_ROOT/lib/codex-bridge/cli.js worktree-reap --apply --repoRoot $PWD"
+
 # ── Output ───────────────────────────────────────────────────────────────
 if [ "$WANT_JSON" -eq 1 ]; then
   # Run availability report in JSON mode and embed the result. Round-1
