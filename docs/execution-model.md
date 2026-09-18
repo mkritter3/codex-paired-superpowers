@@ -79,6 +79,37 @@ transcript-loop failure modes. It is not part of v1 of the unified execution mod
   run). Its behavior is unchanged.
 - **`/execute`** launches the `execution` skill with an explicit driver.
 
+## Review lanes (v0.18.1)
+
+Two reviewers who must both approve the same commit is the default and stays the default: it is
+what catches the defects that matter. But not every change carries the same risk, and on v0.18.0 a
+pure documentation correction cost three review rounds and 43 minutes. Pick the lane from what the
+diff touches, not from how big it feels.
+
+| Lane | Applies when the diff touches | Reviewers | Round cap | Writer |
+| --- | --- | --- | --- | --- |
+| **standard** | anything under `lib/`, `scripts/`, `bin/`, `tests/`, `skills/`, or any contract document (below) | Claude first, then the `review` role; both must approve the same commit | 7 | dispatched per the implementer contract |
+| **prose** | only paths in the prose allowlist (below) | the `review` role once; Claude's own read is the first pass as always | 2 | none — the orchestrator edits directly |
+
+**Prose allowlist:** `README.md`, `docs/**/*.md` EXCEPT the contract documents, and
+`docs/specs/**` / `docs/plans/**` status blocks.
+
+**Contract documents (always standard lane):** `docs/public-api.md`,
+`docs/codex-implementer-contract.md`, `docs/execution-model.md` (this file). Structural and contract
+tests assert on these, so a change to one is a behaviour change.
+
+Three rules keep the prose lane honest:
+1. `npm test` must pass. The structural tests already assert on README and the contract documents,
+   so a prose edit that breaks a documented invariant still fails the gate — that is the safety net
+   that makes one reviewer sufficient here.
+2. Any claim about behaviour must be verified against the code before it is written, not after. On
+   v0.18.0 the reviewer found three false claims in one README edit (a bundled tool's models are
+   cloud-hosted, another tool has no adapter at all, and Claude runs in-session rather than as a
+   spawned command). One reviewer is enough only because the claims are checked at the source.
+3. If a prose change turns out to need a code change, it leaves the lane and re-enters standard.
+
+A lane is a property of the diff: if a single commit touches both prose and code, it is standard.
+
 **Public-API digests (v0.18.0).** `docs/public-api.md` pins module digests over the CLI's import
 closure; any slice that changes a pinned module or JSON input refreshes them with
 `scripts/cli-surface.mjs --digest --write` before its verification run (autopilot Phase B.5, SDD

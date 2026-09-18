@@ -1425,6 +1425,15 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
   recompute from a fresh read. A byte-identical retry is a procedural error.
 
 ### Phase C: review-slice
+
+**Pick the lane first (v0.18.1).** Read `docs/execution-model.md` "Review lanes". A work item whose
+diff touches only prose-allowlist paths uses the prose lane: one reviewer, max 2 rounds, no writer
+dispatch — the orchestrator edits directly. Anything touching `lib/`, `scripts/`, `bin/`, `tests/`,
+`skills/` or a contract document stays in the standard lane (both reviewers, same commit).
+
+**Deferred findings are batched (v0.18.1).** The reviewer classifies every finding as blocking or
+deferred (`lib/codex-bridge/prompts/verdict-format.md`); a deferred item never opens its own round.
+Collect them across rounds and clear them in ONE cleanup pass before the work item merges.
 1. Compute the diff: `git diff <slice_start_sha>..HEAD`. **Commit-parity preflight (v0.15.0):**
    first run `git status --porcelain` — if any slice-touched file has uncommitted changes, commit
    them BEFORE computing the diff. This applies doubly on re-review after a REVISE fix: two

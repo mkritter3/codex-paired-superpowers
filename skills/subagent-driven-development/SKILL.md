@@ -89,6 +89,17 @@ Claude reviews first; Codex second; both must SHIP the **same commit**. Bounded 
 4. Proceed to Step C with the findings and `reviewed_sha = HEAD`.
 
 ### Step C: open Codex slice review
+
+**Pick the lane first (v0.18.1).** Read `docs/execution-model.md` "Review lanes". If this work
+item's diff touches only prose-allowlist paths, use the prose lane: one reviewer, max 2 rounds, no
+writer dispatch — you edit directly. Anything touching `lib/`, `scripts/`, `bin/`, `tests/`,
+`skills/` or a contract document stays in the standard lane below.
+
+**Deferred findings are batched (v0.18.1).** The reviewer classifies every finding as blocking or
+deferred (`lib/codex-bridge/prompts/verdict-format.md`). Deferred items never open a new round:
+collect them across rounds and address them in ONE cleanup pass before the work item merges,
+reviewed once. Only a blocking finding justifies another round.
+
 Use the **execution thread** (`role_sessions["execution-reviewer"]`, opened at execution entry —
 see `skills/brainstorming/codex-pairing.md` "Two threads per feature"). **SDD entry check:** when this
 skill is entered directly (from `systematic-debugging`, or a `/execute` that skipped the hand-off) the

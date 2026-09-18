@@ -1514,3 +1514,44 @@ test('v0.18.0: digest refresh runs before verification/C0 in autopilot Phase B.5
     }
   }
 });
+
+// ── v0.18.1: review lanes + deferred batching ─────────────────────────────────
+
+test('v0.18.1: the verdict format classifies findings and forbids a round for a deferred item', () => {
+  const vf = readFileSync(join(PLUGIN_ROOT, 'lib', 'codex-bridge', 'prompts', 'verdict-format.md'), 'utf8');
+  assert.ok(/blocking/i.test(vf) && /deferred/i.test(vf), 'verdict-format must define blocking vs deferred');
+  assert.ok(/must NOT produce `REVISE`/.test(vf), 'verdict-format must forbid REVISE for deferred findings');
+  assert.ok(/deferred:/.test(vf), 'verdict-format must show the deferred: key in the block');
+  // The rule must not read as "downgrade findings to go faster".
+  assert.ok(/do\s+not\s+downgrade/i.test(vf.replace(/\s+/g, ' ')), 'verdict-format must keep reviewer judgement explicit');
+});
+
+test('v0.18.1: execution-model defines both review lanes, and the prose lane excludes code and contract docs', () => {
+  const em = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
+  const lanes = em.slice(em.indexOf('## Review lanes'));
+  assert.ok(lanes.length > 0, 'execution-model must have a Review lanes section');
+  for (const needed of ['standard', 'prose', 'Prose allowlist', 'Contract documents']) {
+    assert.ok(lanes.includes(needed), `Review lanes must describe ${needed}`);
+  }
+  // Code paths must never be in the prose lane.
+  const allowlist = lanes.slice(lanes.indexOf('**Prose allowlist:**'), lanes.indexOf('**Contract documents'));
+  for (const code of ['lib/', 'scripts/', 'bin/', 'tests/', 'skills/']) {
+    assert.ok(!allowlist.includes(code), `prose allowlist must not include ${code}`);
+  }
+  // The three documents that tests assert on must be named as standard-lane.
+  const contracts = lanes.slice(lanes.indexOf('**Contract documents'));
+  for (const doc of ['docs/public-api.md', 'docs/codex-implementer-contract.md', 'docs/execution-model.md']) {
+    assert.ok(contracts.includes(doc), `${doc} must be listed as a contract document`);
+  }
+});
+
+test('v0.18.1: both review-opening skills pick a lane and batch deferred findings', () => {
+  for (const [skill, heading] of [['autopilot', '### Phase C: review-slice'], ['subagent-driven-development', '### Step C: open Codex slice review']]) {
+    const content = readSkill(skill);
+    const i = content.indexOf(heading);
+    assert.ok(i > 0, `${skill}/SKILL.md must still have ${heading}`);
+    const section = content.slice(i, i + 1600);
+    assert.ok(/Review lanes/.test(section), `${skill} must send the reader to the Review lanes policy`);
+    assert.ok(/deferred/i.test(section) && /never open(s)? (its own|a new) round/i.test(section), `${skill} must state that deferred findings do not open a round`);
+  }
+});
