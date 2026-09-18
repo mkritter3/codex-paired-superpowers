@@ -242,3 +242,25 @@ test('sidecar-set-panel-roster persists the roster and validates usage', () => {
   );
   rmSync(dir, { recursive: true, force: true });
 });
+
+for (const path of ['appendRound', 'appendRoundWithAudits']) {
+  test(`${path}: panel fields on a phase with no roster are rejected, never used to pick SHIP sides`, async () => {
+    const { dir, spec } = makeSpec();
+    // Without the guard, `panel: []` made the SHIP-side list just ['claude'], so a caller-claimed
+    // codex SHIP in a legacy phase skipped its required codex audit.
+    for (const extra of [{ panel: [] }, { panel: panel(['SHIP', 'SHIP']) }, { claude_version: VERSION }]) {
+      const legacy = { phase: 'plan-2', round: 1, claude: 'SHIP', codex: 'SHIP', summary: 's', ...extra };
+      await assert.rejects(async () => appendByPath(path, spec, legacy, [audit('claude')]), (error) => error.code === 'panel-round-invalid');
+    }
+    assert.equal(loadSidecar(spec).rounds.length, 0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test(`${path}: a unanimous member SHIP with Claude REVISE needs no Claude audit`, async () => {
+    const { dir, spec } = makeSpec();
+    setPanelRoster(spec, 'planning', ROSTER);
+    await appendByPath(path, spec, round({ claude: 'REVISE', panel: panel(['SHIP', 'SHIP']) }), ROSTER.map((member) => audit(member.member_id)));
+    assert.equal(loadSidecar(spec).rounds[0].codex, 'SHIP');
+    rmSync(dir, { recursive: true, force: true });
+  });
+}

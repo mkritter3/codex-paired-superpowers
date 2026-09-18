@@ -10125,7 +10125,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/review-panel.js": "sha256:1f1f61f9acc74ef63996cdc6ca69d2a16ee2a5f32cdce409b07c9905af5cbf0e",
     "lib/codex-bridge/reviewer-thread.js": "sha256:62bf4c6674baafec797a72465cc453a284d24810362f79003e8ac2c6e080a764",
     "lib/codex-bridge/scenario-validator.js": "sha256:2326e5d1b9c8f1ba9e78a9b2291dcca21211b7060a26141849f5c593a410c5f1",
-    "lib/codex-bridge/sidecar.js": "sha256:3fc89ee2bf770d5c328ae37d6894982369bc79fe543eebcc42c88c07fc818e67",
+    "lib/codex-bridge/sidecar.js": "sha256:95523c5bbef63decd0c21d3505f2dab4552dfa76bb5f0dfb787e357d5876852a",
     "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
     "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
     "lib/codex-bridge/worktree.js": "sha256:e948959fc76f2917a89c52cebbe49bf2dcd6e028e52422802bc64e958e818a37"
