@@ -11,6 +11,7 @@
     "lib/codex-bridge/implementer/types.js",
     "lib/codex-bridge/models.js",
     "lib/codex-bridge/project-config.js",
+    "lib/codex-bridge/review-panel.js",
     "lib/codex-bridge/reviewer-thread.js",
     "lib/codex-bridge/sidecar.js",
     "lib/codex-bridge/thread-recovery.js",

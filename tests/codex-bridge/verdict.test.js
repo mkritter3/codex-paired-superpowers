@@ -13,6 +13,22 @@ rationale: looks good
   assert.equal(v.status, 'SHIP');
   assert.deepEqual(v.critique, []);
   assert.equal(v.rationale, 'looks good');
+  assert.equal(v.version, null);
+});
+
+test('parses an artifact version', () => {
+  const v = parseVerdict('<<<VERDICT>>>\nstatus: SHIP\nversion: sha256:abc123\ncritique: []\nrationale: good\n<<<END>>>');
+  assert.equal(v.version, 'sha256:abc123');
+});
+
+test('normalizes whitespace and matching quotes around an artifact version', () => {
+  const v = parseVerdict('<<<VERDICT>>>\nstatus: SHIP\nversion:   "commit-123"   \ncritique: []\nrationale: good\n<<<END>>>');
+  assert.equal(v.version, 'commit-123');
+});
+
+test('returns a null version when the field is absent', () => {
+  const v = parseVerdict('<<<VERDICT>>>\nstatus: SHIP\ncritique: []\nrationale: good\n<<<END>>>');
+  assert.equal(v.version, null);
 });
 
 test('parses REVISE verdict with bullet critique', () => {
@@ -33,6 +49,7 @@ test('returns synthetic REVISE on missing block', () => {
   const v = parseVerdict('no verdict here');
   assert.equal(v.status, 'REVISE');
   assert.match(v.critique[0], /verdict block missing/i);
+  assert.equal(v.version, null);
 });
 
 test('returns synthetic REVISE on malformed block', () => {
