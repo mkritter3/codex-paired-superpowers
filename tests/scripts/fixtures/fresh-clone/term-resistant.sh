@@ -4,7 +4,7 @@ set -u
 echo "term-resistant pid: $$" >&2
 trap ':' TERM
 
-if [ -n "${CPS_FRESH_CLONE_PID_FILE:-}" ]; then
+if [ -n "${CPS_TEST_PID_FILE:-}" ]; then
   node -e '
     const { spawn } = require("node:child_process");
     const { writeFileSync } = require("node:fs");
@@ -15,7 +15,7 @@ if [ -n "${CPS_FRESH_CLONE_PID_FILE:-}" ]; then
     inherited.unref();
     process.on("SIGTERM", () => {});
     setInterval(() => {}, 30_000);
-  ' "$CPS_FRESH_CLONE_PID_FILE"
+  ' "$CPS_TEST_PID_FILE"
 fi
 
 while :; do

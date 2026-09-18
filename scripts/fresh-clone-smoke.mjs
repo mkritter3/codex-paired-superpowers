@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ const tempRootOverride = process.env.CPS_FRESH_CLONE_TMP_ROOT;
 const tempRoot = tempRootOverride
   ? resolve(tempRootOverride)
   : mkdtempSync(join(tmpdir(), 'cps-fresh-clone-'));
+const runId = basename(tempRoot);
 mkdirSync(tempRoot, { recursive: true });
 const shell = process.env.CPS_SHELL || 'bash';
 const scriptOverride = process.env.CPS_FRESH_CLONE_SCRIPT;
@@ -46,11 +47,10 @@ let childExited;
 let timeoutHandle;
 let signalHandling = false;
 let terminationPromise;
-const trackedPids = new Set();
-const trackedPgids = new Set();
 let directChildExited = false;
 
 function sendSignal(id, signal) {
+  if (process.env.CPS_FRESH_CLONE_KILL_DISABLED === '1') return;
   try {
     process.kill(id, signal);
   } catch (error) {
@@ -75,52 +75,16 @@ function processTable() {
   });
 }
 
-function addFixturePids() {
-  const pidFile = process.env.CPS_FRESH_CLONE_PID_FILE;
-  if (!pidFile || !existsSync(pidFile)) return false;
-  const pids = JSON.parse(readFileSync(pidFile, 'utf8'));
-  for (const pid of pids) {
-    if (!Number.isInteger(pid) || pid <= 1) continue;
-    trackedPids.add(pid);
-    trackedPgids.add(pid);
-  }
-  return true;
-}
-
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error.code === 'ESRCH') return false;
-    throw error;
-  }
-}
-
-function refreshTrackedProcesses() {
+function findTreeProcesses() {
   if (!child?.pid) return [];
-  trackedPids.add(child.pid);
-  trackedPgids.add(child.pid);
-  const hasFixturePids = addFixturePids();
-  let rows;
-  try {
-    rows = processTable();
-  } catch (error) {
-    // Sandboxed test runners can forbid process-table inspection. The fixture
-    // PID file gives those tests an explicit, equally bounded fallback while
-    // production runs continue to discover the real descendant tree via ps.
-    if (!hasFixturePids || error.code !== 'EPERM') throw error;
-    return [...trackedPids]
-      .filter((pid) => pid !== child.pid ? processExists(pid) : !directChildExited)
-      .map((pid) => ({ pid, ppid: 0, pgid: pid }));
-  }
+  const trackedPids = new Set([child.pid]);
+  const trackedPgids = new Set([child.pid]);
+  const rows = processTable();
   let changed = true;
   while (changed) {
     changed = false;
     for (const row of rows) {
-      if (!trackedPids.has(row.pid)
-          && !trackedPids.has(row.ppid)
-          && !trackedPgids.has(row.pgid)) continue;
+      if (!trackedPids.has(row.ppid) && !trackedPgids.has(row.pgid)) continue;
       if (!trackedPids.has(row.pid)) {
         trackedPids.add(row.pid);
         changed = true;
@@ -131,39 +95,82 @@ function refreshTrackedProcesses() {
       }
     }
   }
-  return rows.filter((row) => trackedPids.has(row.pid) || trackedPgids.has(row.pgid));
+  return [...trackedPids].filter((pid) => pid !== child.pid || !directChildExited);
 }
 
-function signalKnownProcesses(signal) {
-  for (const pgid of trackedPgids) {
-    if (pgid > 1) sendSignal(-pgid, signal);
+function findLinuxRunProcesses(marker) {
+  const pids = [];
+  for (const entry of readdirSync('/proc', { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    try {
+      const environment = readFileSync(`/proc/${entry.name}/environ`, 'utf8').split('\0');
+      if (environment.includes(marker)) pids.push(Number(entry.name));
+    } catch (error) {
+      if (error.code !== 'EACCES' && error.code !== 'ENOENT') throw error;
+    }
   }
-  for (const pid of trackedPids) {
-    if (pid > 1 && pid !== process.pid) sendSignal(pid, signal);
+  return pids;
+}
+
+function findDarwinRunProcesses(marker) {
+  const result = spawnSync('ps', ['-axE', '-o', 'pid=,command='], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: 1_000,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`ps failed with exit ${result.status}: ${result.stderr.trim()}`);
   }
+  return result.stdout.split('\n').flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(.*)$/);
+    if (!match || !match[2].split(/\s+/).includes(marker)) return [];
+    return [Number(match[1])];
+  });
 }
 
-function signalTrackedProcesses(signal) {
-  refreshTrackedProcesses();
-  signalKnownProcesses(signal);
+function findRunProcesses(id) {
+  const marker = `CPS_FRESH_CLONE_RUN_ID=${id}`;
+  let pids;
+  if (process.platform === 'linux') {
+    pids = findLinuxRunProcesses(marker);
+  } else if (process.platform === 'darwin') {
+    pids = findDarwinRunProcesses(marker);
+  } else {
+    pids = findTreeProcesses();
+  }
+  return [...new Set(pids)]
+    .filter((pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid)
+    .sort((left, right) => left - right);
 }
 
-function knownProcessesRemain() {
-  if (child?.pid && !directChildExited) return true;
-  return [...trackedPids].some((pid) => pid !== child?.pid && processExists(pid));
+function signalRunProcesses(pids, signal) {
+  const pidSet = new Set(pids);
+  const pgids = new Set(
+    processTable()
+      .filter((row) => pidSet.has(row.pid) && row.pgid > 1)
+      .map((row) => row.pgid),
+  );
+  for (const pgid of pgids) {
+    sendSignal(-pgid, signal);
+  }
+  for (const pid of pids) {
+    sendSignal(pid, signal);
+  }
 }
 
 function wait(delayMs) {
   return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
 }
 
-async function waitForKnownProcessesExit(limitMs) {
+async function waitForRunProcessesExit(limitMs) {
   const deadline = Date.now() + limitMs;
   while (Date.now() < deadline) {
-    if (!knownProcessesRemain()) return true;
-    await wait(Math.min(10, Math.max(1, deadline - Date.now())));
+    const survivors = findRunProcesses(runId);
+    if (survivors.length === 0) return [];
+    await wait(Math.min(25, Math.max(1, deadline - Date.now())));
   }
-  return !knownProcessesRemain();
+  return findRunProcesses(runId);
 }
 
 function destroyChildPipes() {
@@ -173,42 +180,75 @@ function destroyChildPipes() {
   child?.unref();
 }
 
-async function terminateChildTree(killGraceMs) {
+async function stopDirectChild(killGraceMs) {
+  if (!child?.pid || directChildExited) return;
+  sendSignal(-child.pid, 'SIGTERM');
+  sendSignal(child.pid, 'SIGTERM');
+  destroyChildPipes();
+  await Promise.race([childExited, wait(killGraceMs)]);
+  if (!directChildExited) {
+    sendSignal(-child.pid, 'SIGKILL');
+    sendSignal(child.pid, 'SIGKILL');
+    await Promise.race([childExited, wait(killGraceMs)]);
+  }
+}
+
+async function cleanupRunProcesses(killGraceMs, stopChild) {
   if (terminationPromise) return terminationPromise;
   terminationPromise = (async () => {
     const errors = [];
+    let survivors = [];
     try {
-      signalTrackedProcesses('SIGTERM');
+      if (stopChild) await stopDirectChild(killGraceMs);
     } catch (error) {
       errors.push(error);
     }
     destroyChildPipes();
 
-    let gone = false;
     try {
-      gone = await waitForKnownProcessesExit(killGraceMs);
+      survivors = findRunProcesses(runId);
+      if (survivors.length > 0) signalRunProcesses(survivors, 'SIGTERM');
+      survivors = await waitForRunProcessesExit(killGraceMs);
     } catch (error) {
       errors.push(error);
     }
-    if (!gone) {
+    if (survivors.length > 0) {
       try {
-        // Escalate known groups at the grace boundary, then repeat the tree
-        // walk to catch reparented descendants still in those groups.
-        signalKnownProcesses('SIGKILL');
-        signalTrackedProcesses('SIGKILL');
+        signalRunProcesses(survivors, 'SIGKILL');
       } catch (error) {
         errors.push(error);
       }
       try {
-        gone = await waitForKnownProcessesExit(killGraceMs);
+        survivors = await waitForRunProcessesExit(killGraceMs);
       } catch (error) {
         errors.push(error);
       }
     }
+    try {
+      survivors = findRunProcesses(runId);
+    } catch (error) {
+      errors.push(error);
+    }
 
-    return { gone, errors };
+    return { survivors, errors };
   })();
   return terminationPromise;
+}
+
+function reportCleanupFailure(termination) {
+  if (termination.survivors.length > 0) {
+    process.stderr.write(
+      `FAIL fresh-clone smoke: incomplete cleanup: ${termination.survivors.join(',')}\n`,
+    );
+    return true;
+  }
+  if (termination.errors.length > 0) {
+    process.stderr.write(
+      `FAIL fresh-clone smoke: cleanup failed: ${termination.errors.map((error) => error.message).join('; ')}\n`,
+    );
+    return true;
+  }
+  return false;
 }
 
 const signalExitCodes = {
@@ -224,20 +264,17 @@ async function handleSignal(signal) {
 
   try {
     const killGraceMs = durationFromEnv('CPS_FRESH_CLONE_KILL_GRACE_MS', 2_000);
-    const termination = await terminateChildTree(killGraceMs);
-    if (!termination.gone || termination.errors.length > 0) {
-      const detail = termination.errors.map((error) => error.message).join('; ');
-      process.stderr.write(
-        `FAIL fresh-clone smoke: cancellation cleanup incomplete${detail ? `: ${detail}` : ''}\n`,
-      );
-    }
+    const termination = await cleanupRunProcesses(killGraceMs, true);
+    const cleanupFailed = reportCleanupFailure(termination);
+    process.exitCode = cleanupFailed ? 1 : signalExitCodes[signal];
   } catch (error) {
     process.stderr.write(`FAIL fresh-clone smoke: cancellation cleanup failed: ${error.message}\n`);
+    process.exitCode = 1;
   } finally {
     try {
       cleanup();
     } finally {
-      process.exit(signalExitCodes[signal]);
+      process.exit(process.exitCode);
     }
   }
 }
@@ -258,7 +295,7 @@ try {
       detached: true,
       env: {
         ...process.env,
-        CPS_FRESH_CLONE_RUN_ID: basename(tempRoot),
+        CPS_FRESH_CLONE_RUN_ID: runId,
       },
       // stdin must never be inherited: the fake CLIs drain stdin, so a caller whose stdin is a
       // never-closing pipe (CI runners, background tasks) would hang the doctor step until the
@@ -276,12 +313,15 @@ try {
       directChildExited = true;
       resolveExited({ code, signal });
     });
-    child.once('error', (error) => resolveExited({ code: null, signal: null, error }));
+    child.once('error', (error) => {
+      directChildExited = true;
+      resolveExited({ code: null, signal: null, error });
+    });
   });
 
   const timeout = new Promise((resolveTimeout) => {
     timeoutHandle = setTimeout(() => {
-      resolveTimeout({ timedOut: true, termination: terminateChildTree(killGraceMs) });
+      resolveTimeout({ timedOut: true });
     }, timeoutMs);
   });
   const outcome = await Promise.race([
@@ -289,18 +329,12 @@ try {
     timeout,
   ]);
   if (outcome.timedOut) {
-    const termination = await outcome.termination;
+    const termination = await cleanupRunProcesses(killGraceMs, true);
     process.stderr.write(`FAIL fresh-clone smoke: exceeded ${timeoutMs} ms timeout\n`);
-    if (!termination.gone || termination.errors.length > 0) {
-      const detail = termination.errors.map((error) => error.message).join('; ');
-      process.stderr.write(
-        `FAIL fresh-clone smoke: process cleanup incomplete${detail ? `: ${detail}` : ''}\n`,
-      );
-    }
+    reportCleanupFailure(termination);
     process.exitCode = 1;
   } else {
     clearTimeout(timeoutHandle);
-    destroyChildPipes();
     const error = outcome.result.error || spawnError;
     if (error) {
       process.stderr.write(`FAIL fresh-clone smoke: ${error.message}\n`);
@@ -308,6 +342,8 @@ try {
     } else {
       process.exitCode = outcome.result.code ?? 1;
     }
+    const termination = await cleanupRunProcesses(killGraceMs, false);
+    if (reportCleanupFailure(termination)) process.exitCode = 1;
   }
 } catch (error) {
   process.stderr.write(`FAIL fresh-clone smoke: ${error.message}\n`);
