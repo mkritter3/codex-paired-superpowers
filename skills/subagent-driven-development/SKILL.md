@@ -164,6 +164,17 @@ Manual equivalent (only if you cannot run the helper): read `thread_config["exec
 
 Effort is fixed per thread (`codex-reply` has no config parameter): the execution thread runs at the `review` role (GPT-6 Astra, `high` by default; override via `.codex-paired/project.json` `models.review` or `CODEX_PAIRED_REASONING_REVIEW`).
 
+### Review panel branch (v0.19.0)
+
+Before the first round of a slice review, run the activation check in `skills/brainstorming/codex-pairing.md` § "Review panel rounds (v0.19.0)" with
+`--phase review`. If `configured` is `false`, Steps C and D apply exactly as written. If `configured`
+is `true`, run each `review-slice:<slice-id>` round (and `docs-update`) as a panel round per that
+section: the Step C prompt goes to every member, each on its own thread
+(`execution-reviewer:<member_id>`) or fresh Gemini conversation, and the slice ships only when Claude
+and every member say SHIP on the same commit. A configured review panel also reviews prose-lane
+slices (Step A0): the lane still skips the writer and keeps its two-round cap, but every member
+reviews.
+
 ### Step D: 7-round loop
 Same as brainstorming. Both must SHIP. Sidecar phase is `review-slice:<slice-id>` (e.g.,
 `review-slice:slice-2`) — the spec-canonical code-bearing phase name as of v0.13.0 (replacing the

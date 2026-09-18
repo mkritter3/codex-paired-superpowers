@@ -125,6 +125,12 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js <subcommand> --<flag> <value>
 | `sidecar-append-round --specPath <p> --round <json>` | append a round entry |
 | `sidecar-set-slice --specPath <p> --sliceId <id> --state <json>` | record slice review state |
 | `sidecar-add-contention --specPath <p> --contention <json>` | append open contention |
+| `review-panel --phase <planning\|review> --repoRoot <r> [--format json\|status]` | resolve the review panel (v0.19.0); `status` adds `configured` |
+| `panel-preflight --phase <p> --repoRoot <r>` | check every panel member is installed and signed in (v0.19.0) |
+| `sidecar-set-panel-roster --specPath <p> --phase <p> --roster <json>` | persist a phase's panel roster once (v0.19.0) |
+| `panel-replay` (stdin JSON) | build a Gemini member's bounded replay; exit 1 = overflow (v0.19.0) |
+| `review-panel-member ... --prompt-file <f>` (replay on stdin) | run one Gemini member in a fresh conversation (v0.19.0) |
+| `panel-reduce` (stdin JSON) | strict-unanimity reduction of one panel round (v0.19.0) |
 
 The CLI does NOT spawn codex anymore (v0.2.0+). All codex traffic goes through the MCP tools above.
 
@@ -153,3 +159,126 @@ See `lib/codex-bridge/prompts/system-rubric.md` for the canonical text. Both Cla
 6. Tests at the failure boundary
 
 The rubric is sent **once** in the initial prompt (Phase 2). It persists in the Codex thread; do not re-prepend it in `codex-reply` calls.
+
+## Review panel rounds (v0.19.0)
+
+A **review panel** replaces the single external reviewer with several that review independently and
+must **all** agree. It is off unless the user configures it (`review_panel` in
+`.codex-paired/project.json`, or `CODEX_PAIRED_REVIEW_PANEL_PLANNING` / `_REVIEW`). The shipped
+default is one reviewer; with nothing configured every skill takes its existing path unchanged.
+
+### Activation check (every skill runs this before its review loop)
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel --phase <planning|review> \
+  --repoRoot "$REPO_ROOT" --format status
+# → {"configured":false|true,"roster":[{"member_id","cli","model","effort"}],"warnings":[...]}
+```
+
+- `planning` covers spec, plan, `plan-N` and autopilot Phase A (`plan-slice:<id>`); `review` covers
+  `review-slice:<id>` and `docs-update`. The two are independent: a configured planning panel leaves
+  slice reviews on the single reviewer, and vice versa.
+- **`configured: false` → stop here and use the skill's existing single-reviewer procedure exactly as
+  written.** Nothing below applies; no roster is persisted and no `version:` is required.
+- `configured: true` → run every round of that phase as a panel round (below). A configured
+  one-member panel is still a panel.
+- Exit 2 is a configuration error: show it to the user and stop.
+- Relay each `warnings` entry (`self-review:<member_id>`: that member is the model that wrote the
+  code) to the user once, in plain words.
+
+### Before round 1 of a panel phase
+
+1. `panel-preflight --phase <p> --repoRoot "$REPO_ROOT"`. Exit 1 names an unavailable member
+   (`panel-member-unavailable`): tell the user which tool to install or sign in to, and halt. Never
+   drop the member and continue; the panel never shrinks.
+2. Persist the roster once: `sidecar-set-panel-roster --specPath "<spec>" --phase <p> --roster
+   '<roster JSON from the activation check>'`. A later, different roster is refused
+   (`panel-roster-changed`); tell the user rather than working around it.
+
+### One panel round
+
+1. **Artifact version V.** Spec or plan: `sha256:` plus the hex digest of the file bytes
+   (`shasum -a 256 "<file>" | cut -d' ' -f1`). Code: `git rev-parse HEAD` (full 40 hex). Every
+   member's prompt states V verbatim. **What is reviewed must be exactly V:** in a code phase,
+   commit everything under review before the round (a panel never reviews an uncommitted draft,
+   because the approval must attach to the commit that ships); a revision is a new commit and a new
+   round on the new V.
+2. **Claude reviews first**, independently, and writes its verdict block including `version: V`.
+3. **Compose the round prompt** and write it to a file (`<scratch>/panel-round-<N>.md`). Every
+   member receives this same text, in this order:
+   1. the canonical instructions, verbatim, because a fresh member has not inherited them from a
+      thread: `lib/codex-bridge/prompts/system-rubric.md`, then
+      `lib/codex-bridge/prompts/verdict-format.md`, then — for `plan-slice:<id>`,
+      `review-slice:<id>` and `docs-update` — `lib/codex-bridge/prompts/validation-rubric.md`;
+   2. the skill's normal review prompt for this phase (goals, artifact, diff or file references);
+   3. Claude's findings for this round;
+   4. `Artifact version: V` and "include `version: V` in your verdict block".
+   Repeating the instructions to a member whose thread already has them is harmless.
+4. **Dispatch every member in the same turn**, so none sees another's current verdict:
+   - **Codex member**: one persistent thread per feature, sidecar key and member, keyed
+     `<sidecarKey>:<member_id>` (`paired-reviewer` for planning, `execution-reviewer` for review);
+     two Codex models means two threads. The same thread carries the spec, every plan round and
+     every slice of that phase family. Look it up first:
+     ```bash
+     node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-thread-id --specPath "<spec>" \
+       --role "<sidecarKey>:<member_id>"
+     ```
+     - **Empty output (no thread yet)**: open one with the `codex` MCP tool, passing that member's
+       roster `model` and `config: {"model_reasoning_effort": "<effort>"}` (the resolved roster
+       entry, never a hand-typed id), then store it:
+       ```bash
+       node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-rotate-thread-id --specPath "<spec>" \
+         --role "<sidecarKey>:<member_id>" --newThreadId "<threadId>" --reason panel-member-open
+       ```
+     - **A thread id**: continue it with `codex-reply`. Never open a second thread for a member
+       that has one.
+     - **The thread is lost** (`Session not found`): the legacy role-wide recovery does not apply
+       to member threads yet. Treat it as a failed member turn: halt with
+       `panel-member-unavailable` naming the member, and tell the user. The panel never shrinks.
+   - **Gemini member (`cli: agy`)**: a fresh conversation every round. Build the bounded replay,
+     then run the member in the background:
+     ```bash
+     printf '%s' '{"goals":[...],"round":N,"unresolved":[...],"previousRound":{"findings":[...],"resolved_count":K}}' \
+       | node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" panel-replay > <scratch>/replay-<N>.txt
+     node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel-member --role <planning|review> \
+       --specPath "<spec>" --repoRoot "$REPO_ROOT" --member-id "<member_id>" --model "<model>" \
+       --version "<V>" --prompt-file <scratch>/panel-round-<N>.md [--sha <V for code>] [--planPath <plan>] \
+       < <scratch>/replay-<N>.txt
+     ```
+     `unresolved` lists every still-open blocking finding (`{member_id, status, finding}`), first;
+     `previousRound.findings` lists only the previous round's member-labelled findings; earlier
+     resolved findings are only counted. `panel-replay` exit 1 is `panel-replay-overflow`: halt and
+     tell the user; never trim findings to fit. `review-panel-member` prints
+     `{member_id, verdict, conversation_id, usage}`; exit 1 is a failed member turn.
+5. **Reduce.** Parse each Codex member's verdict block into `{status, critique, rationale, deferred,
+   version}` and pipe everything to `panel-reduce`:
+   ```bash
+   printf '%s' '{"roster":[...],"version":"<V>","claude":{...,"version":"<V>"},
+     "members":[{"member_id":"...","verdict":{...}}, ...]}' \
+     | node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" panel-reduce
+   # → {"status":"SHIP"|"REVISE","blocking":[{member_id,finding}],"deferred":[...]}
+   ```
+   SHIP only when Claude and every member said SHIP on V. Exit 1 (`panel-member-unavailable`: a
+   missing, failed or wrong-version member) is a halt, never a vote. Retry that member once; if it
+   fails again, tell the user which member failed and stop.
+6. **Log the round** with `sidecar-append-round-with-audits`, as the skill already does, with one
+   audit per side: `claude` plus one per `member_id` (member ids are valid audit sides). The round
+   carries the panel instead of a `codex` verdict, which the sidecar derives. Each `panel` entry is
+   the member's `member_id`, `cli` and `model` from the roster, plus `version`, `status` and
+   `session` (the Codex thread id, or the Gemini `conversation_id`):
+   ```text
+   round:  {phase, round: N, claude: "SHIP|REVISE", claude_version: V, panel: [entry, ...]}
+   entry:  {member_id, cli, model, version: V, status: "SHIP|REVISE", session}
+   ```
+   Code phases keep the same-commit rule: pass `--headSha "$(git rev-parse HEAD)"`, and every SHIP
+   side's verification audit carries `reviewed_sha: V`.
+7. **REVISE** → address every blocking finding (from any member, including Claude), then run the
+   next round on the new V. Deferred findings never block; batch them as the skill already does.
+   The round cap (7) and the anti-yes-man rules are unchanged; a finding you believe is wrong is
+   argued in the next round's prompt, not ignored.
+
+### Cost
+
+Each extra member adds roughly one reviewer's usage per round. Codex members cache most of their
+input automatically. Gemini starts fresh every round, so its cost per round stays flat (the replay
+is capped at 12,000 characters) rather than growing with the conversation.

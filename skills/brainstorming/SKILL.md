@@ -130,6 +130,13 @@ The bridge stores the sidecar in `.superpowers-codex-paired/`; you don't need to
 - Round N (N ≥ 2) means: send Claude's critique back via `codex-reply` → Codex returns a revised draft + new verdict → Claude verdicts on the revision. Both verdicts logged together as round N.
 - The loop exits when **both** verdicts within the same round are `SHIP`.
 
+### Review panel branch (v0.19.0)
+
+Before round 1, run the activation check in `skills/brainstorming/codex-pairing.md` § "Review panel rounds (v0.19.0)" with `--phase planning`. If `configured` is
+`false`, use the per-round procedure below exactly as written. If `configured` is `true`, run every
+`spec` round as a panel round per that section: each member reviews independently, and the spec
+ships only when Claude and every member say SHIP on the same file version.
+
 ### Per-round procedure
 
 For each round N starting at 1:

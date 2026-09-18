@@ -4,7 +4,21 @@
 
 Fork of six [superpowers](https://github.com/obra/superpowers) skills paired with Codex as an L11 engineering partner. **Codex writes the code (GPT-5.6 Sol, high), Claude reviews it, planning runs on GPT-6 Astra at extra-high effort, and both must agree before anything ships.**
 
-## v0.18.0 — Robust on other people's machines (latest)
+## v0.19.0 — Review panels and crash cleanup (latest)
+
+- **Review panels (opt-in):** put more than one external reviewer on planning, on code review, or on
+  both. Every member reviews independently and **all must agree** — Claude and each member say SHIP
+  on the same version, or the round goes back. No vote, no tiebreaker; a member that cannot be
+  reached halts the review instead of being dropped. The default stays one reviewer. See
+  [Configuration](#configuration).
+- **Leftover checkouts are cleaned up safely:** every checkout the plugin creates is labelled, and
+  `worktree-reap` removes the ones a crashed run left behind only when they are provably safe to
+  delete (not in use, all work committed and saved on another branch, clean, old enough). `doctor`
+  lists them. A halted autopilot marks what it keeps for diagnosis so cleanup never touches it.
+- **Fixed:** finishing a review no longer runs a repository-wide `git worktree prune`, which could
+  drop other stale checkouts' records.
+
+## v0.18.0 — Robust on other people's machines
 
 Type checking, a written public API, CI on every supported platform, and a fresh-clone smoke:
 
@@ -217,6 +231,32 @@ codex-paired-doctor
 
 Run the doctor proactively when any skill produces errors mentioning `Cannot find module`, `codex: command not found`, `codex not authenticated`, or similar setup-shaped failures.
 
+## Troubleshooting
+
+**Leftover checkouts after a crash.** A run that crashed or was interrupted can leave checkouts
+behind. `codex-paired-doctor` lists the ones this plugin created (the `worktrees` check) with why
+each is kept. To remove the ones that are safe to delete:
+
+```bash
+node lib/codex-bridge/cli.js worktree-reap --repoRoot .            # list only
+node lib/codex-bridge/cli.js worktree-reap --apply --repoRoot .    # remove the safe ones
+```
+
+A checkout is removed only if the plugin created it, it is not marked preserved, no process of
+yours is using it, its commit is saved on another branch or tag, it has no submodules, and it is old
+enough (an hour for review checkouts, a day otherwise). It must also be clean: an implementation
+checkout may hold nothing uncommitted, staged, untracked or ignored except `node_modules` and
+`.tia-cache`; a review checkout may differ from the commit it was created at only by the files the
+plugin copied into it, byte-identical to your working copy. Anything uncertain is kept. Processes of other users are not
+inspected. Worktrees you created yourself are never touched, and each removal takes out that one
+checkout only; the plugin never runs `git worktree prune`.
+
+To keep a checkout that cleanup would otherwise remove:
+
+```bash
+node lib/codex-bridge/cli.js checkout-preserve --path <checkout> --reason "<why>" --run <id> --repoRoot .
+```
+
 ## Publishing your own copy
 
 If you're forking this plugin to publish under your own GitHub account:
@@ -296,6 +336,32 @@ Inspect what will actually run (and where each value came from):
 node lib/codex-bridge/cli.js model-roles
 codex-paired-doctor      # the "models" check prints role: model effort (source)
 ```
+
+**Review panels (v0.19.0, opt-in).** By default one external reviewer checks each phase. To have
+several review independently and require all of them to agree, list them per phase:
+
+```json
+// .codex-paired/project.json (fragment)
+{ "review_panel": {
+    "planning": [ { "cli": "codex" }, { "cli": "agy", "model": "gemini-3.8-flash-high" } ],
+    "review":   [ { "cli": "codex" } ] } }
+```
+
+- `planning` covers the spec, the plan and autopilot's per-slice plan review; `review` covers slice
+  reviews and documentation updates. Leave a phase out to keep its single reviewer.
+- An entry without `model` uses that phase's model role when the CLI matches, otherwise the CLI's
+  default (`gemini-3.8-flash-high` for `agy`). The same CLI with two different models counts as two
+  reviewers; the same model twice is rejected.
+- Env override: `CODEX_PAIRED_REVIEW_PANEL_PLANNING=codex,agy` (and `_REVIEW`).
+- Check what will run: `node lib/codex-bridge/cli.js review-panel --phase planning --repoRoot . --format status`.
+- Every member must have its CLI installed and signed in; the review stops before round 1 otherwise.
+- **Cost:** each extra member adds about one reviewer's usage per round, and a round lasts as long as
+  its slowest member. Planning is where that is usually worth it. Gemini starts a fresh conversation
+  every round with a short capped summary of earlier rounds (12,000 characters), so its cost per
+  round stays flat instead of growing.
+- Multi-member **review** panels are not supported on the `two-disjoint` and `hybrid-ui-backend`
+  splits yet; those work items stop with `panel-unsupported-route` before creating anything.
+- `doctor` warns when a reviewer is the same model as the one writing the code.
 
 Why Sol: the Codex model catalog names `gpt-5.6-sol` as the migration target for the retired `gpt-5.5`. Switch to `gpt-5.6-terra` with the one-line override above if it suits your code better.
 
@@ -422,7 +488,9 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.18.0 — robust on other people's machines: gradual strict JSDoc type checking with an explicit allowlist, a pinned public API contract with an AST-extracted CLI surface and import-closure digests, CI on macOS + Linux across Node 20–26, a bounded fresh-clone smoke, vendored-dependency and bash-3.2 guards. Built through the pipeline itself (spec: 7 rounds, plan: 3 rounds, slices implemented by Codex on GPT-5.6 Sol, reviewed by Claude then Codex on GPT-6 Astra).
+v0.19.0 — opt-in review panels with strict unanimity (independent members, no vote, no tiebreaker), safe cleanup of checkouts left by crashed runs (ownership and preservation markers, fail-closed `worktree-reap`, `doctor` checks), and the repository-wide prune removed from review teardown. Built through the pipeline itself: the spec and plan were approved unanimously by a three-voice panel (Claude, Codex, Gemini), slices 1–5 were implemented by Codex, slice 6 (skills and docs) was written by Claude, and every slice was approved by Claude and Codex on the same commit.
+
+Prior: v0.18.0 — robust on other people's machines: gradual strict JSDoc type checking with an explicit allowlist, a pinned public API contract with an AST-extracted CLI surface and import-closure digests, CI on macOS + Linux across Node 20–26, a bounded fresh-clone smoke, vendored-dependency and bash-3.2 guards. Built through the pipeline itself (spec: 7 rounds, plan: 3 rounds, slices implemented by Codex on GPT-5.6 Sol, reviewed by Claude then Codex on GPT-6 Astra).
 
 Prior: v0.16.0 — model roles for the GPT-6 era: Codex writes the code (GPT-5.6 Sol high → GPT-6 Astra medium → Sonnet), Claude reviews first, both SHIP the same commit; planning on GPT-6 Astra xhigh; two threads per feature; durable attempt evidence + resume; doctor model/transport checks. Built by dogfooding the pipeline itself (spec: 5 rounds, plan: 7 rounds, slices implemented by Codex on GPT-5.6 Sol and reviewed by Claude then Codex).
 
@@ -431,6 +499,20 @@ Prior: v0.15.0 — reliability release driven by transcript/sidecar replay of te
 Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook architecture intact, release-gate INCONCLUSIVE in Claude Code 2.1.138 (Task tool lacks the `cwd` parameter the hook design relies on; doesn't invalidate the architecture — see `docs/verification/v0.7.3.1-hook-fires.md`).
 
 ### Changelog
+
+- **v0.19.0** — review panels and crash cleanup.
+  - **Review panels:** `review_panel.{planning,review}` in `project.json` (or
+    `CODEX_PAIRED_REVIEW_PANEL_*`); resolver and `review-panel` verb (`--format status` adds
+    `configured`); sidecar `panel_roster`, member-id audit sides and a shared panel validator on both
+    append paths (the aggregate `codex` verdict is derived, never trusted); strict-unanimity reducer
+    (`panel-reduce`); fresh-conversation Gemini members with a bounded replay (`panel-replay`,
+    `review-panel-member`); `panel-preflight`; route check for splits that cannot host a panel.
+    Unconfigured projects are byte-identical.
+  - **Crash cleanup:** ownership and preservation markers in each checkout's git admin directory;
+    `checkout-preserve`; `worktree-reap` (list by default, `--apply` removes one safe checkout at a
+    time, re-checking every condition immediately before each removal); `doctor` `worktrees` and
+    `review-panel` checks; autopilot halts preserve the checkouts they keep.
+  - **Fix:** review teardown removes only its own checkout (no repository-wide prune).
 
 - **v0.18.0** — robustness for other people's machines.
   - **Type checking:** `tsconfig.json` (`checkJs: false`, `strict`), `typecheck.allowlist.json`,

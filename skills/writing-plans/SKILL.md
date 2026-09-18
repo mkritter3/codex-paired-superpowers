@@ -123,6 +123,14 @@ Open the spec and extract the **goals**, not the implementation. A goal is a sen
 
 The goals block is what Codex critiques against — NOT the plan as written. This is how both sides aim at the right result instead of optimizing the wrong target.
 
+### Review panel branch (v0.19.0)
+
+Before round 1, run the activation check in `skills/brainstorming/codex-pairing.md` § "Review panel rounds (v0.19.0)" with `--phase planning`. If `configured` is
+`false`, use the rounds below exactly as written. If `configured` is `true`, run every `plan` (or
+`plan-N`) round as a panel round per that section, with the round prompt below as each member's
+prompt: members review independently, and the plan ships only when Claude and every member say SHIP
+on the same file version.
+
 ### Round 1 prompt
 
 **Transport branch (v0.17.0):** if `model-role --role planning --format json` reports `"cli":"agy"`, pipe the same prompt to `node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" reviewer-thread-reply --role planning --specPath "<spec-path>" --repoRoot "$REPO_ROOT" --prompt-stdin` instead of the MCP `codex-reply` tool; its stdout is the same `{ threadId, content }` shape.

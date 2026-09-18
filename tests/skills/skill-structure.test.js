@@ -1599,3 +1599,116 @@ test('v0.18.1: both review-opening skills pick a lane and batch deferred finding
     assert.ok(/deferred/i.test(section) && /never open(s)? (its own|a new) round/i.test(section), `${skill} must state that deferred findings do not open a round`);
   }
 });
+
+// ── v0.19.0: review panels in the skills, halt preservation, route check, versions ────────────────
+
+const PANEL_REF = 'codex-pairing.md` § "Review panel rounds (v0.19.0)"';
+
+function section(text, startMarker, endMarker) {
+  const start = text.indexOf(startMarker);
+  assert.ok(start >= 0, `missing section start ${JSON.stringify(startMarker)}`);
+  const end = endMarker === null ? text.length : text.indexOf(endMarker, start + startMarker.length);
+  assert.ok(end > start, `missing section end ${JSON.stringify(endMarker)}`);
+  return text.slice(start, end);
+}
+
+test('v0.19.0: the shared panel procedure uses the panel verbs and keeps the unconfigured path', () => {
+  const pairing = readFileSync(join(PLUGIN_ROOT, 'skills/brainstorming/codex-pairing.md'), 'utf8');
+  const procedure = section(pairing, '## Review panel rounds (v0.19.0)', null);
+  for (const verb of ['review-panel --phase', '--format status', 'panel-preflight', 'sidecar-set-panel-roster',
+    'panel-replay', 'review-panel-member', 'panel-reduce', 'sidecar-append-round', 'claude_version']) {
+    assert.ok(procedure.includes(verb), `panel procedure must use ${verb}`);
+  }
+  assert.match(procedure.replace(/\s+/g, ' '), /`configured: false` → stop here and use the skill's existing single-reviewer procedure exactly as written/);
+  assert.match(procedure, /same turn/);
+  assert.match(procedure, /never drop the member|panel never shrinks/i);
+});
+
+test('v0.19.0: both planning skills branch on the planning panel before their unchanged review loop', () => {
+  const cases = [
+    ['brainstorming', '### Per-round procedure', '"phase":"spec"'],
+    ['writing-plans', '### Round 1 prompt', '"phase":"plan"'],
+  ];
+  for (const [skill, loopHeading, loggedPhase] of cases) {
+    const body = readSkill(skill);
+    const branch = body.indexOf('### Review panel branch (v0.19.0)');
+    assert.ok(branch >= 0, `${skill} has the panel branch`);
+    assert.equal(body.split('### Review panel branch (v0.19.0)').length, 2, `${skill} has exactly one panel branch`);
+    assert.ok(branch < body.indexOf(loopHeading), `${skill}: the branch precedes the existing loop`);
+    const text = section(body, '### Review panel branch (v0.19.0)', loopHeading);
+    assert.ok(text.includes(PANEL_REF) && text.includes('--phase planning'), `${skill} branch uses the planning panel`);
+    assert.match(text, /`configured` is\s+`false`, use the [^\n]*\n?[^\n]*exactly as written/, `${skill}: unconfigured path unchanged`);
+    // The single-reviewer loop itself is still there and still logs the same phase.
+    assert.ok(body.includes('sidecar-append-round-with-audits') && body.includes(loggedPhase), `${skill} keeps its loop`);
+  }
+});
+
+test('v0.19.0: autopilot Phase A takes the planning panel and Phases C/D the review panel, independently', () => {
+  const body = readSkill('autopilot');
+  const phaseA = section(body, '### Phase A: plan-slice + test-list review', '### Phase B');
+  assert.match(phaseA, /5a\. \*\*Planning panel \(v0\.19\.0\)\.\*\*/);
+  assert.ok(phaseA.includes('--phase planning') && !phaseA.includes('--phase review'));
+  assert.ok(phaseA.includes('paired-reviewer:<member_id>'));
+  const phaseCD = section(body, '### Phase C: review-slice', '### Phase E');
+  assert.ok(phaseCD.includes('--phase review') && !phaseCD.includes('--phase planning'));
+  assert.ok(phaseCD.includes('execution-reviewer:<member_id>') && phaseCD.includes('panel-reduce'));
+  // Each branch states that the unconfigured path is the existing text.
+  assert.match(phaseA, /`configured` is `false`, step 5 applies exactly as\s+written/);
+  assert.match(phaseCD, /`configured` is `false`, Phases C and D apply exactly as\s+written/);
+  const sdd = readSkill('subagent-driven-development');
+  const branch = section(sdd, '### Review panel branch (v0.19.0)', '### Step D: 7-round loop');
+  assert.ok(branch.includes('--phase review') && branch.includes(PANEL_REF));
+});
+
+test('v0.19.0: the autopilot halt path preserves every worktree it leaves in place', () => {
+  const halt = section(readSkill('autopilot'), '### On halt (any reason)', '### On resume');
+  assert.match(halt, /3c\. \*\*Mark every worktree the halt leaves in place as preserved\*\*/);
+  assert.ok(halt.includes('checkout-preserve --path'));
+  assert.ok(halt.indexOf('3c.') < halt.indexOf('4. **Emit the halt envelope**'));
+  assert.match(halt, /never replaces the original halt reason/);
+});
+
+test('v0.19.0: execution notes the route check; doctor lists the new checks; README documents both features', () => {
+  assert.match(readSkill('execution'), /panel-unsupported-route/);
+  const doctor = readSkill('doctor');
+  assert.match(doctor, /\*\*review-panel\*\* \(v0\.19\.0\)/);
+  assert.match(doctor, /\*\*worktrees\*\* \(v0\.19\.0\)[\s\S]*other users?'? ?.*not inspected|only the current user's processes are inspected/);
+  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8');
+  assert.ok(readme.includes('"review_panel"') && readme.includes('**Cost:**'));
+  assert.ok(readme.includes('worktree-reap --apply') && readme.includes('checkout-preserve --path'));
+  assert.match(readme.replace(/\s+/g, ' '), /never runs `git worktree prune`/);
+});
+
+test('v0.19.0: version fields agree', () => {
+  const pkg = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'package.json'), 'utf8')).version;
+  const plugin = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin/plugin.json'), 'utf8')).version;
+  const market = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin/marketplace.json'), 'utf8')).plugins
+    .map((entry) => entry.version);
+  assert.equal(pkg, '0.19.0');
+  assert.equal(plugin, pkg);
+  assert.ok(market.every((version) => version === pkg), JSON.stringify(market));
+});
+
+test('v0.19.0: panel member threads persist per member and fresh members get the canonical instructions', () => {
+  const pairing = readFileSync(join(PLUGIN_ROOT, 'skills/brainstorming/codex-pairing.md'), 'utf8');
+  const procedure = section(pairing, '## Review panel rounds (v0.19.0)', null);
+  // Every thread command names the sidecar, and the lookup comes before any open.
+  for (const verb of ['sidecar-thread-id', 'sidecar-rotate-thread-id']) {
+    const at = procedure.indexOf(`${verb} --specPath`);
+    assert.ok(at >= 0, `${verb} must pass --specPath`);
+  }
+  assert.ok(procedure.indexOf('sidecar-thread-id --specPath') < procedure.indexOf('sidecar-rotate-thread-id --specPath'));
+  assert.match(procedure, /Never open a second thread for a member/);
+  for (const prompt of ['system-rubric.md', 'verdict-format.md', 'validation-rubric.md']) {
+    assert.ok(procedure.includes(`lib/codex-bridge/prompts/${prompt}`), `round prompt includes ${prompt}`);
+  }
+  assert.match(procedure.replace(/\s+/g, ' '), /a panel never reviews an uncommitted draft/);
+});
+
+test('v0.19.0: a configured panel commits Phase D docs before reviewing; the unconfigured deferred commit stays', () => {
+  const body = readSkill('autopilot');
+  const phaseCD = section(body, '### Phase C: review-slice', '### Phase E');
+  assert.match(phaseCD.replace(/\s+/g, ' '), /With a configured review panel, \*\*Phase D commits before it reviews\*\*/);
+  assert.match(phaseCD, /4\. \*\*Apply the doc edits to the working tree but do NOT commit yet\.\*\*/);
+  assert.match(phaseCD, /6\. \*\*Only on double-SHIP:\*\* commit the docs/);
+});
