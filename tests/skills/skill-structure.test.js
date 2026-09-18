@@ -12,6 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1498,4 +1499,16 @@ test('v0.18.0: digest refresh runs before verification/C0 in autopilot Phase B.5
   assert.ok(sdd.slice(stepB, stepC0).includes('cli-surface.mjs --digest --write'), 'SDD Step B must run the digest refresh');
   const em = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
   assert.ok(em.includes('cli-surface.mjs --digest --write'), 'execution-model.md must mention the digest refresh');
+  // The documented command must be valid shell and must target the slice worktree's own copy
+  // (the script defaults --root to the repository it lives in), never a "${CLAUDE_PLUGIN_ROOT}" path.
+  for (const [skill, section] of [['autopilot', autopilot.slice(b5, b55)], ['subagent-driven-development', sdd.slice(stepB, stepC0)]]) {
+    const commands = [...section.matchAll(/`([^`]*cli-surface\.mjs[^`]*)`/g)].map((m) => m[1]);
+    assert.ok(commands.length > 0, `${skill}: no digest-refresh command in backticks`);
+    for (const command of commands) {
+      const check = spawnSync('bash', ['-n', '-c', command], { encoding: 'utf8' });
+      assert.equal(check.status, 0, `${skill}: digest-refresh command is not valid shell: ${command}\n${check.stderr}`);
+      assert.ok(!command.includes('CLAUDE_PLUGIN_ROOT'), `${skill}: digest refresh must run the worktree's own scripts/cli-surface.mjs, not the installed plugin's copy: ${command}`);
+      assert.ok(/^node scripts\/cli-surface\.mjs --digest --write$/.test(command.trim()) || command.includes('--root'), `${skill}: digest-refresh command must be worktree-local or pass --root: ${command}`);
+    }
+  }
 });

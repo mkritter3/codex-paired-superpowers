@@ -55,9 +55,11 @@ regex"). The diff sent to review must be the committed diff, and the tree must b
 
 **Public-API digest refresh (v0.18.0).** If the slice touched any module in the CLI's pinned
 import closure or any pinned JSON input (`docs/public-api.md` `cli-verbs` block: `closure`,
-`module_digest`, `input_digest`), run `node "${CLAUDE_PLUGIN_ROOT}/scripts/cli-surface.mjs --digest --write`
-in the slice's working directory **now — before the verification run and before Step C0** — and
-commit the resulting `docs/public-api.md` diff together with the slice. `npm test` fails on a
+`module_digest`, `input_digest`), run `node scripts/cli-surface.mjs --digest --write` **from the
+slice's working directory root now — before the verification run and before Step C0** (the script
+defaults `--root` to the repository it lives in, so use the worktree's own copy, or pass
+`--root <slice-worktree>` to another copy) — and commit the resulting `docs/public-api.md` diff
+together with the slice. `npm test` fails on a
 stale digest, so a refresh done later would invalidate the reviewed SHA. The `--write` mode
 touches only those three keys; the documented cases still get their semantic review in Step D.
 
