@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,6 +73,26 @@ test('thrown execution keeps the checkpoint, resets only pass work, and preserve
   assert.equal(existsSync(removed), false);
   assert.equal(readFileSync(kept, 'utf8'), 'keep');
   assert.equal(fixEntries(specPath)[0].outcome, 'failed');
+  rmSync(repoRoot, { recursive: true, force: true });
+});
+
+// v0.19.0 review deferred finding D1: existsSync follows symlinks, so a DANGLING link the failed
+// pass created read as absent and survived the rollback. Checks use lstatSync, which sees the link.
+test('failed pass that created a dangling untracked symlink: rollback removes the link itself', async () => {
+  const { repoRoot, specPath, implementationSha } = makeRepo();
+  const link = join(repoRoot, 'nested', 'dangling-link');
+  const result = await runFixPass({
+    specPath, sliceId: 'slice-3', repoRoot, pass: 1,
+    execFn: async () => {
+      mkdirSync(join(repoRoot, 'nested'));
+      symlinkSync(join(repoRoot, 'no-such-target'), link);
+      throw new Error('boom');
+    },
+  });
+  assert.deepEqual(result, { ok: false, reason: 'exec-failed', reset_to: implementationSha });
+  assert.throws(() => lstatSync(link), { code: 'ENOENT' }, 'dangling symlink must not survive rollback');
+  assert.equal(existsSync(join(repoRoot, 'nested')), false, 'emptied parent directory is removed too');
+  assert.equal(git(repoRoot, 'status', '--porcelain', '--untracked-files=all'), '');
   rmSync(repoRoot, { recursive: true, force: true });
 });
 
