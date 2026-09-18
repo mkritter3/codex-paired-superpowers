@@ -119,3 +119,29 @@ test('runChildWithLifecycle requires a string command', () => {
     runChildWithLifecycle({ command: 'node', args: ['--version'] });
   `), []);
 });
+
+test('reviewer turn readers require a phase in their public signature', () => {
+  for (const fn of ['readReviewerTurns', 'readExpertTurns']) {
+    assert.deepEqual(diagnosticCodes(`
+      import { ${fn} } from './lib/codex-bridge/sidecar.js';
+      ${fn}('/spec', {});
+    `), [2345], `${fn} with {}`);
+    assert.deepEqual(diagnosticCodes(`
+      import { ${fn} } from './lib/codex-bridge/sidecar.js';
+      ${fn}('/spec', { sliceId: 's' });
+    `), [2345], `${fn} without phase`);
+    assert.deepEqual(diagnosticCodes(`
+      import { ${fn} } from './lib/codex-bridge/sidecar.js';
+      ${fn}('/spec', { phase: 'review-slice:slice-1' });
+    `), [], `${fn} valid`);
+  }
+});
+
+test('runChildWithLifecycle keeps its original runtime semantics for null and missing commands', async () => {
+  const { runChildWithLifecycle } = await import('../../lib/codex-bridge/cli-harness/process-lifecycle.js');
+  await assert.rejects(() => runChildWithLifecycle(null), TypeError);
+  const missing = await runChildWithLifecycle({});
+  assert.equal(missing.exitInfo, null);
+  assert.equal(missing.spawnError?.code, 'ERR_INVALID_ARG_TYPE');
+  assert.match(missing.spawnError.message, /"file" argument must be of type string. Received undefined/);
+});
