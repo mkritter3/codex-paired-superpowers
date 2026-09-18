@@ -210,7 +210,7 @@ Per-project configuration:
 | Codex exits 0 with non-conforming commits | fallback trigger | Cite SHA; reset worktree; next rung. |
 | Codex exits non-zero (other than 78) | fallback trigger | Reset worktree; next rung (`implement_fallback`, then Sonnet). |
 | Status file `exit_code: 78` (model-role resolution failed / conflicting args) | **halt** (terminal) | No reset, no next rung. Fix `.codex-paired/project.json` `models` or the `CODEX_PAIRED_*` env, re-run. |
-| Codex exceeds `max_runtime_ms` | **halt** (`implementer-attempt-timeout`, terminal) | Orchestrator SIGTERM + SIGKILL after 5s; `decideImplementAction` returns `halt`, not `fallback` — the worktree is preserved for forensics, no reset, no next rung; the user decides whether to resume or re-run. |
+| Codex exceeds `max_runtime_ms` | **halt** `codex-background-timeout` (terminal) | Orchestrator SIGTERM + SIGKILL after 5s; `decideImplementAction` classifies it `timeout` → `halt` with `halts.timeout` = `codex-background-timeout`, never `fallback` — the worktree is preserved for forensics, no reset, no next rung; the user decides whether to resume or re-run. (`implementer-attempt-timeout` is a different reason: the direct-CLI observer giving up on a still-live fan-out attempt.) |
 | Status file missing AND Bash task lost (after orchestrator crash) | `codex-background-task-lost` | Halt with output_file path for forensics. User investigates. |
 | Status file shows non-zero exit BEFORE orchestrator-side timeout fires | normal failure path | Reconcile; trigger fallback per outcome. |
 

@@ -358,6 +358,8 @@ If the composer flags the phase as high-stakes (e.g., security-sensitive spec, f
 ```js
 const { dispatchPanel } =
   await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/panel/dispatcher.js');
+const { dispatchReviewerViaHarness } =
+  await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/reviewer-dispatch.js'); // panel scope: Step 3's import is block-scoped
 
 // member_id composite uses identity.id (the "expert-XXX" form recognized by
 // the role resolver and Machine Result expert_id matching), NOT identity.role.

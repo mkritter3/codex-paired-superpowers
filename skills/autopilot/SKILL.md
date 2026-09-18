@@ -163,14 +163,18 @@ returns `isError: true` with `Session not found for thread_id:` (the MCP server 
 threads are process-local), do NOT halt the slice. Recover: build replay context
 (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`),
 open a NEW thread via the initial `codex` tool seeded with that replay + the pending phase prompt,
-persist the rotation **for the role that owns the lost thread** (`sidecar-rotate-thread-id --specPath "<spec-path>"
---role execution-reviewer --oldThreadId <old> --newThreadId <new> --reason session-not-found --phase <phase>
---round <n> --threadConfig '{"role":"review","cli":"codex","model":"<model>","effort":"<effort>"}'` for Phase
-B.5/C/D turns; `--role paired-reviewer` with the `planning` role's config for Phase A turns — the verb
-defaults to `paired-reviewer`, so omitting `--role` on an execution-thread loss silently overwrites the
-planning thread and leaves the execution thread stale; `recoverStaleThread(specPath, { role, planPath,
-pendingPrompt })` in `lib/codex-bridge/thread-recovery.js` does all of this for you), surface one line to
-the user, and continue the current phase. This is distinct from cross-session resume (re-running
+persist the rotation **for the role that owns the lost thread**, using the model and effort **recorded** in
+that thread's `thread_config` entry (spec §5; current `model-role` output is only the legacy fallback):
+`recoverStaleThread(specPath, { staleResponse: reply, pendingPrompt, phase: '<phase>', round: <n>, role, planPath, repoRoot }, { codexFn })`
+from `lib/codex-bridge/thread-recovery.js` — `role` is `'execution-reviewer'` for Phase B.5/C/D turns and
+`'paired-reviewer'` for Phase A turns; `codexFn: async ({ prompt, model, config }) => /* mcp codex tool → { threadId, content } */`
+makes exactly one initial call with the recorded model + config (agy roles need no dep); the helper
+detects the stale response, replays the sidecar context, opens the thread and persists the rotation
+with `thread_config`. Read `r.recovered`, `r.newThreadId`, `r.content`. If you must do it by hand,
+`sidecar-rotate-thread-id --specPath "<spec-path>" --role <role> --oldThreadId <old> --newThreadId <new>
+--reason session-not-found --phase <phase> --round <n> --threadConfig '<recorded object>'` — the verb defaults
+to `paired-reviewer`, so omitting `--role` on an execution-thread loss silently overwrites the planning
+thread and leaves the execution thread stale. Surface one line to the user, and continue the current phase. This is distinct from cross-session resume (re-running
 `/autopilot`); it handles a thread dying *within* a live run.
 
 ### Phase A: plan-slice + test-list review

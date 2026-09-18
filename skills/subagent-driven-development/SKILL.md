@@ -106,7 +106,25 @@ THREAD_ID=$(node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-thread-id
 
 For a Codex role, invoke **`mcp__plugin_codex-paired-superpowers_codex__codex-reply`** with `{ threadId: "<THREAD_ID>", prompt: "<filled slice-review prompt>" }`. The response's `content` is the reviewer's review + verdict block.
 
-**If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation **for the execution role** (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-rotate-thread-id --specPath "<spec-path>" --role execution-reviewer --oldThreadId <old> --newThreadId <new> --reason session-not-found --phase "review-slice:<slice-id>" --round <n> --threadConfig '{"role":"review","cli":"codex","model":"<model>","effort":"<effort>"}'` — `--role` is mandatory here: the verb defaults to `paired-reviewer` and would overwrite the planning thread; `model`/`effort` come from `model-role --role review --format json`). Equivalent in code: `recoverStaleThread(specPath, { role: 'execution-reviewer', planPath, pendingPrompt })` from `lib/codex-bridge/thread-recovery.js`, which does all of this and follows the recorded CLI. Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
+**If the reply returns `isError: true` with `Session not found for thread_id:`** (the MCP server restarted mid-feature — threads are process-local), recover instead of halting: build replay context (`node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js sidecar-replay-context --specPath "<spec-path>"`), open a NEW thread via the initial `codex` tool seeded with that replay + the slice-review prompt that failed, then persist the rotation **for the execution role** — but take the model and effort from the lost thread's **recorded** `thread_config["execution-reviewer"]` in the sidecar (spec §5), not from the current `model-role` output; current configuration is only the fallback for a legacy sidecar with no record. The complete code path does all of this in one call and is the preferred form:
+
+```js
+const { recoverStaleThread } = await import('${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/thread-recovery.js');
+const r = await recoverStaleThread(specPath, {
+  staleResponse: reply,                 // the { isError: true, content: 'Session not found …' } reply
+  pendingPrompt: sliceReviewPrompt,     // the prompt that failed against the lost thread
+  phase: 'review-slice:<slice-id>', round: <n>,
+  role: 'execution-reviewer', planPath, repoRoot,
+}, {
+  // codex roles: exactly one initial `codex` MCP call with the RECORDED model + config
+  codexFn: async ({ prompt, model, config }) => /* mcp codex tool { prompt, model, config } → { threadId, content } */,
+  // agy roles need no dep: the default openFn runs reviewer-thread-open in a throwaway checkout
+});
+if (!r.recovered) throw new Error('not a stale-thread response');
+THREAD_ID = r.newThreadId; content = r.content;   // rotation already persisted with thread_config
+```
+
+Manual equivalent (only if you cannot run the helper): read `thread_config["execution-reviewer"]` via `sidecar-show`, open the new thread with that `model`/`effort`, then `sidecar-rotate-thread-id --specPath "<spec-path>" --role execution-reviewer --oldThreadId <old> --newThreadId <new> --reason session-not-found --phase "review-slice:<slice-id>" --round <n> --threadConfig '<the recorded object>'` — `--role` is mandatory: the verb defaults to `paired-reviewer` and would overwrite the planning thread. Tell the user in one line ("Codex thread was lost; opened a new thread and replayed the sidecar context") and continue the round — do not discard prior review history.
 
 Effort is fixed per thread (`codex-reply` has no config parameter): the execution thread runs at the `review` role (GPT-6 Astra, `high` by default; override via `.codex-paired/project.json` `models.review` or `CODEX_PAIRED_REASONING_REVIEW`).
 

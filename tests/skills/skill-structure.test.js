@@ -1372,13 +1372,28 @@ test('v0.16.0 (slice-6 r2): reviewer helper callers forward the resolved variant
   for (const skill of ['autopilot', 'subagent-driven-development']) {
     const content = readSkill(skill);
     const idx = content.indexOf('--reason session-not-found');
-    assert.ok(idx > 0 && content.slice(Math.max(0, idx - 400), idx).includes('--role execution-reviewer'),
-      `${skill}/SKILL.md session-not-found recovery must rotate --role execution-reviewer`);
+    const window = content.slice(Math.max(0, idx - 1500), idx + 200);
+    assert.ok(idx > 0 && window.includes('--role') && window.includes('execution-reviewer'),
+      `${skill}/SKILL.md session-not-found recovery must rotate with --role naming execution-reviewer`);
   }
   const em = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
   assert.ok(/post-merge two-member panel/.test(em) && /merger review/.test(em), 'execution-model.md must name both concurrent-review exceptions');
   const contract = readFileSync(join(PLUGIN_ROOT, 'docs', 'codex-implementer-contract.md'), 'utf8');
-  assert.ok(!/treat as fallback/.test(contract) && /implementer-attempt-timeout/.test(contract), 'contract must document timeout as a terminal halt');
+  const timeoutRow = contract.split('\n').find((l) => l.includes('Codex exceeds `max_runtime_ms`'));
+  assert.ok(timeoutRow && /halt/.test(timeoutRow) && timeoutRow.includes('codex-background-timeout') && !/treat as fallback/.test(timeoutRow),
+    'contract must document the wrapper timeout as a terminal halt named codex-background-timeout');
+  for (const skill of ['autopilot', 'subagent-driven-development']) {
+    const content = readSkill(skill);
+    const i = content.indexOf('recoverStaleThread(specPath, {');
+    assert.ok(i > 0, `${skill}/SKILL.md must show a recoverStaleThread call`);
+    const call = content.slice(i, i + 700);
+    for (const needle of ['staleResponse', 'pendingPrompt', 'codexFn', 'role']) assert.ok(call.includes(needle), `${skill}/SKILL.md recoverStaleThread example lacks ${needle}`);
+    assert.ok(/recorded/i.test(content.slice(Math.max(0, i - 800), i + 800)), `${skill}/SKILL.md recovery must say the config comes from the recorded thread_config`);
+  }
+  const bs = readSkill('brainstorming');
+  const panelStart = bs.indexOf('const { dispatchPanel }');
+  assert.ok(panelStart > 0 && bs.slice(panelStart, bs.indexOf('dispatchPanel(identity.id')).includes("const { dispatchReviewerViaHarness }"),
+    'brainstorming panel block must import dispatchReviewerViaHarness in its own scope');
   const wp = readSkill('writing-plans');
   assert.ok(!/^\s*model: [^#\n]*#/m.test(wp), 'writing-plans examples must not put comments on model: lines');
 });
