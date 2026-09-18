@@ -9673,9 +9673,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
   "module_digest": {
     "lib/codex-bridge/active-anchor.js": "sha256:efeec4ebb5735a634b5c2314a0ab3e4812d31a0446df9857bafbcca04fb908a5",
     "lib/codex-bridge/cli-harness/adapters/agy.js": "sha256:382a4b360e58045da4f9cc6f7b0b8d5b37d9a8b8d365f2b7e1a045a180f29b81",
-    "lib/codex-bridge/cli-harness/adapters/claude-cli.js": "sha256:1f34639aea37ee337d497c85223cb266822d8029bddaf37b036dc6a1bc46193c",
+    "lib/codex-bridge/cli-harness/adapters/claude-cli.js": "sha256:4e243005f48bf9616ab8c0da127017733cdae932eaee1d1d4ccdd04bdd0ac198",
     "lib/codex-bridge/cli-harness/adapters/codex.js": "sha256:a92a130d27d669d627b8a756a711eafdd1b74ae08b6fb88d1190691193e41337",
-    "lib/codex-bridge/cli-harness/adapters/ollama.js": "sha256:697e56f42472f8df0e1aa63c3b20d617549bfd8e2714174fc9259d8dde0ed2ca",
+    "lib/codex-bridge/cli-harness/adapters/ollama.js": "sha256:dd36f0f241ba63c8254dba2966b49bab44498e689e3e416da5d6586fb80e1402",
     "lib/codex-bridge/cli-harness/adapters/registry.js": "sha256:bc72918156350df68b0c9e07837f992fde4dd458878bd0128d2ff4c22a0b9817",
     "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
     "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",

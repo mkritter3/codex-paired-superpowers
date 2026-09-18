@@ -298,8 +298,15 @@ test('onSpawn failure reaps a TERM-resistant descendant even after the leader it
         // SIGTERM/SIGKILL against the leader's own startup. The spawned
         // process is scheduled independently by the OS, so blocking this
         // event loop here does not block it from making progress.
+        // Poll for parseable CONTENT, not mere existence: the shell's `>` creates the file before
+        // `echo` writes the pid, so existsSync() returns true while the file is still empty — which
+        // on a loaded CI runner made the parse below yield NaN (observed: ubuntu, Node 21).
         const deadline = Date.now() + 5000;
-        while (!existsSync(descendantPidFile) && Date.now() < deadline) { /* busy-poll */ }
+        const pidWritten = () => {
+          try { return parseInt(readFileSync(descendantPidFile, 'utf8').trim(), 10) > 0; }
+          catch { return false; }
+        };
+        while (!pidWritten() && Date.now() < deadline) { /* busy-poll */ }
         onSpawnDoneAt = Date.now();
         throw new Error('running evidence publish failed');
       },

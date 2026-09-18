@@ -1686,3 +1686,38 @@ test('stress.scale canary in 60KB string: all 3 canaries redacted', () => {
       `canary ${canary} must not appear in redacted result`);
   }
 });
+
+// ── fail.epipe ────────────────────────────────────────────────────────────────
+// A child that exits without reading stdin must not take the process down. EPIPE arrives as an
+// asynchronous 'error' event on child.stdin, so the try/catch around end() never sees it; without
+// an 'error' listener Node treats it as unhandled. Observed in CI (ubuntu, Node 24 and 26) as
+// `Error: write EPIPE` escaping dispatchAsync.
+
+test('fail.epipe: a child that exits without reading a large stdin payload resolves instead of throwing', {
+  timeout: TEST_TIMEOUT_MS,
+}, async () => {
+  const dir = makeTmpDir('cps-claude-epipe-');
+  const cleanup = setupOllamaToken();
+  try {
+    // Exits immediately, never reads stdin: the write races the child's exit.
+    const script = makeFakeClaude(dir, ['exit 0']);
+    const hugePrompt = 'x'.repeat(4 * 1024 * 1024);
+
+    const result = await dispatch('system', hugePrompt, {
+      command: script,
+      cwd: dir,
+      model: 'test-model',
+      route: 'ollama-cloud',
+      timeout_ms: 5000,
+    });
+
+    // The contract is only that dispatch RESOLVES with a result; the exact exit/warnings belong to
+    // the adapter's normal non-zero-output handling.
+    assert.equal(typeof result, 'object');
+    assert.ok(result !== null);
+    assert.ok('exit' in result, `result must carry an exit code: ${JSON.stringify(Object.keys(result))}`);
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
