@@ -19,3 +19,15 @@ docs/specs/*.codex.json
 
 # test-impact-analysis coverage map (transient local cache; rebuild with `npm run test:tia-build`)
 .tia-cache/
+
+# v0.18.0 — dev-only dependencies are never vendored; runtime deps stay tracked (see check-vendored-deps.mjs)
+node_modules/.package-lock.json
+node_modules/.bin/
+node_modules/typescript/
+node_modules/@types/
+node_modules/undici-types/
+node_modules/ajv/
+node_modules/fast-deep-equal/
+node_modules/json-schema-traverse/
+node_modules/require-from-string/
+node_modules/fast-uri/
