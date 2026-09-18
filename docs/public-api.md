@@ -8,7 +8,7 @@ The stable slash commands are derived from command filenames and their argument 
 
 ## Bridge CLI
 
-Every runtime verb is inventoried below. Cases are executable coverage records, and every flag is exercised by at least one successful case whose invocation actually includes `--flag` or `--flag=value` when the flag has a success path. Flag contracts describe the permissive parser; individual handlers enforce required values. A JSON case names a recursive shape in `stdout_types`. Primitive arrays use `string[]` (or another primitive element type); record arrays use `{ "type": "object[]", "items": <shape> }`. A plain object shape maps required field names to their nested types and rejects additional fields. Where fields are optional or a record is nullable, the long form is `{ "type": "object" | "object|null", "required": { ... }, "optional": { ... }, "additional": false }`; `additional` defaults to `false`. Unions use `|`. Text cases declare either an exact value or a regular expression. Any verb with non-empty `unsupported` extraction markers must carry a manual entry with a reason and handler-region digest; a digest may also document a known defensive path that executable fixtures cannot induce.
+Every runtime verb is inventoried below. Cases are executable coverage records, and every flag is exercised by at least one successful case whose invocation actually includes `--flag` or `--flag=value` when the flag has a success path. Flag contracts describe the permissive parser; individual handlers enforce required values. A JSON case names a recursive shape in `stdout_types`; `field_values` pins semantically significant values within that shape. Primitive arrays use `string[]` (or another primitive element type); record arrays use `{ "type": "object[]", "items": <shape> }`. A plain object shape maps required field names to their nested types and rejects additional fields. Where fields are optional or a record is nullable, the long form is `{ "type": "object" | "object|null", "required": { ... }, "optional": { ... }, "additional": false }`; `additional` defaults to `false`. Unions use `|`. Text cases declare either an exact value or a regular expression. Any verb with non-empty `unsupported` extraction markers must carry a manual entry with a reason and handler-region digest; a digest may also document a known defensive path that executable fixtures cannot induce. Honest-reporting markers remain readable after expiry: `honest-reporting-is-active` reports `active: true, reason: "active"` for a future expiry, `active: false, reason: "expired"` for an elapsed expiry while retaining the marker object, and `marker-absent-or-malformed` with a null marker when none can be read.
 
 An expansion may name `call`, the normalized source text of one non-literal load expression. When present it exempts only that operation at `site`; another unresolved load in the same file remains an error. The registry expansion below deliberately binds to its single computed adapter import.
 
@@ -22,7 +22,7 @@ JSON consumers may rely on the envelope and check names. Human consumers may rel
 
 ## Project configuration
 
-The schema describes the loader's accepted JSON shape. `version` is intentionally permissive: every non-null JSON value is accepted because the loader checks only presence. For non-library apps, `live_verification.default` is likewise unconstrained and may be numeric or otherwise non-string. Runtime cases separately pin those permissive branches, defaults, environment-dependent validation, validation order, and every loader/model error branch without changing the loader. The unset-password case is marked as a schema exception because JSON Schema cannot observe `process.env`.
+The schema describes the loader's accepted JSON shape. `version` is intentionally permissive: every non-null JSON value is accepted because the loader checks only presence. For non-library apps, `live_verification.default` is likewise unconstrained and may be numeric or otherwise non-string. Scheduled-window times preserve the loader's existing JavaScript coercion: a single-element string array is accepted when its `String()` value is a valid `HH:MM` time. Worktree symlink strings preserve the loader's prefix and slash-segment checks exactly, including embedded newlines and the permissive trailing-newline `"..\n"` case. Runtime cases separately pin those permissive branches, defaults, environment-dependent validation, validation order, and every loader/model error branch without changing the loader. The unset-password case is marked as a schema exception because JSON Schema cannot observe `process.env`.
 
 ## Sidecars
 
@@ -479,6 +479,31 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           },
           "expect": {
             "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "empty-valid-sidecar",
+          "invocation": {
+            "args": [
+              "app-state-get",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
             "stdout": {
               "kind": "empty"
             }
@@ -1340,7 +1365,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         }
       ],
       "stdout_types": {
-        "baseline-no-args": {
+        "no-marker": {
           "active": "boolean",
           "reason": "string",
           "marker": "null"
@@ -1349,12 +1374,44 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "active": "boolean",
           "reason": "string",
           "marker": "null"
+        },
+        "active-marker": {
+          "active": "boolean",
+          "reason": "string",
+          "marker": {
+            "type": "object",
+            "required": {
+              "skillName": "string",
+              "sessionStartedAt": "string",
+              "expiresAt": "string"
+            },
+            "optional": {
+              "specPath": "string"
+            },
+            "additional": false
+          }
+        },
+        "expired-marker": {
+          "active": "boolean",
+          "reason": "string",
+          "marker": {
+            "type": "object",
+            "required": {
+              "skillName": "string",
+              "sessionStartedAt": "string",
+              "expiresAt": "string"
+            },
+            "optional": {
+              "specPath": "string"
+            },
+            "additional": false
+          }
         }
       },
       "exit_meanings": {},
       "cases": [
         {
-          "case": "baseline-no-args",
+          "case": "no-marker",
           "invocation": {
             "args": [
               "honest-reporting-is-active"
@@ -1370,7 +1427,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 0,
             "stdout": {
               "kind": "json",
-              "schema": "baseline-no-args"
+              "schema": "no-marker",
+              "field_values": {
+                "active": false,
+                "reason": "marker-absent-or-malformed",
+                "marker": null
+              }
             }
           }
         },
@@ -1396,6 +1458,66 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "stdout": {
               "kind": "json",
               "schema": "flag-cwd"
+            }
+          }
+        },
+        {
+          "case": "active-marker",
+          "invocation": {
+            "args": [
+              "honest-reporting-is-active",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": "",
+            "setup": "honest-reporting-active"
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "active-marker",
+              "field_values": {
+                "active": true,
+                "reason": "active"
+              }
+            }
+          }
+        },
+        {
+          "case": "expired-marker",
+          "invocation": {
+            "args": [
+              "honest-reporting-is-active",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": "",
+            "setup": "honest-reporting-expired"
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "expired-marker",
+              "field_values": {
+                "active": false,
+                "reason": "expired"
+              }
             }
           }
         }
@@ -1714,11 +1836,36 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "active-marker": {
+          "type": "object",
+          "required": {
+            "skillName": "string",
+            "sessionStartedAt": "string",
+            "expiresAt": "string"
+          },
+          "optional": {
+            "specPath": "string"
+          },
+          "additional": false
+        },
+        "expired-marker": {
+          "type": "object",
+          "required": {
+            "skillName": "string",
+            "sessionStartedAt": "string",
+            "expiresAt": "string"
+          },
+          "optional": {
+            "specPath": "string"
+          },
+          "additional": false
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
-          "case": "baseline-no-args",
+          "case": "no-marker",
           "invocation": {
             "args": [
               "honest-reporting-read-marker"
@@ -1758,6 +1905,58 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 0,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "active-marker",
+          "invocation": {
+            "args": [
+              "honest-reporting-read-marker",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": "",
+            "setup": "honest-reporting-active"
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "active-marker"
+            }
+          }
+        },
+        {
+          "case": "expired-marker",
+          "invocation": {
+            "args": [
+              "honest-reporting-read-marker",
+              "--cwd",
+              "$TMP"
+            ],
+            "stdin": "",
+            "setup": "honest-reporting-expired"
+          },
+          "covers": {
+            "flags": [
+              "cwd"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "expired-marker"
             }
           }
         }
@@ -3831,8 +4030,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "unsupported": [],
       "flag_contract": [],
       "stdout_types": {
-        "baseline-no-args": {
+        "without-reason": {
           "skip": "boolean"
+        },
+        "with-reason": {
+          "skip": "boolean",
+          "reason": "string"
         }
       },
       "exit_meanings": {
@@ -3841,7 +4044,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       },
       "cases": [
         {
-          "case": "baseline-no-args",
+          "case": "without-reason",
           "invocation": {
             "args": [
               "parse-skip-frontmatter"
@@ -3859,7 +4062,37 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 0,
             "stdout": {
               "kind": "json",
-              "schema": "baseline-no-args"
+              "schema": "without-reason",
+              "field_values": {
+                "skip": false
+              }
+            }
+          }
+        },
+        {
+          "case": "with-reason",
+          "invocation": {
+            "args": [
+              "parse-skip-frontmatter"
+            ],
+            "stdin": "live-verification: skip - contract probe"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              0
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "with-reason",
+              "field_values": {
+                "skip": true,
+                "reason": "contract probe"
+              }
             }
           }
         },
@@ -5751,7 +5984,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "json-present": {
+          "halt_reason": "null",
+          "current_phase": "string"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5799,7 +6037,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           }
         },
         {
-          "case": "all-flags-success",
+          "case": "empty-valid-sidecar",
           "invocation": {
             "args": [
               "sidecar-get-autopilot",
@@ -5822,6 +6060,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "json-present",
+          "invocation": {
+            "args": [
+              "sidecar-get-autopilot",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar-autopilot"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "json-present"
+            }
+          }
         }
       ]
     },
@@ -5841,7 +6105,19 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "json-present": {
+          "digest": "string",
+          "dag": {
+            "type": "object",
+            "required": {
+              "ok": "boolean"
+            },
+            "additional": false
+          },
+          "persisted_at": "string"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5889,7 +6165,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           }
         },
         {
-          "case": "all-flags-success",
+          "case": "empty-valid-sidecar",
           "invocation": {
             "args": [
               "sidecar-get-dependency-graph",
@@ -5912,6 +6188,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
               "kind": "empty"
             }
           }
+        },
+        {
+          "case": "json-present",
+          "invocation": {
+            "args": [
+              "sidecar-get-dependency-graph",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar-dependency-graph"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "json-present"
+            }
+          }
         }
       ]
     },
@@ -5931,7 +6233,12 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           "value_type": "string"
         }
       ],
-      "stdout_types": {},
+      "stdout_types": {
+        "json-present": {
+          "block": "string",
+          "persisted_at": "string"
+        }
+      },
       "exit_meanings": {},
       "cases": [
         {
@@ -5979,7 +6286,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           }
         },
         {
-          "case": "all-flags-success",
+          "case": "empty-valid-sidecar",
           "invocation": {
             "args": [
               "sidecar-get-goals",
@@ -6000,6 +6307,32 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "exit": 0,
             "stdout": {
               "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "json-present",
+          "invocation": {
+            "args": [
+              "sidecar-get-goals",
+              "--specPath",
+              "$SPEC"
+            ],
+            "stdin": "",
+            "setup": "sidecar-goals"
+          },
+          "covers": {
+            "flags": [
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "json-present"
             }
           }
         }
@@ -9125,7 +9458,35 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
           }
         },
         {
-          "case": "all-flags-success",
+          "case": "empty-role",
+          "invocation": {
+            "args": [
+              "sidecar-thread-id",
+              "--specPath",
+              "$SPEC",
+              "--role",
+              "contract-unset"
+            ],
+            "stdin": "",
+            "setup": "sidecar"
+          },
+          "covers": {
+            "flags": [
+              "role",
+              "specPath"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "text-present",
           "invocation": {
             "args": [
               "sidecar-thread-id",
@@ -9571,12 +9932,38 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
                               "type": "object",
                               "properties": {
                                 "start": {
-                                  "type": "string",
-                                  "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "minItems": 1,
+                                      "maxItems": 1,
+                                      "items": {
+                                        "type": "string",
+                                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                      }
+                                    }
+                                  ]
                                 },
                                 "end": {
-                                  "type": "string",
-                                  "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "minItems": 1,
+                                      "maxItems": 1,
+                                      "items": {
+                                        "type": "string",
+                                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+                                      }
+                                    }
+                                  ]
                                 }
                               },
                               "additionalProperties": true
@@ -9827,7 +10214,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
                 "items": {
                   "type": "string",
                   "minLength": 1,
-                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+                  "pattern": "^(?!/)(?!(?:[\\s\\S]*/)?\\.\\.(?:/|(?![\\s\\S])))[\\s\\S]+$"
                 }
               }
             },
@@ -10027,6 +10414,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [42] } } } }
     },
     {
+      "case": "scheduled-window-array-coercion",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "start": ["09:00"], "end": ["17:30"] }] } } },
+      "expect": { "ok": true, "config": { "live_verification": { "takeover": { "scheduled_windows": [{ "start": ["09:00"], "end": ["17:30"] }] } } } }
+    },
+    {
+      "case": "scheduled-window-array-invalid",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": { "takeover": { "scheduled_windows": [{ "start": ["25:00"] }] } } },
+      "expect": { "error": "invalid-time-format" }
+    },
+    {
       "case": "worktree-null-defaulted",
       "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": null },
       "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "node_modules", "required": false }, { "path": ".venv", "required": false }, { "path": "venv", "required": false }] } } }
@@ -10035,6 +10432,16 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
       "case": "worktree-missing-symlinks-defaulted",
       "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": {} },
       "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "node_modules", "required": false }, { "path": ".venv", "required": false }, { "path": "venv", "required": false }] } } }
+    },
+    {
+      "case": "worktree-newline-name-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["a\nb"] } },
+      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "a\nb", "required": true }] } } }
+    },
+    {
+      "case": "worktree-trailing-newline-parent-permissive",
+      "input": { "version": 1, "app": { "type": "web" }, "live_verification": {}, "worktree_bootstrap": { "symlinks": ["..\n"] } },
+      "expect": { "ok": true, "config": { "worktree_bootstrap": { "symlinks": [{ "path": "..\n", "required": true }] } } }
     },
     {
       "case": "invalid-app-type",

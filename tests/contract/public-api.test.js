@@ -102,7 +102,9 @@ function assertStdout(stdout, expectation, stdoutTypes, label) {
   assert.equal(typeof expectation.schema, 'string', `${label} needs a JSON schema name`);
   const shape = stdoutTypes[expectation.schema];
   assert.notEqual(shape, undefined, `${label} references missing stdout_types.${expectation.schema}`);
-  assertJsonShape(JSON.parse(stdout), shape, label);
+  const parsed = JSON.parse(stdout);
+  assertJsonShape(parsed, shape, label);
+  if (expectation.field_values) assertSubset(parsed, expectation.field_values, `${label} field_values`);
 }
 
 function assertDeclaredType(value, declaration, path) {
@@ -190,7 +192,7 @@ function projected(verbs) {
 function setupInvocation(setup, caseTemp) {
   const values = { '$TMP': caseTemp, '$REPO': caseTemp, '$SPEC': join(caseTemp, 'docs/spec.md') };
   if (!setup) return { values, env: {} };
-  if (setup === 'repo' || setup === 'sidecar' || setup.startsWith('anchor') || setup.startsWith('app-state') || setup.startsWith('reviewer')) {
+  if (setup === 'repo' || setup.startsWith('sidecar') || setup.startsWith('honest-reporting') || setup.startsWith('anchor') || setup.startsWith('app-state') || setup.startsWith('reviewer')) {
     spawnSync('git', ['init', '-q'], { cwd: caseTemp });
   }
   if (setup === 'anchor-present') {
@@ -205,10 +207,19 @@ function setupInvocation(setup, caseTemp) {
     const seeded = spawnSync(process.execPath, [cli, 'app-state-init', '--specPath', values.$SPEC, '--goals', '[{"id":"g","text":"goal"}]'], { cwd: caseTemp, encoding: 'utf8' });
     assert.equal(seeded.status, 0, seeded.stderr);
   }
-  if (setup === 'sidecar') {
+  if (['sidecar', 'sidecar-autopilot', 'sidecar-dependency-graph', 'sidecar-goals'].includes(setup)) {
     mkdirSync(join(caseTemp, 'docs'), { recursive: true });
     writeFileSync(values.$SPEC, '# spec\n');
     initSidecar(values.$SPEC, { feature: 'contract', codexSession: 'thread', model: 'model', reasoningEffort: 'high' });
+    const seedArgs = {
+      'sidecar-autopilot': ['sidecar-set-autopilot', '--specPath', values.$SPEC, '--block', '{"halt_reason":null,"current_phase":"contract"}'],
+      'sidecar-dependency-graph': ['sidecar-set-dependency-graph', '--specPath', values.$SPEC, '--graph', '{"digest":"contract","dag":{"ok":true}}'],
+      'sidecar-goals': ['sidecar-set-goals', '--specPath', values.$SPEC, '--block', '<<<GOALS>>>contract<<<END_GOALS>>>'],
+    }[setup];
+    if (seedArgs) {
+      const seeded = spawnSync(process.execPath, [cli, ...seedArgs], { cwd: caseTemp, encoding: 'utf8' });
+      assert.equal(seeded.status, 0, seeded.stderr);
+    }
   }
   if (setup === 'sidecar-audit' || setup === 'sidecar-replay') {
     mkdirSync(join(caseTemp, 'docs'), { recursive: true });
@@ -242,6 +253,18 @@ function setupInvocation(setup, caseTemp) {
         current_slice: 'slice-1', current_phase: 'implement', plan_path: 'docs/plan.md',
       },
     }));
+  }
+  if (setup === 'honest-reporting-active' || setup === 'honest-reporting-expired') {
+    const seeded = spawnSync(process.execPath, [cli, 'honest-reporting-mark-active', '--skill', 'contract', '--cwd', caseTemp], {
+      cwd: caseTemp, encoding: 'utf8',
+    });
+    assert.equal(seeded.status, 0, seeded.stderr);
+    if (setup === 'honest-reporting-expired') {
+      const markerPath = join(caseTemp, '.codex-paired', 'honest-reporting-active.json');
+      const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
+      marker.expiresAt = '2000-01-01T00:00:00.000Z';
+      writeFileSync(markerPath, `${JSON.stringify(marker, null, 2)}\n`);
+    }
   }
   if (setup === 'mailbox-message') {
     const written = spawnSync(process.execPath, [cli, 'mailbox-write', '--to', 'orchestrator', '--from', 'slice-1', '--text', 'contract', '--repoRoot', caseTemp], { cwd: caseTemp, encoding: 'utf8' });
@@ -372,6 +395,30 @@ test('runtime unknown-verb inventory is the documented 52-verb inventory', () =>
 test('every CLI coverage case executes and every extracted item is inventoried', () => {
   const documented = block('cli-verbs');
   assertCliContract(documented);
+});
+
+test('every conditional stdout branch has an executable output variant', () => {
+  const verbs = block('cli-verbs').verbs;
+  const expectedCases = {
+    'app-state-get': ['empty-valid-sidecar', 'all-flags-success'],
+    'honest-reporting-is-active': ['no-marker', 'active-marker', 'expired-marker'],
+    'honest-reporting-read-marker': ['no-marker', 'active-marker', 'expired-marker'],
+    'parse-skip-frontmatter': ['without-reason', 'with-reason'],
+    'sidecar-get-autopilot': ['empty-valid-sidecar', 'json-present'],
+    'sidecar-get-dependency-graph': ['empty-valid-sidecar', 'json-present'],
+    'sidecar-get-goals': ['empty-valid-sidecar', 'json-present'],
+    'sidecar-thread-id': ['empty-role', 'text-present'],
+  };
+  for (const [verb, cases] of Object.entries(expectedCases)) {
+    const documented = new Set(verbs[verb].cases.map((item) => item.case));
+    for (const name of cases) assert.ok(documented.has(name), `${verb} missing output variant ${name}`);
+  }
+  const activeCases = Object.fromEntries(verbs['honest-reporting-is-active'].cases.map((item) => [item.case, item]));
+  assert.deepEqual(activeCases['no-marker'].expect.stdout.field_values, {
+    active: false, reason: 'marker-absent-or-malformed', marker: null,
+  });
+  assert.deepEqual(activeCases['active-marker'].expect.stdout.field_values, { active: true, reason: 'active' });
+  assert.deepEqual(activeCases['expired-marker'].expect.stdout.field_values, { active: false, reason: 'expired' });
 });
 
 test('nested public JSON shapes reject malformed records recursively', () => {
@@ -544,7 +591,9 @@ test('project config schema and runtime cases characterize the existing loader',
     'valid-codex-dispatch', 'valid-mailbox', 'valid-codex-model', 'valid-agy-model',
     'live-verification-array-permissive', 'takeover-null-defaulted', 'takeover-array-permissive',
     'scheduled-windows-non-array-defaulted', 'scheduled-window-primitive-permissive',
+    'scheduled-window-array-coercion', 'scheduled-window-array-invalid',
     'worktree-null-defaulted', 'worktree-missing-symlinks-defaulted',
+    'worktree-newline-name-permissive', 'worktree-trailing-newline-parent-permissive',
     'invalid-app-type', 'invalid-takeover-mode', 'invalid-window-start', 'invalid-window-end',
     'missing-live-verification',
     'library-must-skip', 'library-missing-skip-reason', 'unset-login-password-env',
