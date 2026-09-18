@@ -53,7 +53,7 @@ function runtimeClosure(lock) {
     const entry = packages[location];
     if (entry.dev === true) continue;
     if (typeof entry.version !== 'string') throw new Error(`package-lock.json entry ${location} has no version`);
-    expected.set(name, entry.version);
+    expected.set(location, entry.version);
     const dependencies = {
       ...(entry.dependencies ?? {}),
       ...(entry.optionalDependencies ?? {}),
@@ -63,36 +63,62 @@ function runtimeClosure(lock) {
   return expected;
 }
 
+function packageRoot(path) {
+  return path.match(/^node_modules\/(?:@[^/]+\/[^/]+|[^/]+)(?:\/node_modules\/(?:@[^/]+\/[^/]+|[^/]+))*/)?.[0] ?? null;
+}
+
+function packageNameFromLocation(location) {
+  const nested = location.lastIndexOf('/node_modules/');
+  return location.slice(nested === -1 ? 'node_modules/'.length : nested + '/node_modules/'.length);
+}
+
+function findingLabel(location, packageName = packageNameFromLocation(location)) {
+  return parentPackageLocation(location) ? location : packageName;
+}
+
 function trackedPackages() {
   const output = execFileSync('git', ['ls-files', '-z', '--', 'node_modules'], {
     cwd: root,
     encoding: 'utf8',
   });
+  const paths = output.split('\0').filter(Boolean);
+  const trackedPaths = new Set(paths);
   const tracked = new Map();
-  for (const path of output.split('\0').filter(Boolean)) {
-    if (!/^node_modules\/(?:@[^/]+\/[^/]+|[^/]+)(?:\/node_modules\/(?:@[^/]+\/[^/]+|[^/]+))*\/package\.json$/.test(path)) continue;
-    const manifest = readJson(join(root, path));
-    if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') {
-      throw new Error(`${path} must contain string name and version fields`);
+  const untrackedManifests = new Set();
+  const roots = new Set(paths.map(packageRoot).filter(Boolean));
+  for (const location of [...roots].sort()) {
+    const manifestPath = `${location}/package.json`;
+    if (!trackedPaths.has(manifestPath)) {
+      untrackedManifests.add(location);
+      continue;
     }
-    tracked.set(manifest.name, manifest.version);
+    const manifest = readJson(join(root, manifestPath));
+    if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') {
+      throw new Error(`${manifestPath} must contain string name and version fields`);
+    }
+    tracked.set(location, { name: manifest.name, version: manifest.version });
   }
-  return tracked;
+  return { tracked, untrackedManifests };
 }
 
 try {
   const expected = runtimeClosure(readJson(join(root, 'package-lock.json')));
-  const tracked = trackedPackages();
+  const { tracked, untrackedManifests } = trackedPackages();
   const findings = [];
 
-  for (const name of [...tracked.keys()].sort()) {
-    if (!expected.has(name)) findings.push(`extra ${name}@${tracked.get(name)}`);
+  for (const location of [...untrackedManifests].sort()) {
+    findings.push(`extra ${findingLabel(location)}@untracked-manifest`);
   }
-  for (const name of [...expected.keys()].sort()) {
-    if (!tracked.has(name)) {
-      findings.push(`missing ${name}@${expected.get(name)}`);
-    } else if (tracked.get(name) !== expected.get(name)) {
-      findings.push(`version ${name} tracked=${tracked.get(name)} lock=${expected.get(name)}`);
+  for (const location of [...tracked.keys()].sort()) {
+    const pkg = tracked.get(location);
+    if (!expected.has(location)) findings.push(`extra ${findingLabel(location, pkg.name)}@${pkg.version}`);
+  }
+  for (const location of [...expected.keys()].sort()) {
+    const label = findingLabel(location);
+    if (!tracked.has(location)) {
+      findings.push(`missing ${label}@${expected.get(location)}`);
+    } else if (tracked.get(location).version !== expected.get(location)) {
+      findings.push(`version ${findingLabel(location, tracked.get(location).name)} tracked=${tracked.get(location).version} lock=${expected.get(location)}`);
     }
   }
 

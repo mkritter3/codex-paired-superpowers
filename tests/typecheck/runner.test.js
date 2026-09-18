@@ -63,3 +63,24 @@ test('typecheck runner reports invalid compiler options as configuration errors'
   assert.match(result.stderr, /TS5023/);
   assert.match(result.stderr, /Unknown compiler option/);
 });
+
+test('typecheck runner discovers a TypeScript-recognized pragma after leading trivia', () => {
+  const root = join(FIXTURES, 'roots', 'misplaced-pragma');
+  const result = run({ root, allowlist: 'allowlist.json' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /unlisted @ts-check file: lib\/late-pragma\.js/);
+});
+
+test('typecheck runner discovers imported marked files outside scanned directories', () => {
+  const root = join(FIXTURES, 'roots', 'outside-scan');
+  const result = run({ root, allowlist: 'allowlist.json' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /unlisted @ts-check file: tests-like\/helper\.js/);
+});
+
+test('typecheck runner keeps strict pragma placement for allowlisted files', () => {
+  const root = join(FIXTURES, 'roots', 'misplaced-allowlisted-pragma');
+  const result = run({ root, allowlist: 'allowlist.json' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /allowlisted file is missing required @ts-check pragma: lib\/entry\.js/);
+});

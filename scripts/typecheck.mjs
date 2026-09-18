@@ -38,6 +38,10 @@ function hasPragma(path) {
   return lines[index]?.trim() === '// @ts-check';
 }
 
+function isCheckJsEnabled(sourceFile) {
+  return sourceFile.checkJsDirective?.enabled === true;
+}
+
 function normalized(path) {
   return resolve(path);
 }
@@ -58,7 +62,15 @@ function walkMarkedFiles(root) {
       for (const entry of readdirSync(current, { withFileTypes: true })) {
         const path = join(current, entry.name);
         if (entry.isDirectory()) queue.push(path);
-        else if (entry.isFile() && /\.(?:c|m)?js$/.test(entry.name) && hasPragma(path)) marked.push(path);
+        else if (entry.isFile() && /\.(?:c|m)?js$/.test(entry.name)) {
+          const sourceFile = ts.createSourceFile(
+            path,
+            readFileSync(path, 'utf8'),
+            ts.ScriptTarget.Latest,
+            false,
+          );
+          if (isCheckJsEnabled(sourceFile)) marked.push(path);
+        }
       }
     }
   }
@@ -114,7 +126,7 @@ try {
       const marked = new Set(walkMarkedFiles(options.root).map(normalized));
       for (const source of program.getSourceFiles()) {
         if (source.isDeclarationFile || source.fileName.includes(`${sep}node_modules${sep}`)) continue;
-        if (/\.(?:c|m)?js$/.test(source.fileName) && hasPragma(source.fileName)) marked.add(normalized(source.fileName));
+        if (/\.(?:c|m)?js$/.test(source.fileName) && isCheckJsEnabled(source)) marked.add(normalized(source.fileName));
       }
       const unlisted = [...marked].filter((path) => !allowed.has(path)).sort();
       if (unlisted.length > 0) {
