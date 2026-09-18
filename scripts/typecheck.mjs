@@ -109,6 +109,12 @@ try {
   for (const path of absoluteFiles) {
     if (!existsSync(path)) throw new Error(`allowlisted file does not exist: ${shownPath(path, options.root)}`);
     if (!hasPragma(path)) throw new Error(`allowlisted file is missing required @ts-check pragma: ${shownPath(path, options.root)}`);
+    // Placement alone is not enough: a later `// @ts-nocheck` (or any directive TypeScript honours)
+    // can disable checking of a listed owner while the first line still reads `// @ts-check`.
+    const listed = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
+    if (!isCheckJsEnabled(listed)) {
+      throw new Error(`allowlisted file has checking disabled (a later @ts-nocheck overrides its @ts-check): ${shownPath(path, options.root)}`);
+    }
   }
 
   const config = ts.readConfigFile(options.tsconfig, ts.sys.readFile);

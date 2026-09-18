@@ -84,3 +84,10 @@ test('typecheck runner keeps strict pragma placement for allowlisted files', () 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /allowlisted file is missing required @ts-check pragma: lib\/entry\.js/);
 });
+
+test('typecheck runner rejects an allowlisted file whose checking is disabled by a later @ts-nocheck', () => {
+  const result = run({ allowlist: 'allowlists/nocheck-override.json' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /nocheck-override\.js/);
+  assert.match(result.stderr, /checking disabled/);
+});
