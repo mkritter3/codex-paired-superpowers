@@ -380,7 +380,7 @@ test('skills and semver policy blocks match their observed public boundaries', (
   assertSemverContract(block('semver'));
 });
 
-test('runtime unknown-verb inventory is the documented 52-verb inventory', () => {
+test('runtime unknown-verb inventory equals the documented verb inventory', () => {
   const contract = block('cli-verbs');
   const result = spawnSync(process.execPath, [cli, '__unknown__'], { encoding: 'utf8' });
   assert.equal(result.status, contract.unknown_verb.exit);
@@ -388,7 +388,9 @@ test('runtime unknown-verb inventory is the documented 52-verb inventory', () =>
   const match = result.stderr.match(new RegExp(`^${prefix}(.+)$`, 'm'));
   assert.ok(match, result.stderr);
   const runtime = match[1].split(', ');
-  assert.equal(runtime.length, 52);
+  // No hard-coded count: every release that adds a verb would have to edit it, and the equality
+  // below is the actual contract (runtime verbs == documented verbs, nothing missing, nothing extra).
+  assert.ok(runtime.length > 0, 'runtime must list its verbs');
   assert.deepEqual(runtime.sort(), Object.keys(contract.verbs).sort());
 });
 
