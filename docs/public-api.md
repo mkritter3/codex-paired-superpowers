@@ -4117,6 +4117,108 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
         "region_digest": "sha256:105584241c5c05c13b4a1a79e14fb349cc9606c93155bf23ff568246c8b04f99"
       }
     },
+    "panel-reduce": {
+      "stability": "stable",
+      "since": "0.19.0",
+      "flags": [],
+      "exits": [
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [],
+      "stdout_types": {
+        "reduction": {
+          "status": "string",
+          "blocking": {
+            "type": "object[]",
+            "items": {
+              "member_id": "string",
+              "finding": "string"
+            }
+          },
+          "deferred": {
+            "type": "object[]",
+            "items": {
+              "member_id": "string",
+              "finding": "string"
+            }
+          }
+        }
+      },
+      "exit_meanings": {
+        "1": "panel halt",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-empty-stdin",
+          "invocation": {
+            "args": [
+              "panel-reduce"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "member-halt",
+          "invocation": {
+            "args": [
+              "panel-reduce"
+            ],
+            "stdin": "{\"roster\":[{\"member_id\":\"codex:gpt-a\",\"cli\":\"codex\",\"model\":\"gpt-a\",\"effort\":\"high\"}],\"version\":\"v1\",\"claude\":{\"status\":\"SHIP\",\"critique\":[],\"rationale\":\"ok\",\"deferred\":[],\"version\":\"v1\"},\"members\":[{\"member_id\":\"codex:gpt-a\",\"verdict\":{\"status\":\"SHIP\",\"critique\":[],\"rationale\":\"ok\",\"deferred\":[],\"version\":\"wrong\"}}]}"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "unanimous-ship",
+          "invocation": {
+            "args": [
+              "panel-reduce"
+            ],
+            "stdin": "{\"roster\":[{\"member_id\":\"codex:gpt-a\",\"cli\":\"codex\",\"model\":\"gpt-a\",\"effort\":\"high\"}],\"version\":\"v1\",\"claude\":{\"status\":\"SHIP\",\"critique\":[],\"rationale\":\"ok\",\"deferred\":[],\"version\":\"v1\"},\"members\":[{\"member_id\":\"codex:gpt-a\",\"verdict\":{\"status\":\"SHIP\",\"critique\":[],\"rationale\":\"ok\",\"deferred\":[],\"version\":\"v1\"}}]}"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "reduction"
+            }
+          }
+        }
+      ]
+    },
     "parse-skip-frontmatter": {
       "stability": "stable",
       "since": "0.18.0",
@@ -4315,6 +4417,204 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
             "stdout": {
               "kind": "json",
               "schema": "resolved-roster"
+            }
+          }
+        }
+      ]
+    },
+    "review-panel-member": {
+      "stability": "stable",
+      "since": "0.19.0",
+      "flags": [
+        "member-id",
+        "model",
+        "planPath",
+        "repoRoot",
+        "role",
+        "sha",
+        "specPath",
+        "timeout-ms",
+        "version"
+      ],
+      "exits": [
+        1,
+        2
+      ],
+      "stdoutKeys": [],
+      "unsupported": [],
+      "flag_contract": [
+        {
+          "name": "member-id",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "model",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "planPath",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "repoRoot",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "role",
+          "required": true,
+          "value_type": "planning|review"
+        },
+        {
+          "name": "sha",
+          "required": false,
+          "value_type": "string"
+        },
+        {
+          "name": "specPath",
+          "required": true,
+          "value_type": "string"
+        },
+        {
+          "name": "timeout-ms",
+          "required": false,
+          "value_type": "non-negative integer"
+        },
+        {
+          "name": "version",
+          "required": true,
+          "value_type": "string"
+        }
+      ],
+      "stdout_types": {
+        "member-result": {
+          "member_id": "string",
+          "verdict": {
+            "status": "string",
+            "critique": "string[]",
+            "rationale": "string",
+            "deferred": "string[]",
+            "version": "string|null"
+          },
+          "conversation_id": "string|null",
+          "usage": "json"
+        }
+      },
+      "exit_meanings": {
+        "1": "member turn failure",
+        "2": "usage or validation failure"
+      },
+      "cases": [
+        {
+          "case": "baseline-no-args",
+          "invocation": {
+            "args": [
+              "review-panel-member"
+            ],
+            "stdin": ""
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              2
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 2,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "member-failure",
+          "invocation": {
+            "args": [
+              "review-panel-member",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO",
+              "--member-id",
+              "agy:gemini-3.8-flash-high",
+              "--model",
+              "gemini-3.8-flash-high",
+              "--version",
+              "v1"
+            ],
+            "stdin": "round 1",
+            "setup": "reviewer-failure"
+          },
+          "covers": {
+            "flags": [],
+            "exits": [
+              1
+            ],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 1,
+            "stdout": {
+              "kind": "empty"
+            }
+          }
+        },
+        {
+          "case": "all-flags-success",
+          "invocation": {
+            "args": [
+              "review-panel-member",
+              "--role",
+              "review",
+              "--specPath",
+              "$SPEC",
+              "--repoRoot",
+              "$REPO",
+              "--member-id",
+              "agy:gemini-3.8-flash-high",
+              "--model",
+              "gemini-3.8-flash-high",
+              "--version",
+              "v1",
+              "--sha",
+              "$HEAD",
+              "--planPath",
+              "$SPEC",
+              "--timeout-ms",
+              "5000"
+            ],
+            "stdin": "round 1",
+            "setup": "reviewer-success",
+            "env": {
+              "FAKE_AGY_RESPONSE": "<<<VERDICT>>>\nstatus: SHIP\nversion: v1\ncritique: []\ndeferred: []\nrationale: checked\n<<<END>>>"
+            }
+          },
+          "covers": {
+            "flags": [
+              "member-id",
+              "model",
+              "planPath",
+              "repoRoot",
+              "role",
+              "sha",
+              "specPath",
+              "timeout-ms",
+              "version"
+            ],
+            "exits": [],
+            "stdoutKeys": []
+          },
+          "expect": {
+            "exit": 0,
+            "stdout": {
+              "kind": "json",
+              "schema": "member-result"
             }
           }
         }
@@ -10321,6 +10621,9 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
   },
   "closure": [
     "lib/codex-bridge/active-anchor.js",
+    "lib/codex-bridge/availability/cache.js",
+    "lib/codex-bridge/availability/detector.js",
+    "lib/codex-bridge/availability/prober.js",
     "lib/codex-bridge/checkout-markers.js",
     "lib/codex-bridge/checkout-reaper.js",
     "lib/codex-bridge/cli-harness/adapters/agy.js",
@@ -10340,17 +10643,26 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/mailbox.js",
     "lib/codex-bridge/models.js",
     "lib/codex-bridge/project-config.js",
+    "lib/codex-bridge/review-panel-run.js",
     "lib/codex-bridge/review-panel.js",
     "lib/codex-bridge/reviewer-thread.js",
+    "lib/codex-bridge/role-routing/cli-clients.js",
+    "lib/codex-bridge/role-routing/config-loader.js",
+    "lib/codex-bridge/role-routing/errors.js",
+    "lib/codex-bridge/role-routing/recommendations.js",
     "lib/codex-bridge/scenario-validator.js",
     "lib/codex-bridge/sidecar.js",
     "lib/codex-bridge/skip-frontmatter.js",
     "lib/codex-bridge/validation-coverage.js",
+    "lib/codex-bridge/verdict.js",
     "lib/codex-bridge/worktree.js",
     "scripts/lib/process-ownership.mjs"
   ],
   "module_digest": {
     "lib/codex-bridge/active-anchor.js": "sha256:efeec4ebb5735a634b5c2314a0ab3e4812d31a0446df9857bafbcca04fb908a5",
+    "lib/codex-bridge/availability/cache.js": "sha256:014aec22d96719353a2ef898b15732bad701ca15196ebc9a9ef6c74ba41a5125",
+    "lib/codex-bridge/availability/detector.js": "sha256:9d640898dba68db1cdccca087e410db5a15e36bf182cbc9f4d604e6fe77a7ea6",
+    "lib/codex-bridge/availability/prober.js": "sha256:dd791a5dc8e6e83015de086f5012b2bac9491c5fdf30a77d927556f120bafbaa",
     "lib/codex-bridge/checkout-markers.js": "sha256:a37c9fa77bfab898f7abb25551c5057912c53fb1b6b140b8f798425906b7cf48",
     "lib/codex-bridge/checkout-reaper.js": "sha256:36365aae8bc77633fd2359e7525c3759cc3b87ea5ed331b97b47abe3c8e72a64",
     "lib/codex-bridge/cli-harness/adapters/agy.js": "sha256:382a4b360e58045da4f9cc6f7b0b8d5b37d9a8b8d365f2b7e1a045a180f29b81",
@@ -10361,7 +10673,7 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/cli-harness/harness.js": "sha256:486f95ace75081d35c5d5bb9a1a2fdb6b6c55408004f5bf5c3d30a49148a3480",
     "lib/codex-bridge/cli-harness/normalizer.js": "sha256:58fbeb5440487f14f1f11ca7906e157d034dbada63449ac68875ce2bb4c0444d",
     "lib/codex-bridge/cli-harness/process-lifecycle.js": "sha256:d35fef32b503bc5e40f7f58e27e0599c07f96d164f36f25cd52425aae5dac978",
-    "lib/codex-bridge/cli.js": "sha256:1609849ae2294227e5a6a990d88f149972f6f618d3d6cb323e0846999be0d0d1",
+    "lib/codex-bridge/cli.js": "sha256:d73b2ecee9e785ff5157a9b47bdafa5f2d0d96846737da4943ae9baf62df7a43",
     "lib/codex-bridge/halt-envelope.js": "sha256:daca46b4d7f6a5b1c6c0055751254d1bbcf66eefe711d8e5cb4c3a944a38d731",
     "lib/codex-bridge/honest-reporting-marker.js": "sha256:a8b076f88fb440f6b0b0508f54ec16873f3d83dc46b4cee81f7c71416e89d2f2",
     "lib/codex-bridge/implementer/member-id.js": "sha256:3dab9201d15462172d8e37247838c1c49329055caf97707a0704b711e1d21f94",
@@ -10370,12 +10682,18 @@ Any slice changing a pinned module or pinned JSON input must run `node scripts/c
     "lib/codex-bridge/mailbox.js": "sha256:786e519d904e1176f12227e403af8107071e4594b0d9178d64e5627044fd1a06",
     "lib/codex-bridge/models.js": "sha256:2f5e000fded6907ac318e6c6e6f8d1a5eea023a5b200e4689fffa3b6cbcdcff2",
     "lib/codex-bridge/project-config.js": "sha256:3840f68021ffc20f8add89442e41906265d08bd5ec3fdd02f9651bacb0caf445",
+    "lib/codex-bridge/review-panel-run.js": "sha256:79554912d762f683dd0ad563ccca842b34a31374e1fa7a955b3ab690d68671e4",
     "lib/codex-bridge/review-panel.js": "sha256:1f1f61f9acc74ef63996cdc6ca69d2a16ee2a5f32cdce409b07c9905af5cbf0e",
-    "lib/codex-bridge/reviewer-thread.js": "sha256:62bf4c6674baafec797a72465cc453a284d24810362f79003e8ac2c6e080a764",
+    "lib/codex-bridge/reviewer-thread.js": "sha256:269ec5d97edc48c4e614f712f4bddcf7c5896fc8b024a67618fc0eb1f4cfc945",
+    "lib/codex-bridge/role-routing/cli-clients.js": "sha256:8c8b9ecca0595566c342cc81445f55ab5fe9b749cfbb9538ec14939b6d4b0033",
+    "lib/codex-bridge/role-routing/config-loader.js": "sha256:e8e773d8a0f58bb8a3106e73515ff723cca6cf24664c4a43ced4747318023b00",
+    "lib/codex-bridge/role-routing/errors.js": "sha256:2f79bc7d21eb6d5c0670b853a8e840437c6160f196ce0f3063f1e69fc6235cb9",
+    "lib/codex-bridge/role-routing/recommendations.js": "sha256:8ede395041e25fdd1b5ec704cbd152d7ee3e7177bcda48bbd1646068ba2357ef",
     "lib/codex-bridge/scenario-validator.js": "sha256:2326e5d1b9c8f1ba9e78a9b2291dcca21211b7060a26141849f5c593a410c5f1",
     "lib/codex-bridge/sidecar.js": "sha256:4c8f0e545a22644330f864ccb84470a91e6c89626435e66ea2e1cd4cef5524d4",
     "lib/codex-bridge/skip-frontmatter.js": "sha256:c4b1fc93c1f38c5c784865525f3a40f6a522571bf52a063b613ce02e261d8b2a",
     "lib/codex-bridge/validation-coverage.js": "sha256:1bcfb4024aa0b236ce4119695be4a330760355b8ab8caba93ccc04d94f4fee1d",
+    "lib/codex-bridge/verdict.js": "sha256:dcd1b71ea769990a84ad2b1af39837628a33651c6ce1e08144e795afb93d1cb1",
     "lib/codex-bridge/worktree.js": "sha256:d98507a7a5850f49db90d2421e3b4d59d1de8853f80b75a1449eb20831ac69f6",
     "scripts/lib/process-ownership.mjs": "sha256:08769b406b72e1458da9f8e8e92e1ca2fcccc13d06fd78666ba5be41f58ab802"
   },
