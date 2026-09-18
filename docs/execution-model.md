@@ -91,12 +91,26 @@ diff touches, not from how big it feels.
 | **standard** | anything under `lib/`, `scripts/`, `bin/`, `tests/`, `skills/`, or any contract document (below) | Claude first, then the `review` role; both must approve the same commit | 7 | dispatched per the implementer contract |
 | **prose** | only paths in the prose allowlist (below) | the `review` role once; Claude's own read is the first pass as always | 2 | none — the orchestrator edits directly |
 
-**Prose allowlist:** `README.md`, `docs/**/*.md` EXCEPT the contract documents, and
-`docs/specs/**` / `docs/plans/**` status blocks.
+**Prose allowlist** (a path qualifies only if it matches the first line and none of the exclusions):
+
+- include: `README.md`, `docs/**/*.md`
+- exclude: the contract documents below; `docs/specs/**` and `docs/plans/**`; `docs/integration/**`
+
+A frozen spec or plan is never editable in the prose lane, with one exception: **appending a status
+block** (an execution-status section that records what shipped) is a prose-lane edit. Any other edit
+to a spec or plan changes a frozen artifact and is standard lane, because acceptance criteria are
+the thing the reviewers agreed to.
 
 **Contract documents (always standard lane):** `docs/public-api.md`,
-`docs/codex-implementer-contract.md`, `docs/execution-model.md` (this file). Structural and contract
-tests assert on these, so a change to one is a behaviour change.
+`docs/codex-implementer-contract.md`, `docs/execution-model.md` (this file).
+
+The criterion for this list is **consumption, not assertion**: these three are read as contracts by
+code or by the contract tests (the public-API blocks are executed case by case; the implementer
+contract's locked command forms are what the skills compose; this file's lane and digest rules are
+what the drivers follow). Other documents also have structural assertions —
+`docs/integration/v0.10.0-ecosystem-notes.md` and `docs/integration/future-grep-policy.md` have
+heading and command checks — and those assertions keep protecting them in either lane; they are
+excluded from the prose lane out of caution, not because an edit to them is a behaviour change.
 
 Three rules keep the prose lane honest:
 1. `npm test` must pass. The structural tests already assert on README and the contract documents,

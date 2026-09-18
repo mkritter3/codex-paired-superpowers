@@ -1526,23 +1526,59 @@ test('v0.18.1: the verdict format classifies findings and forbids a round for a 
   assert.ok(/do\s+not\s+downgrade/i.test(vf.replace(/\s+/g, ' ')), 'verdict-format must keep reviewer judgement explicit');
 });
 
-test('v0.18.1: execution-model defines both review lanes, and the prose lane excludes code and contract docs', () => {
+test('v0.18.1: execution-model defines both review lanes, and the prose lane excludes code, specs/plans and contract docs', () => {
   const em = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
   const lanes = em.slice(em.indexOf('## Review lanes'));
   assert.ok(lanes.length > 0, 'execution-model must have a Review lanes section');
   for (const needed of ['standard', 'prose', 'Prose allowlist', 'Contract documents']) {
     assert.ok(lanes.includes(needed), `Review lanes must describe ${needed}`);
   }
-  // Code paths must never be in the prose lane.
-  const allowlist = lanes.slice(lanes.indexOf('**Prose allowlist:**'), lanes.indexOf('**Contract documents'));
+  const allowlist = lanes.slice(lanes.indexOf('**Prose allowlist'), lanes.indexOf('**Contract documents')).replace(/\s+/g, ' ');
+  // No code path may be reviewable in the prose lane.
   for (const code of ['lib/', 'scripts/', 'bin/', 'tests/', 'skills/']) {
-    assert.ok(!allowlist.includes(code), `prose allowlist must not include ${code}`);
+    assert.ok(!new RegExp(`include:[^]]*${code.replace('/', '\\/')}`).test(allowlist), `prose allowlist must not include ${code}`);
   }
-  // The three documents that tests assert on must be named as standard-lane.
-  const contracts = lanes.slice(lanes.indexOf('**Contract documents'));
+  // A frozen spec or plan must be excluded, so acceptance criteria cannot change under one reviewer.
+  for (const frozen of ['docs/specs/**', 'docs/plans/**', 'docs/integration/**']) {
+    assert.ok(new RegExp(`exclude:[\\s\\S]*${frozen.replace(/[*/]/g, (c) => `\\${c}`)}`).test(allowlist),
+      `prose allowlist must exclude ${frozen}`);
+  }
+  assert.ok(/appending a status block/i.test(allowlist), 'the one spec/plan exception must be named');
+  const contracts = lanes.slice(lanes.indexOf('**Contract documents')).replace(/\s+/g, ' ');
   for (const doc of ['docs/public-api.md', 'docs/codex-implementer-contract.md', 'docs/execution-model.md']) {
     assert.ok(contracts.includes(doc), `${doc} must be listed as a contract document`);
   }
+  // The criterion must be consumption, not "a test asserts on it" — two integration docs also have
+  // assertions and are not contracts.
+  assert.ok(/consumption, not assertion/i.test(contracts), 'the contract-document criterion must be stated');
+});
+
+test('v0.18.1: the lane is chosen before any writer dispatch, and rechecked before review', () => {
+  const sdd = readSkill('subagent-driven-development');
+  const a0 = sdd.indexOf('### Step A0');
+  const stepA = sdd.indexOf('### Step A: dispatch the implementer');
+  const stepC = sdd.indexOf('### Step C: open Codex slice review');
+  assert.ok(a0 > 0 && a0 < stepA, 'SDD must pick the lane before Step A dispatches a writer');
+  assert.ok(/skip Step A entirely/i.test(sdd.slice(a0, stepA)), 'the prose lane must skip the writer dispatch');
+  assert.ok(/Recheck the lane/i.test(sdd.slice(stepC, stepC + 800)), 'Step C must recheck the lane against the real diff');
+
+  const ap = readSkill('autopilot');
+  const b1 = ap.indexOf('#### Phase B.1');
+  const b4 = ap.indexOf('#### Phase B.4');
+  const phaseC = ap.indexOf('### Phase C: review-slice');
+  assert.ok(b1 > 0 && b1 < b4, 'autopilot B.1 must come before the B.4 dispatch');
+  assert.ok(/Pick the review lane/i.test(ap.slice(b1, b4)), 'autopilot must pick the lane in B.1, before dispatch');
+  assert.ok(/Recheck the lane/i.test(ap.slice(phaseC, phaseC + 800)), 'Phase C must recheck the lane');
+});
+
+test('v0.18.1: deferred findings survive parsing and have a durable home', () => {
+  const vf = readFileSync(join(PLUGIN_ROOT, 'lib', 'codex-bridge', 'prompts', 'verdict-format.md'), 'utf8');
+  assert.ok(/slice_reviews\[<work-item>\]\.deferred/.test(vf), 'verdict-format must name the durable sidecar field');
+  assert.ok(/rubric evidence/i.test(vf) && /parseValidationCoverage/.test(vf),
+    'verdict-format must state that critique always carries the rubric evidence');
+  assert.ok(!/blocking findings only; empty is fine/.test(vf), 'the empty-critique instruction must be gone');
+  const src = readFileSync(join(PLUGIN_ROOT, 'lib', 'codex-bridge', 'verdict.js'), 'utf8');
+  assert.ok(/deferred/.test(src), 'parseVerdict must preserve the deferred field');
 });
 
 test('v0.18.1: both review-opening skills pick a lane and batch deferred findings', () => {
@@ -1550,7 +1586,7 @@ test('v0.18.1: both review-opening skills pick a lane and batch deferred finding
     const content = readSkill(skill);
     const i = content.indexOf(heading);
     assert.ok(i > 0, `${skill}/SKILL.md must still have ${heading}`);
-    const section = content.slice(i, i + 1600);
+    const section = content.slice(i, i + 1600).replace(/\s+/g, ' ');
     assert.ok(/Review lanes/.test(section), `${skill} must send the reader to the Review lanes policy`);
     assert.ok(/deferred/i.test(section) && /never open(s)? (its own|a new) round/i.test(section), `${skill} must state that deferred findings do not open a round`);
   }

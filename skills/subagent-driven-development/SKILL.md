@@ -23,6 +23,22 @@ The marker has an 8-hour TTL and auto-expires; no cleanup needed.
 
 ## Per-slice flow
 
+### Step A0: pick the review lane (v0.18.1 — before any dispatch)
+
+Read `docs/execution-model.md` "Review lanes" and choose a **provisional** lane from what this work
+item's **Files:** list touches, BEFORE Step A. The lane decides whether a writer is dispatched at
+all, so choosing it at review time would forfeit the saving:
+
+- **prose lane** (Files are all prose-allowlist paths): skip Step A entirely — no writer dispatch.
+  Edit the files yourself, capture the diff (Step B), do your own read (Step C0), then open ONE
+  review with the `review` role, cap 2 rounds. Fixes are your own edits, not dispatched passes.
+- **standard lane** (anything else): Steps A through C as written, both reviewers, cap 7.
+
+**Recheck before review.** At Step C, compare the lane against the **actual** committed diff. If a
+prose-lane item turned out to touch `lib/`, `scripts/`, `bin/`, `tests/`, `skills/` or a contract
+document, it re-enters the standard lane: both reviewers, cap 7, from round 1. Never finish a code
+change under a prose-lane review.
+
 ### Step A: dispatch the implementer (Codex writes the code — v0.16.0)
 Interactive execution uses the **same dispatcher registry and ladder as autopilot** (not an upstream
 subagent). Resolve the slice's domain (autopilot Phase B.0 rules), then climb the single-implementer
@@ -90,10 +106,9 @@ Claude reviews first; Codex second; both must SHIP the **same commit**. Bounded 
 
 ### Step C: open Codex slice review
 
-**Pick the lane first (v0.18.1).** Read `docs/execution-model.md` "Review lanes". If this work
-item's diff touches only prose-allowlist paths, use the prose lane: one reviewer, max 2 rounds, no
-writer dispatch — you edit directly. Anything touching `lib/`, `scripts/`, `bin/`, `tests/`,
-`skills/` or a contract document stays in the standard lane below.
+**Recheck the lane (v0.18.1).** Rules: `docs/execution-model.md` "Review lanes". The lane was chosen in Step A0; confirm it against the actual
+committed diff now. A prose-lane item whose diff touches `lib/`, `scripts/`, `bin/`, `tests/`,
+`skills/` or a contract document re-enters the standard lane from round 1 (both reviewers, cap 7).
 
 **Deferred findings are batched (v0.18.1).** The reviewer classifies every finding as blocking or
 deferred (`lib/codex-bridge/prompts/verdict-format.md`). Deferred items never open a new round:

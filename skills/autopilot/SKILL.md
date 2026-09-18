@@ -458,6 +458,13 @@ for (const identity of result.selected) {
 
 #### Phase B.1 — Pre-dispatch checklist (Claude reads the slice section)
 
+**0. Pick the review lane (v0.18.1 — this decides whether a writer is dispatched).** Read
+`docs/execution-model.md` "Review lanes" and choose a provisional lane from the slice's **Files:**
+list. If every path is on the prose allowlist, the slice runs in the **prose lane**: no writer
+dispatch (skip B.4 for this slice and edit the files yourself), one reviewer in Phase C, cap 2
+rounds, fixes are your own edits. Anything else is the **standard lane** as written below. Phase C
+rechecks the lane against the real diff and escalates if it changed.
+
 Before any worktree work, read the current slice section directly from the plan markdown. Apply these checks **literally** — paraphrase or guesswork is non-conforming.
 
 **Implementer directive (`**Implementer:**` line in the slice section):**
@@ -1426,10 +1433,10 @@ Implementing subagents in Phase B (and any fix-subagent) MUST follow this to avo
 
 ### Phase C: review-slice
 
-**Pick the lane first (v0.18.1).** Read `docs/execution-model.md` "Review lanes". A work item whose
-diff touches only prose-allowlist paths uses the prose lane: one reviewer, max 2 rounds, no writer
-dispatch — the orchestrator edits directly. Anything touching `lib/`, `scripts/`, `bin/`, `tests/`,
-`skills/` or a contract document stays in the standard lane (both reviewers, same commit).
+**Recheck the lane (v0.18.1).** Rules: `docs/execution-model.md` "Review lanes". The provisional lane was chosen in Phase B.1 from the slice's
+**Files:** list; confirm it against the actual committed diff now. A prose-lane slice whose diff
+touches `lib/`, `scripts/`, `bin/`, `tests/`, `skills/` or a contract document re-enters the
+standard lane from round 1 (both reviewers, unanimous on one commit, cap 7).
 
 **Deferred findings are batched (v0.18.1).** The reviewer classifies every finding as blocking or
 deferred (`lib/codex-bridge/prompts/verdict-format.md`); a deferred item never opens its own round.
