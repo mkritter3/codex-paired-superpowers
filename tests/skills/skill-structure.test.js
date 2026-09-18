@@ -1688,3 +1688,27 @@ test('v0.19.0: version fields agree', () => {
   assert.equal(plugin, pkg);
   assert.ok(market.every((version) => version === pkg), JSON.stringify(market));
 });
+
+test('v0.19.0: panel member threads persist per member and fresh members get the canonical instructions', () => {
+  const pairing = readFileSync(join(PLUGIN_ROOT, 'skills/brainstorming/codex-pairing.md'), 'utf8');
+  const procedure = section(pairing, '## Review panel rounds (v0.19.0)', null);
+  // Every thread command names the sidecar, and the lookup comes before any open.
+  for (const verb of ['sidecar-thread-id', 'sidecar-rotate-thread-id']) {
+    const at = procedure.indexOf(`${verb} --specPath`);
+    assert.ok(at >= 0, `${verb} must pass --specPath`);
+  }
+  assert.ok(procedure.indexOf('sidecar-thread-id --specPath') < procedure.indexOf('sidecar-rotate-thread-id --specPath'));
+  assert.match(procedure, /Never open a second thread for a member/);
+  for (const prompt of ['system-rubric.md', 'verdict-format.md', 'validation-rubric.md']) {
+    assert.ok(procedure.includes(`lib/codex-bridge/prompts/${prompt}`), `round prompt includes ${prompt}`);
+  }
+  assert.match(procedure.replace(/\s+/g, ' '), /a panel never reviews an uncommitted draft/);
+});
+
+test('v0.19.0: a configured panel commits Phase D docs before reviewing; the unconfigured deferred commit stays', () => {
+  const body = readSkill('autopilot');
+  const phaseCD = section(body, '### Phase C: review-slice', '### Phase E');
+  assert.match(phaseCD.replace(/\s+/g, ' '), /With a configured review panel, \*\*Phase D commits before it reviews\*\*/);
+  assert.match(phaseCD, /4\. \*\*Apply the doc edits to the working tree but do NOT commit yet\.\*\*/);
+  assert.match(phaseCD, /6\. \*\*Only on double-SHIP:\*\* commit the docs/);
+});

@@ -199,18 +199,42 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel --phase <plann
 
 1. **Artifact version V.** Spec or plan: `sha256:` plus the hex digest of the file bytes
    (`shasum -a 256 "<file>" | cut -d' ' -f1`). Code: `git rev-parse HEAD` (full 40 hex). Every
-   member's prompt states V verbatim.
+   member's prompt states V verbatim. **What is reviewed must be exactly V:** in a code phase,
+   commit everything under review before the round (a panel never reviews an uncommitted draft,
+   because the approval must attach to the commit that ships); a revision is a new commit and a new
+   round on the new V.
 2. **Claude reviews first**, independently, and writes its verdict block including `version: V`.
-3. **Compose the round prompt**: the skill's normal review prompt for this phase, plus Claude's
-   findings, plus `Artifact version: V` and "include `version: V` in your verdict block". Write it
-   to a file (`<scratch>/panel-round-<N>.md`). Every member receives this same text.
+3. **Compose the round prompt** and write it to a file (`<scratch>/panel-round-<N>.md`). Every
+   member receives this same text, in this order:
+   1. the canonical instructions, verbatim, because a fresh member has not inherited them from a
+      thread: `lib/codex-bridge/prompts/system-rubric.md`, then
+      `lib/codex-bridge/prompts/verdict-format.md`, then — for `plan-slice:<id>`,
+      `review-slice:<id>` and `docs-update` — `lib/codex-bridge/prompts/validation-rubric.md`;
+   2. the skill's normal review prompt for this phase (goals, artifact, diff or file references);
+   3. Claude's findings for this round;
+   4. `Artifact version: V` and "include `version: V` in your verdict block".
+   Repeating the instructions to a member whose thread already has them is harmless.
 4. **Dispatch every member in the same turn**, so none sees another's current verdict:
-   - **Codex member**: its own thread, keyed `<sidecarKey>:<member_id>` (`paired-reviewer` for
-     planning, `execution-reviewer` for review). Round 1 opens it with the `codex` MCP tool using
-     that member's `model` and `config.model_reasoning_effort = effort`, then stores it with
-     `sidecar-rotate-thread-id --role "<sidecarKey>:<member_id>" --newThreadId <id> --reason
-     panel-member-open`. Later rounds continue it with `codex-reply` (look it up with
-     `sidecar-thread-id --role "<sidecarKey>:<member_id>"`). Two Codex models means two threads.
+   - **Codex member**: one persistent thread per feature, sidecar key and member, keyed
+     `<sidecarKey>:<member_id>` (`paired-reviewer` for planning, `execution-reviewer` for review);
+     two Codex models means two threads. The same thread carries the spec, every plan round and
+     every slice of that phase family. Look it up first:
+     ```bash
+     node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-thread-id --specPath "<spec>" \
+       --role "<sidecarKey>:<member_id>"
+     ```
+     - **Empty output (no thread yet)**: open one with the `codex` MCP tool, passing that member's
+       roster `model` and `config: {"model_reasoning_effort": "<effort>"}` (the resolved roster
+       entry, never a hand-typed id), then store it:
+       ```bash
+       node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" sidecar-rotate-thread-id --specPath "<spec>" \
+         --role "<sidecarKey>:<member_id>" --newThreadId "<threadId>" --reason panel-member-open
+       ```
+     - **A thread id**: continue it with `codex-reply`. Never open a second thread for a member
+       that has one.
+     - **The thread is lost** (`Session not found`): the legacy role-wide recovery does not apply
+       to member threads yet. Treat it as a failed member turn: halt with
+       `panel-member-unavailable` naming the member, and tell the user. The panel never shrinks.
    - **Gemini member (`cli: agy`)**: a fresh conversation every round. Build the bounded replay,
      then run the member in the background:
      ```bash

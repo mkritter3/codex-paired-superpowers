@@ -1512,6 +1512,12 @@ written. If `configured` is `true`, send step 3's prompt (and Phase D's) to ever
 round (Codex members on threads keyed `execution-reviewer:<member_id>`), reduce with `panel-reduce`,
 treat the combined blocking findings as step 3's REVISE input, and log with the panel round shape and
 one verification audit per member. The same-commit rule applies to every member.
+With a configured review panel, **Phase D commits before it reviews**: step 4's "do NOT commit yet"
+and step 6's commit-only-on-double-SHIP apply to the unconfigured path only. Instead, commit each docs
+draft as `docs(slice:<N>): <summary>` before its panel round; every member reviews that commit (V =
+`git rev-parse HEAD`, the Gemini checkout at `--sha` V), and a REVISE is fixed in a further
+`docs(slice:<N>):` commit that starts the next round. The round that ships is the one whose V is the
+final commit, so the approvals attach to exactly what merges.
 
 ### Phase D: docs-update
 1. Compute the slice's diff again: `git diff <slice_start_sha>..HEAD`.
