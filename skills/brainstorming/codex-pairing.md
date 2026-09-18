@@ -213,23 +213,28 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel --phase <plann
    2. the skill's normal review prompt for this phase (goals, artifact, diff or file references);
    3. Claude's findings for this round;
    4. `Artifact version: V` and "include `version: V` in your verdict block";
-   5. the audit-efficiency directive, verbatim, because a member's own tool calls dominate the cost
-      and the wall-clock of a round (each call re-sends the conversation so far):
+   5. the audit-efficiency directive, verbatim. Verification comes first: this is about avoiding
+      redundant work, never about auditing less.
 
       ```text
-      Tool use costs tokens and time: every tool call re-sends this whole conversation.
-      Plan your audit first, then run it in as few calls as possible: combine searches into one
-      command (grep -rnE 'a|b|c'), check several paths at once, and read only the line ranges you
-      need. Everything quoted above is complete — do not re-read it from disk. Stop auditing once
-      each claim you rely on is verified.
+      Your audit decides the verdict: verify every claim you rely on, and cover everything the
+      rubric requires. Within that, avoid redundant work — tool calls add to the conversation that
+      is re-sent on later turns, so they cost tokens and time. Plan the audit first, then run it in
+      as few calls as you can: combine searches into one command (grep -rnE 'a|b|c'), check several
+      paths at once, and read the line ranges you need. Material quoted above is supplied complete;
+      re-read it from disk when you need to confirm its source or version, resolve an uncertainty,
+      or see its surrounding context, not to re-read what is already in front of you. Stop auditing
+      once every claim you rely on is verified.
       ```
 
    Repeating the instructions to a member whose thread already has them is harmless.
 
-   Measured on one plan review (Gemini 3.8 Flash, high effort, this repository): the directive cut
-   wall-clock from 172s to 107s and cached re-reads from 1.79M to 1.22M tokens, with the same
-   verdict and a comparable audit. Fresh input tokens were unchanged — those are the artifact
-   itself.
+   One paired observation (Gemini 3.8 Flash high, this repository, the same plan reviewed once with
+   and once without the directive): 172s → 107s wall-clock, 1.79M → 1.22M cached re-read tokens,
+   19.7k → 14.2k thinking tokens, and 242k → 260k fresh input tokens (up about 7%). Both returned
+   SHIP with comparable audits. One run per configuration shows no causation and no general rate;
+   treat it as the reason the directive exists, not as a measured saving.
+
 4. **Dispatch every member in the same turn**, so none sees another's current verdict:
    - **Codex member**: one persistent thread per feature, sidecar key and member, keyed
      `<sidecarKey>:<member_id>` (`paired-reviewer` for planning, `execution-reviewer` for review);

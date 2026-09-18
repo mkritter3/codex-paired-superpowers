@@ -1718,9 +1718,11 @@ test('v0.19.0: the panel round prompt carries the audit-efficiency directive', (
     readFileSync(join(PLUGIN_ROOT, 'skills/brainstorming/codex-pairing.md'), 'utf8'),
     '## Review panel rounds (v0.19.0)', null,
   );
-  assert.match(procedure, /Tool use costs tokens and time: every tool call re-sends this whole conversation\./);
-  // The directive must be part of the prompt every member gets, i.e. inside the compose step.
+  // The directive must be part of the prompt every member gets, i.e. inside the compose step,
+  // and must never license a thinner audit: verification outranks economy.
   const compose = section(procedure, '3. **Compose the round prompt**', '4. **Dispatch every member');
-  assert.match(compose, /as few calls as possible/);
-  assert.match(compose, /do not re-read it from disk/);
+  assert.match(compose, /verify every claim you rely on, and cover everything the\s+rubric requires/);
+  assert.match(compose, /as few calls as you can/);
+  assert.match(compose, /re-read it from disk when you need to confirm its source or version/);
+  assert.ok(!/do not re-read/i.test(compose), 'the directive must not forbid re-reading outright');
 });
