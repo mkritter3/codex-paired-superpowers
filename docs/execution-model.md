@@ -79,6 +79,11 @@ transcript-loop failure modes. It is not part of v1 of the unified execution mod
   run). Its behavior is unchanged.
 - **`/execute`** launches the `execution` skill with an explicit driver.
 
+**Public-API digests (v0.18.0).** `docs/public-api.md` pins module digests over the CLI's import
+closure; any slice that changes a pinned module or JSON input refreshes them with
+`scripts/cli-surface.mjs --digest --write` before its verification run (autopilot Phase B.5, SDD
+Step B) so the commit under review is the one with green `npm test`.
+
 The drivers and splits above map onto engines that already exist (the autopilot engine,
 the interactive subagent-driven driver, the symmetric two-implementer orchestrator, and
 the hybrid UI/backend runner). This model is the selection layer over them, not a new

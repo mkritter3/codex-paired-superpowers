@@ -1,7 +1,7 @@
 {
   "name": "codex-paired-superpowers",
   "description": "v0.17.0: Antigravity (agy) transport — any model role can run on Gemini via the `agy` CLI (`cli: agy`), as co-reviewer (agy conversations in a throwaway checkout) and/or code writer (`agy -p` through the same status-file wrapper); Codex stays the default. Codex-paired superpowers for Claude Code. v0.16.0: model roles for the GPT-6 era — Codex writes the code (GPT-5.6 Sol high → GPT-6 Astra medium → Sonnet subagent), Claude reviews first, both must SHIP the same commit; planning on GPT-6 Astra xhigh; two Codex threads per feature (planning + execution); durable attempt evidence + in-flight-safe resume; doctor model/transport checks; one config source (`models` in project.json / CODEX_PAIRED_* env). Prior: v0.15.0 reliability (hook false-positive surgery, hang detection, sink-side round validation); v0.14.0 hybrid dev mode + unified `execution` entry point + reviewer naming; v0.13.0 verification floor + thread-loss recovery; v0.10.x implementer experts + goals audit; v0.9.0 model-routed dev team. One persistent Codex thread per feature; 7-round revision loop with structured verdict protocol.",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "author": {
     "name": "mkr"
   },

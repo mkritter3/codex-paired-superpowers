@@ -53,6 +53,14 @@ replay found two features that each burned a full review round because the fix e
 working tree but not in the committed state the reviewer saw ("staged index still has the old
 regex"). The diff sent to review must be the committed diff, and the tree must be clean.
 
+**Public-API digest refresh (v0.18.0).** If the slice touched any module in the CLI's pinned
+import closure or any pinned JSON input (`docs/public-api.md` `cli-verbs` block: `closure`,
+`module_digest`, `input_digest`), run `node "${CLAUDE_PLUGIN_ROOT}/scripts/cli-surface.mjs --digest --write`
+in the slice's working directory **now — before the verification run and before Step C0** — and
+commit the resulting `docs/public-api.md` diff together with the slice. `npm test` fails on a
+stale digest, so a refresh done later would invalidate the reviewed SHA. The `--write` mode
+touches only those three keys; the documented cases still get their semantic review in Step D.
+
 Collect:
 - Slice scope: the exact task list from the plan for slice N (literal markdown, the bullet list).
 - Diff: `git diff <slice-start-sha>..HEAD -- <files-this-slice-was-meant-to-touch>`

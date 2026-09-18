@@ -1439,3 +1439,63 @@ test('v0.16.0 (slice-6 r2): reviewer helper callers forward the resolved variant
   const wp = readSkill('writing-plans');
   assert.ok(!/^\s*model: [^#\n]*#/m.test(wp), 'writing-plans examples must not put comments on model: lines');
 });
+
+// ── v0.18.0: support policy, CI matrix, shell-suite inventory, bash-3.2 guard list, digest wiring ──
+
+function nodeMajorsFromReadme() {
+  const readme = readFileSync(join(PLUGIN_ROOT, 'README.md'), 'utf8');
+  const m = readme.match(/every released Node major from (\d+) through (\d+)/);
+  assert.ok(m, 'README Prerequisites must state the tested Node major range');
+  const out = [];
+  for (let n = Number(m[1]); n <= Number(m[2]); n += 1) out.push(n);
+  return out;
+}
+
+test('v0.18.0: README tested Node majors == ci.yml matrix == doctor TESTED_NODE_MAJORS == contiguous range from the engines floor', () => {
+  const readme = nodeMajorsFromReadme();
+  const ci = readFileSync(join(PLUGIN_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const ciMatch = ci.match(/^\s*node: \[([0-9, ]+)\]/m);
+  assert.ok(ciMatch, 'ci.yml must declare a node matrix');
+  const matrix = ciMatch[1].split(',').map((x) => Number(x.trim()));
+  const doctor = readFileSync(join(PLUGIN_ROOT, 'bin', 'codex-paired-doctor'), 'utf8');
+  const docMatch = doctor.match(/^TESTED_NODE_MAJORS="([0-9 ]+)"/m);
+  assert.ok(docMatch, 'doctor must define TESTED_NODE_MAJORS');
+  const doctorMajors = docMatch[1].trim().split(/\s+/).map(Number);
+  const pkg = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'package.json'), 'utf8'));
+  const floor = Number(pkg.engines.node.match(/>=\s*(\d+)/)[1]);
+  const top = Math.max(...matrix);
+  const contiguous = [];
+  for (let n = floor; n <= top; n += 1) contiguous.push(n);
+  assert.deepEqual(matrix, contiguous, 'ci.yml matrix must be every major from the engines floor to the top, no gaps');
+  assert.deepEqual(readme, matrix, 'README range must equal the ci.yml matrix');
+  assert.deepEqual(doctorMajors, matrix, 'doctor TESTED_NODE_MAJORS must equal the ci.yml matrix');
+});
+
+test('v0.18.0: every tests/scripts/*.test.sh is in the shell runner suite list or its probe set', () => {
+  const runner = readFileSync(join(PLUGIN_ROOT, 'scripts', 'run-shell-tests.sh'), 'utf8');
+  const listed = new Set([...runner.matchAll(/tests\/scripts\/[a-z0-9-]+\.test\.sh/g)].map((m) => m[0]));
+  const onDisk = readdirSync(join(PLUGIN_ROOT, 'tests', 'scripts')).filter((f) => f.endsWith('.test.sh')).map((f) => `tests/scripts/${f}`);
+  for (const file of onDisk) assert.ok(listed.has(file), `${file} must be in run-shell-tests.sh (suite list or probe set)`);
+});
+
+test('v0.18.0: check-bash32 guards every user-facing script named in the spec', () => {
+  const guard = readFileSync(join(PLUGIN_ROOT, 'scripts', 'check-bash32.mjs'), 'utf8');
+  for (const script of ['scripts/codex-exec-with-status.sh', 'scripts/migrate-sidecars-to-hidden-dir.sh', 'bin/codex-paired-doctor', 'scripts/run-shell-tests.sh', 'scripts/fresh-clone-smoke.sh']) {
+    assert.ok(guard.includes(`'${script}'`), `check-bash32.mjs must list ${script}`);
+  }
+});
+
+test('v0.18.0: digest refresh runs before verification/C0 in autopilot Phase B.5 and SDD Step B', () => {
+  const autopilot = readSkill('autopilot');
+  const b5 = autopilot.indexOf('#### Phase B.5 — Reconcile');
+  const b55 = autopilot.indexOf('#### Phase B.5.5');
+  assert.ok(b5 > 0 && b55 > b5, 'autopilot must have Phase B.5 before B.5.5');
+  assert.ok(autopilot.slice(b5, b55).includes('cli-surface.mjs --digest --write'), 'autopilot Phase B.5 must run the digest refresh');
+  const sdd = readSkill('subagent-driven-development');
+  const stepB = sdd.indexOf('### Step B:');
+  const stepC0 = sdd.indexOf('### Step C0:');
+  assert.ok(stepB > 0 && stepC0 > stepB, 'SDD must have Step B before Step C0');
+  assert.ok(sdd.slice(stepB, stepC0).includes('cli-surface.mjs --digest --write'), 'SDD Step B must run the digest refresh');
+  const em = readFileSync(join(PLUGIN_ROOT, 'docs', 'execution-model.md'), 'utf8');
+  assert.ok(em.includes('cli-surface.mjs --digest --write'), 'execution-model.md must mention the digest refresh');
+});

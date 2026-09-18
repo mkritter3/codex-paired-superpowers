@@ -1,8 +1,35 @@
 # codex-paired-superpowers
 
+[![ci](https://github.com/mkritter3/codex-paired-superpowers/actions/workflows/ci.yml/badge.svg)](https://github.com/mkritter3/codex-paired-superpowers/actions/workflows/ci.yml)
+
 Fork of six [superpowers](https://github.com/obra/superpowers) skills paired with Codex as an L11 engineering partner. **Codex writes the code (GPT-5.6 Sol, high), Claude reviews it, planning runs on GPT-6 Astra at extra-high effort, and both must agree before anything ships.**
 
-## v0.16.0 — Model roles for the GPT-6 era (latest)
+## v0.18.0 — Robust on other people's machines (latest)
+
+Type checking, a written public API, CI on every supported platform, and a fresh-clone smoke:
+
+- **Gradual JSDoc type checking** (`npm run typecheck`, run first by `npm test`): `checkJs: false` +
+  per-file `// @ts-check`, an explicit allowlist (`typecheck.allowlist.json`) that the runner
+  reconciles against the effective TypeScript program in both directions — nothing is checked
+  silently and nothing listed can opt out. The 15 modules that define the public surface are checked
+  under `strict`; contract tests pin the previously-checked call signatures.
+- **Public API contract** (`docs/public-api.md`): every stable surface — skills and slash commands,
+  every `cli.js` verb with flags/stdout shapes/exit codes, the implementer wrapper, `doctor`'s output,
+  the `project.json` schema and the loader's documented permissive behaviours, the sidecar version —
+  pinned in fenced JSON blocks that `tests/contract/public-api.test.js` executes against the real
+  binaries. `scripts/cli-surface.mjs` extracts the CLI surface from the AST and digests the CLI's
+  import closure, so undocumented behaviour cannot change without the document changing. Semver
+  policy: `lib/codex-bridge/cli.js` is public; the rest of `lib/` is internal.
+- **Support policy + CI**: macOS and Linux on Node ≥ 20 (Windows unsupported; `doctor` says so);
+  GitHub Actions runs the suite, the shell suites (bash 3.2 on macOS) and the fresh-clone smoke on
+  every released Node major (20–26) on both OSes for every push and pull request.
+- **Fresh-clone smoke** (`npm run test:fresh-clone`): clones the repository into an isolated temp
+  root, runs `doctor`, a fake-CLI implementer commit and a reviewer turn in a throwaway checkout, and
+  proves the reviewer saw the implementer's commit; bounded, with ownership-based process cleanup.
+- Vendored runtime deps are checked against the lockfile (`scripts/check-vendored-deps.mjs`); user
+  facing scripts are guarded against bash-4-only constructs (`scripts/check-bash32.mjs`).
+
+## v0.16.0 — Model roles for the GPT-6 era
 
 Every Codex invocation now runs on a **model role** resolved from one place (`lib/codex-bridge/models.js`) instead of a hard-coded `gpt-5.5` (which OpenAI retires on 2026-10-14):
 
@@ -77,7 +104,7 @@ For the one-page mental model of drivers, splits, and review, see
   codex login
   ```
   See [openai/codex on GitHub](https://github.com/openai/codex) for source, alternative installers (Docker, GitHub Releases), and version requirements.
-- **Node.js v20+** on PATH (the bundled MCP server + the bridge CLI run as a Node subprocess; runtime deps are vendored in `node_modules/`, no `npm install` required).
+- **Node.js v20+** on PATH (the bundled MCP server + the bridge CLI run as a Node subprocess; runtime deps are vendored in `node_modules/`, no `npm install` required). Supported platforms: **macOS and Linux** (Windows is unsupported; `doctor` reports it as FAIL). CI tests every released Node major from 20 through 26 on both platforms; `bin/codex-paired-doctor` names the same tested majors.
 - **`git` v2.5+** for worktree-based parallel slice dispatch (v0.7.0+).
 
 ## Install
@@ -337,8 +364,11 @@ The CLI does NOT spawn codex anymore. All codex traffic goes through the MCP too
 ## Development
 
 ```bash
-cd /Users/mkr/local-coding/plugins/codex-paired-superpowers
-npm test                              # all bridge tests, ~1s
+cd path/to/codex-paired-superpowers
+npm ci                                # dev deps only (typescript, @types/node, ajv); runtime deps are vendored
+npm test                              # typecheck + vendored/bash-3.2 guards, then all bridge tests
+npm run test:shell                    # shell suites (bash 3.2 compatible)
+npm run test:fresh-clone              # isolated fresh-clone smoke with fake CLIs
 ```
 
 Spec: `docs/specs/2026-05-07-codex-paired-superpowers-design.md`
@@ -354,7 +384,9 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.16.0 — model roles for the GPT-6 era: Codex writes the code (GPT-5.6 Sol high → GPT-6 Astra medium → Sonnet), Claude reviews first, both SHIP the same commit; planning on GPT-6 Astra xhigh; two threads per feature; durable attempt evidence + resume; doctor model/transport checks. Built by dogfooding the pipeline itself (spec: 5 rounds, plan: 7 rounds, slices implemented by Codex on GPT-5.6 Sol and reviewed by Claude then Codex).
+v0.18.0 — robust on other people's machines: gradual strict JSDoc type checking with an explicit allowlist, a pinned public API contract with an AST-extracted CLI surface and import-closure digests, CI on macOS + Linux across Node 20–26, a bounded fresh-clone smoke, vendored-dependency and bash-3.2 guards. Built through the pipeline itself (spec: 7 rounds, plan: 3 rounds, slices implemented by Codex on GPT-5.6 Sol, reviewed by Claude then Codex on GPT-6 Astra).
+
+Prior: v0.16.0 — model roles for the GPT-6 era: Codex writes the code (GPT-5.6 Sol high → GPT-6 Astra medium → Sonnet), Claude reviews first, both SHIP the same commit; planning on GPT-6 Astra xhigh; two threads per feature; durable attempt evidence + resume; doctor model/transport checks. Built by dogfooding the pipeline itself (spec: 5 rounds, plan: 7 rounds, slices implemented by Codex on GPT-5.6 Sol and reviewed by Claude then Codex).
 
 Prior: v0.15.0 — reliability release driven by transcript/sidecar replay of ten days of real usage: honest-reporting hook false-positive surgery (message-wide evidence, quoted-mention stripping, stop-loop guard, marker lifecycle), hang detection for Codex dispatches (auth-aware availability probe, bounded cli-harness rule, stall watchdog + empty-reply protocol), sink-side round validation (shape/sequence/budget/SHIP-audit gates moved out of the fail-open hook regex), and stale-run surfacing (`sidecar-scan-stale`).
 
@@ -362,6 +394,25 @@ Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook archit
 
 ### Changelog
 
+- **v0.18.0** — robustness for other people's machines.
+  - **Type checking:** `tsconfig.json` (`checkJs: false`, `strict`), `typecheck.allowlist.json`,
+    `scripts/typecheck.mjs` (TypeScript API; allowlist injected as `files`; effective-program and
+    directory reconciliation of `@ts-check` pragmas in both directions; listed files must have
+    effective checking enabled; exits 0/1/2); `lib/codex-bridge/types.js` shared typedefs; 15
+    public-surface owners annotated under `strict` with no behaviour change; contract tests pin the
+    previously-checked signatures (JSDoc overloads keep required fields public).
+  - **Public API:** `docs/public-api.md` with seven `public-api:<section>` blocks; `scripts/cli-surface.mjs`
+    (AST flag/exit/stdout extraction, `unsupported`/`manual` entries, import-closure + registry
+    expansion, module/input digests, `--digest --write`); `tests/contract/public-api.test.js` executes
+    every inventoried case and eight negative controls; project-config loader characterized, not changed.
+  - **Portability:** `doctor` `platform` check (FAIL off macOS/Linux) and CI-tested majors in the
+    `node` check; `scripts/check-vendored-deps.mjs` (tracked package roots vs lockfile runtime
+    closure), `scripts/check-bash32.mjs`; dev deps (`typescript`, `@types/node@20`, `ajv`) never
+    vendored; `node_modules/.package-lock.json` untracked; `.github/workflows/ci.yml` (ubuntu +
+    macos × Node 20–26).
+  - **Fresh-clone smoke:** `scripts/fresh-clone-smoke.{sh,mjs}` + `npm run test:shell`
+    (`scripts/run-shell-tests.sh`); fake-CLI modes `FAKE_CODEX_COMMIT=1` and `FAKE_AGY_RECORD`;
+    hard deadline, cancellation cleanup, cwd-ownership descendant reaping, canonical-path isolation.
 - **v0.16.0** — model roles for the GPT-6 era.
   - **One source of truth** (`lib/codex-bridge/models.js`, `model-role` / `model-roles` CLI verbs,
     `models` block in `project.json`, `CODEX_PAIRED_*` env): four roles, atomic resolution, no literals

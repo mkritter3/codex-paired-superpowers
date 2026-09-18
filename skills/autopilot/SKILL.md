@@ -1007,6 +1007,14 @@ All v0.9.0 halt reasons are **PRESERVE-class** (per spec § 5 fail-closed defaul
 
 #### Phase B.5 — Reconcile (reconciler is truth)
 
+**Public-API digest refresh (v0.18.0) — first thing in B.5, before verification and before C0.**
+If the slice touched any module in the CLI's pinned import closure or any pinned JSON input
+(`docs/public-api.md` `cli-verbs` block: `closure`, `module_digest`, `input_digest`), run
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/cli-surface.mjs --digest --write` in the slice worktree and
+commit the `docs/public-api.md` diff onto the slice branch so the reviewed SHA carries it (`npm test`
+fails on a stale digest, and Phase C requires green verification). `--write` touches only those
+three keys; Phase D keeps the semantic review of the documented cases.
+
 For each returned subagent, call:
 
 ```js

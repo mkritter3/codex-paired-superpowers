@@ -1,0 +1,45 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # Every released Node major >= the `engines` floor (see README "Prerequisites" and
+        # TESTED_NODE_MAJORS in bin/codex-paired-doctor; tests/skills/skill-structure.test.js
+        # asserts the three lists agree and form a contiguous range).
+        node: [20, 21, 22, 23, 24, 25, 26]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # Installs the dev-only deps (typescript, @types/node, ajv) from the lockfile. The runtime
+      # closure is vendored in git; npm ci re-materialises the same files, so the tracked tree
+      # must be unchanged afterwards (file-level check; package-level check runs in pretest).
+      - run: npm ci
+      - name: vendored runtime tree unchanged by npm ci
+        run: |
+          if [ -n "$(git status --porcelain -- node_modules)" ]; then
+            git status --porcelain -- node_modules
+            echo "npm ci changed the tracked node_modules tree" >&2
+            exit 1
+          fi
+
+      # pretest runs typecheck + check-vendored-deps + check-bash32 first.
+      - run: npm test
+
+      - name: shell suites (bash 3.2 on macOS)
+        run: npm run test:shell
+        env:
+          CPS_SHELL: ${{ matrix.os == 'macos-latest' && '/bin/bash' || 'bash' }}
+
+      - run: npm run test:fresh-clone
