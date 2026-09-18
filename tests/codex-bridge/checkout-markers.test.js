@@ -160,7 +160,7 @@ test('checkout-preserve rejects an unregistered path without writing a marker', 
 });
 
 test('readMarkers: a symlinked marker is invalid whether its target is valid or dangling', async () => {
-  const { symlinkSync } = await import('node:fs');
+  const { symlinkSync, unlinkSync, lstatSync } = await import('node:fs');
   const { rootDir, worktreePath, adminDir } = syntheticWorktree();
   try {
     // A genuinely valid pair written elsewhere, then linked in.
@@ -179,9 +179,12 @@ test('readMarkers: a symlinked marker is invalid whether its target is valid or 
     assert.equal(read.ownership.state, 'invalid');
     assert.equal(read.preservation.state, 'invalid');
 
-    // A directory in the marker's place is invalid too.
-    rmSync(join(adminDir, 'codex-paired-keep.json'));
+    // A directory in the marker's place is invalid too. unlinkSync, not rmSync: on Node 23 rmSync
+    // resolves the path before removing, so a DANGLING symlink is treated as already gone and the
+    // link survives (CI caught this on both OSes; every other Node major removed it).
+    unlinkSync(join(adminDir, 'codex-paired-keep.json'));
     mkdirSync(join(adminDir, 'codex-paired-keep.json'));
+    assert.equal(lstatSync(join(adminDir, 'codex-paired-keep.json')).isDirectory(), true);
     assert.equal(readMarkers({ repoRoot: rootDir, adminDir }).preservation.state, 'invalid');
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
