@@ -13,7 +13,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -244,4 +244,27 @@ test('ollama adapter: stderr truncation triggers stderr-truncated warning', asyn
     result.warnings.includes('stderr-truncated'),
     `expected stderr-truncated warning, got ${JSON.stringify(result.warnings)}`,
   );
+});
+
+// ── fail.epipe ────────────────────────────────────────────────────────────────
+// Symmetric to claude-cli.test.js `fail.epipe`. This adapter also writes stdin itself, so it needs
+// the same asynchronous-'error' guard: EPIPE from a child that exited without reading the payload
+// is an event on the stream, not a synchronous throw from end(). Codex reproduced both guards
+// during review of d812986; this pins the ollama half in the repo.
+
+test('fail.epipe: a child that exits without reading a large stdin payload resolves instead of throwing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-ollama-epipe-'));
+  const script = join(dir, 'ollama');
+  writeFileSync(script, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  chmodSync(script, 0o755);
+
+  const result = await dispatch('system', 'x'.repeat(4 * 1024 * 1024), {
+    command: script,
+    variant: 'kimi-k2.6',
+    timeout_ms: 5000,
+  });
+
+  assert.equal(typeof result, 'object');
+  assert.ok(result !== null);
+  assert.ok('exit' in result, `result must carry an exit code: ${JSON.stringify(Object.keys(result))}`);
 });
