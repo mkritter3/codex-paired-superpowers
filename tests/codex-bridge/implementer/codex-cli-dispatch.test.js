@@ -259,6 +259,47 @@ test('malformed attempt evidence is treated as missing and observes as lost', as
   } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
 });
 
+// Regression: syntactically valid JSON that is not a plain object (null, a
+// bare number/string, or an array) must not crash `readDirectCliAttempt`
+// with a TypeError when it tries to read `.state` off a non-object — it
+// must be treated the same as a missing/malformed record.
+test('valid JSON that is not a plain object is treated as missing, never throws', async () => {
+  const f = repoFixture();
+  const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+  const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    for (const payload of ['null', '[]', '"x"', '42', 'true']) {
+      writeFileSync(path, payload);
+      assert.equal(readDirectCliAttempt(f.input), null,
+        `expected null for JSON payload ${payload}`);
+      const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10 });
+      assert.equal(observed.outcome, 'halted');
+      assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+    }
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
+// Regression: a JSON object that IS a plain object but is missing the
+// terminal fields resultFromEvidence() reads (a truncated/partial "exited"
+// write) must not be accepted as a completed attempt.
+test('incomplete exited evidence is treated as lost, never surfaced as completed', async () => {
+  const f = repoFixture();
+  const dir = join(f.repoRoot, '.codex-paired', 'attempts', 'run-1');
+  const path = join(dir, `${memberIdSlug(f.input.memberId)}.json`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    writeFileSync(path, JSON.stringify({ state: 'exited', outcome: 'completed' }));
+    const attempt = readDirectCliAttempt(f.input);
+    assert.equal(attempt.state, 'exited');
+    assert.equal(attempt.outcome, 'completed');
+    const observed = await observeDirectCliAttempt(f.input, { poll_ms: 10 });
+    assert.notEqual(observed.outcome, 'completed');
+    assert.equal(observed.outcome, 'halted');
+    assert.equal(observed.haltEnvelope.halt, 'implementer-attempt-lost');
+  } finally { rmSync(f.repoRoot, { recursive: true, force: true }); }
+});
+
 test('observer waits through the launcher finalization window', { timeout: 10_000 }, async () => {
   const f = repoFixture();
   let release;
