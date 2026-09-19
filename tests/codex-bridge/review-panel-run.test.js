@@ -8,9 +8,11 @@ import {
   assertPanelMembersAvailable,
   composeMemberReplay,
   reducePanelRound,
+  reviewPanelMember,
   runPanelRound,
 } from '../../lib/codex-bridge/review-panel-run.js';
-import { openPanelMemberThread } from '../../lib/codex-bridge/reviewer-thread.js';
+import { openPanelMemberThread, storePanelMemberConversation } from '../../lib/codex-bridge/reviewer-thread.js';
+import { initSidecar, loadSidecar } from '../../lib/codex-bridge/sidecar.js';
 
 const VERSION = `sha256:${'a'.repeat(64)}`;
 const ROSTER = [
@@ -120,10 +122,11 @@ test('runPanelRound dispatches independently so no prompt contains a current-rou
   }
 });
 
-test('mixed roster across three rounds keeps distinct Codex session keys and opens fresh agy conversations', async () => {
+test('mixed roster across three rounds keeps distinct Codex session keys and continues one agy conversation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'cps-panel-rounds-'));
   const specPath = join(dir, 'spec.md');
   writeFileSync(specPath, '# spec\n');
+  initSidecar(specPath, { feature: 'panel-rounds', codexSession: 't', model: 'gpt-6-astra', reasoningEffort: 'high' });
   const roster = [
     { member_id: 'codex:gpt-a', cli: 'codex', model: 'gpt-a', effort: 'high' },
     { member_id: 'codex:gpt-b', cli: 'codex', model: 'gpt-b', effort: 'high' },
@@ -154,12 +157,14 @@ test('mixed roster across three rounds keeps distinct Codex session keys and ope
               dispatch: async (_target, _system, _prompt, options) => {
                 agyGivenConversationIds.push(options.conversationId);
                 agyRound += 1;
+                const id = options.conversationId ?? `agy-conv-${agyRound}`;
                 return {
-                  responseText: '', sessionId: `agy-fresh-${agyRound}`,
-                  adapterMeta: { status: 'SUCCESS', conversation_id: `agy-fresh-${agyRound}`, usage: null },
+                  responseText: '', sessionId: id,
+                  adapterMeta: { status: 'SUCCESS', conversation_id: id, usage: null },
                 };
               },
             });
+            await storePanelMemberConversation(request, opened);
             agyOpenedConversationIds.push(opened.threadId);
             return { member_id: request.member_id, verdict: verdict(), conversation_id: opened.threadId, usage: null };
           },
@@ -171,8 +176,8 @@ test('mixed roster across three rounds keeps distinct Codex session keys and ope
       'execution-reviewer:codex:gpt-a',
       'execution-reviewer:codex:gpt-b',
     ]);
-    assert.deepEqual(agyGivenConversationIds, [undefined, undefined, undefined]);
-    assert.deepEqual(agyOpenedConversationIds, ['agy-fresh-1', 'agy-fresh-2', 'agy-fresh-3']);
+    assert.deepEqual(agyGivenConversationIds, [undefined, 'agy-conv-1', 'agy-conv-1']);
+    assert.deepEqual(agyOpenedConversationIds, ['agy-conv-1', 'agy-conv-1', 'agy-conv-1']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -281,5 +286,35 @@ test('the route guard ignores unrelated config errors when no review panel is ac
     if (saved === undefined) delete process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW;
     else process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW = saved;
     rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// Codex review (BLOCK 1): a turn whose verdict is rejected must not store its conversation, or the
+// retry would resume the conversation that produced the bad verdict.
+test('reviewPanelMember stores a Gemini conversation only after the verdict is accepted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-panel-store-'));
+  const specPath = join(dir, 'spec.md');
+  writeFileSync(specPath, '# spec\n');
+  initSidecar(specPath, { feature: 'panel-store', codexSession: 't', model: 'gpt-6-astra', reasoningEffort: 'high' });
+  const key = 'execution-reviewer:agy:gemini-b-high';
+  const options = {
+    role: 'review', specPath, repoRoot: dir, member_id: 'agy:gemini-b-high', model: 'gemini-b-high',
+    version: VERSION, prompt: 'round prompt', replay: 'replay',
+  };
+  const answer = (id, text) => ({
+    withReviewCheckout: async (_root, _opts, fn) => fn(dir),
+    dispatch: async () => ({ responseText: text, sessionId: id, adapterMeta: { status: 'SUCCESS', conversation_id: id } }),
+  });
+  const block = (version) => `<<<VERDICT>>>\nstatus: SHIP\nversion: ${version}\ncritique: []\ndeferred: []\nrationale: ok\n<<<END>>>`;
+  try {
+    await assert.rejects(() => reviewPanelMember(options, answer('conv-bad', 'no verdict here')), /panel-member-unavailable|agy:gemini-b-high/);
+    assert.equal(loadSidecar(specPath).role_sessions?.[key], undefined, 'malformed verdict: nothing stored');
+    await assert.rejects(() => reviewPanelMember(options, answer('conv-stale', block('sha256:other'))), /version/);
+    assert.equal(loadSidecar(specPath).role_sessions?.[key], undefined, 'wrong version: nothing stored');
+    const ok = await reviewPanelMember(options, answer('conv-good', block(VERSION)));
+    assert.equal(ok.conversation_id, 'conv-good');
+    assert.equal(loadSidecar(specPath).role_sessions[key], 'conv-good');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
