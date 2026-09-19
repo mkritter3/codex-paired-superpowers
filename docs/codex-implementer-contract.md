@@ -59,6 +59,16 @@ timeout `agy` exits non-zero with a JSON body whose `status` is not `SUCCESS`; t
 `failed` (fallback), like a codex non-zero exit. The command token may be a path (`/opt/homebrew/bin/agy`)
 or preceded by `env`/`VAR=value`; the wrapper compares the basename.
 
+**`agy` permissions.** Headless `agy` cannot ask for approval, so the form above uses
+`--sandbox --dangerously-skip-permissions`: no prompts, and the sandbox confines writes to the
+worktree (plus the `--add-dir`). Observed 2026-09-18: writes outside the folder were blocked,
+network access was allowed. The wrapper exits 78 with `agy-sandbox-required` when `--sandbox` is
+missing (only real flags count, never the `-p` prompt text or anything after a bare `--`). With
+`CODEX_PAIRED_AGY_PERMISSIONS=accept-edits` the wrapper removes `--dangerously-skip-permissions`
+and inserts `--mode accept-edits`; commands must then match the user's own `agy` allow-list, and a
+refused command ends the turn without a commit, so the attempt fails over to the next rung. Any
+other value exits 78 with `agy-permissions-invalid`.
+
 The second rung of the ladder passes `--model-role implement_fallback`. See
 [docs/execution-model.md](execution-model.md) for the ladder.
 
@@ -78,7 +88,7 @@ Mandatory flags:
   `.git/worktrees/<id>`, outside the worktree cwd; without this the sandbox blocks `git commit`
   (observed in the v0.16.0 dogfood run: the implementer finished but could not commit).
   **Trust boundary:** with `--add-dir <repo>/.git` (either CLI) plus Codex `workspace-write` or
-  `agy --dangerously-skip-permissions`, the implementer can run shell commands and write under the
+  `agy --sandbox --dangerously-skip-permissions`, the implementer can run shell commands and write under the
   shared `.git` (refs, hooks). That is the same trust the v0.16.0 Codex contract already grants; it
   is not a sandbox against a hostile model. Never grant `--add-dir` beyond the repo's `.git`.
 - `</dev/null` redirect — prevents codex from inheriting the parent shell's stdin and hanging under bash backgrounding.

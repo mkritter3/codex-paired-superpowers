@@ -250,56 +250,142 @@ test('openReviewerThread with role:planning updates paired-reviewer sidecar key'
   }
 });
 
-test('openPanelMemberThread opens a fresh agy conversation every round and never persists it', async () => {
+const PANEL_VERDICT = `<<<VERDICT>>>\nstatus: SHIP\nversion: v1\ncritique: []\ndeferred: []\nrationale: ok\n<<<END>>>`;
+
+function panelSpec(dir, feature) {
+  const specRel = join('docs', 'spec.md');
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  writeFileSync(join(dir, specRel), '# Spec Content\n');
+  const specAbs = join(dir, specRel);
+  initSidecar(specAbs, { feature, codexSession: 'legacy', model: 'gpt-6-astra', reasoningEffort: 'high' });
+  return { specRel, specAbs };
+}
+
+function panelMember(dir, specRel, model, round) {
+  return {
+    role: 'review', specPath: specRel, repoRoot: dir,
+    member_id: `agy:${model}`, model, version: 'v1',
+    prompt: 'ROUND PROMPT: review the artifact; verdict format applies', replay: `round ${round}`,
+  };
+}
+
+// Each Gemini member keeps ONE conversation for the phase, like a Codex member keeps one thread.
+// Its id lives in role_sessions under `<sidecarKey>:<member_id>`, owned by this function.
+test('openPanelMemberThread continues one agy conversation per member across rounds and stores it', async () => {
   const dir = setupRepo();
   try {
-    const specRel = join('docs', 'spec.md');
-    mkdirSync(join(dir, 'docs'), { recursive: true });
-    writeFileSync(join(dir, specRel), '# Spec Content\n');
-    const specAbs = join(dir, specRel);
-    initSidecar(specAbs, {
-      feature: 'panel-fresh', codexSession: 'legacy', model: 'gpt-6-astra', reasoningEffort: 'high',
-    });
-
-    const givenConversationIds = [];
-    const givenPrompts = [];
-    let next = 0;
+    const { specRel, specAbs } = panelSpec(dir, 'panel-continue');
+    const given = [];
+    const prompts = [];
     const deps = {
+      withReviewCheckout: async (_root, _opts, fn) => fn(dir),
       dispatch: async (_target, _sys, prompt, options) => {
-        givenConversationIds.push(options.conversationId);
-        givenPrompts.push(prompt);
-        next += 1;
-        return {
-          responseText: `<<<VERDICT>>>\nstatus: SHIP\nversion: v1\ncritique: []\ndeferred: []\nrationale: ok\n<<<END>>>`,
-          sessionId: `fresh-${next}`,
-          adapterMeta: { status: 'SUCCESS', conversation_id: `fresh-${next}`, usage: null },
-        };
+        given.push(options.conversationId);
+        prompts.push(prompt);
+        return { responseText: PANEL_VERDICT, sessionId: 'conv-1', adapterMeta: { status: 'SUCCESS', conversation_id: 'conv-1', usage: null } };
       },
     };
-
-    const conversations = [];
+    const results = [];
     for (let round = 1; round <= 3; round += 1) {
-      const result = await openPanelMemberThread({
-        role: 'review', specPath: specRel, repoRoot: dir,
-        member_id: 'agy:gemini-panel-high', model: 'gemini-panel-high',
-        version: 'v1', prompt: 'ROUND PROMPT: review the artifact; verdict format applies', replay: `round ${round}`,
-      }, deps);
-      conversations.push(result.threadId);
+      results.push(await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', round), deps));
     }
-
-    assert.deepEqual(givenConversationIds, [undefined, undefined, undefined]);
-    // Spec §2.2: the fresh agy member receives the same round prompt as every other member, plus the
-    // bounded replay and the version it must echo.
-    givenPrompts.forEach((prompt, index) => {
-      assert.match(prompt, /ROUND PROMPT: review the artifact/);
-      assert.match(prompt, new RegExp(`round ${index + 1}$`));
+    assert.deepEqual(given, [undefined, 'conv-1', 'conv-1']);
+    assert.deepEqual(results.map((r) => [r.threadId, r.resumed, r.recovered]), [
+      ['conv-1', false, false], ['conv-1', true, false], ['conv-1', true, false],
+    ]);
+    prompts.forEach((prompt, index) => {
       assert.match(prompt, /^Artifact version: v1/);
+      assert.match(prompt, /ROUND PROMPT: review the artifact/);
+      assert.match(prompt, /current working directory is a fresh checkout of this version/);
+      assert.match(prompt, new RegExp(`round ${index + 1}$`));
     });
-    assert.deepEqual(conversations, ['fresh-1', 'fresh-2', 'fresh-3']);
     const sc = loadSidecar(specAbs);
-    assert.equal(sc.role_sessions['execution-reviewer:agy:gemini-panel-high'], undefined);
+    assert.equal(sc.role_sessions['execution-reviewer:agy:gemini-panel-high'], 'conv-1');
     assert.equal(sc.role_sessions['execution-reviewer'], undefined);
     assert.equal(sc.codex_session, 'legacy');
+    const rotations = sc.thread_rotations.filter((r) => r.role === 'execution-reviewer:agy:gemini-panel-high');
+    assert.deepEqual(rotations.map((r) => r.reason), ['panel-member-open'], 'stored once, not on every round');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('openPanelMemberThread keeps separate conversations for two Gemini members and per phase', async () => {
+  const dir = setupRepo();
+  try {
+    const { specRel, specAbs } = panelSpec(dir, 'panel-two');
+    let next = 0;
+    const deps = {
+      withReviewCheckout: async (_root, _opts, fn) => fn(dir),
+      dispatch: async (_target, _sys, _prompt, options) => {
+        const id = options.conversationId ?? `conv-${(next += 1)}`;
+        return { responseText: PANEL_VERDICT, sessionId: id, adapterMeta: { status: 'SUCCESS', conversation_id: id, usage: null } };
+      },
+    };
+    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-a-high', 1), deps);
+    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-b-high', 1), deps);
+    await openPanelMemberThread({ ...panelMember(dir, specRel, 'gemini-a-high', 1), role: 'planning' }, deps);
+    const sessions = loadSidecar(specAbs).role_sessions;
+    assert.equal(sessions['execution-reviewer:agy:gemini-a-high'], 'conv-1');
+    assert.equal(sessions['execution-reviewer:agy:gemini-b-high'], 'conv-2');
+    assert.equal(sessions['paired-reviewer:agy:gemini-a-high'], 'conv-3');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('openPanelMemberThread recovers a lost conversation once by opening a new one with the replay', async () => {
+  const dir = setupRepo();
+  try {
+    const { specRel, specAbs } = panelSpec(dir, 'panel-recover');
+    const deps1 = {
+      withReviewCheckout: async (_root, _opts, fn) => fn(dir),
+      dispatch: async () => ({ responseText: PANEL_VERDICT, sessionId: 'conv-old', adapterMeta: { status: 'SUCCESS', conversation_id: 'conv-old' } }),
+    };
+    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 1), deps1);
+    const given = [];
+    const prompts = [];
+    const deps2 = {
+      withReviewCheckout: async (_root, _opts, fn) => fn(dir),
+      dispatch: async (_target, _sys, prompt, options) => {
+        given.push(options.conversationId);
+        prompts.push(prompt);
+        if (options.conversationId === 'conv-old') {
+          return { responseText: '', exit: 1, sessionId: null, adapterMeta: { status: 'ERROR', stderr: 'conversation conv-old not found' } };
+        }
+        return { responseText: PANEL_VERDICT, sessionId: 'conv-new', adapterMeta: { status: 'SUCCESS', conversation_id: 'conv-new' } };
+      },
+    };
+    const result = await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 2), deps2);
+    assert.deepEqual(given, ['conv-old', undefined]);
+    assert.equal(prompts[0], prompts[1], 'the new conversation gets the same prompt, including the replay');
+    assert.equal(result.ok, true);
+    assert.equal(result.threadId, 'conv-new');
+    assert.equal(result.recovered, true);
+    const sc = loadSidecar(specAbs);
+    assert.equal(sc.role_sessions['execution-reviewer:agy:gemini-panel-high'], 'conv-new');
+    const last = sc.thread_rotations.at(-1);
+    assert.deepEqual([last.old_thread_id, last.new_thread_id, last.reason], ['conv-old', 'conv-new', 'panel-member-recovered']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('openPanelMemberThread never stores a conversation from a failed turn and does not retry a non-stale failure', async () => {
+  const dir = setupRepo();
+  try {
+    const { specRel, specAbs } = panelSpec(dir, 'panel-fail');
+    let calls = 0;
+    const result = await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 1), {
+      withReviewCheckout: async (_root, _opts, fn) => fn(dir),
+      dispatch: async () => {
+        calls += 1;
+        return { responseText: '', exit: 1, sessionId: 'conv-x', adapterMeta: { status: 'ERROR', conversation_id: 'conv-x', stderr: 'quota exceeded' } };
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1);
+    assert.equal(loadSidecar(specAbs).role_sessions?.['execution-reviewer:agy:gemini-panel-high'], undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

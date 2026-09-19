@@ -317,3 +317,62 @@ test('agy adapter onSpawn receives pid', async () => {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// Opt-in stricter permissions (CODEX_PAIRED_AGY_PERMISSIONS=accept-edits): no skip-permissions
+// flag; the implementer gets --mode accept-edits and the reviewer keeps --mode plan. Commands then
+// need the user's own agy allow-list. The default stays --sandbox --dangerously-skip-permissions.
+for (const [execMode, expectedTail] of [
+  ['reviewer', ['--sandbox', '--mode', 'plan']],
+  ['implementer', ['--sandbox', '--mode', 'accept-edits']],
+]) {
+  test(`agy adapter accept-edits permissions: ${execMode} argv drops --dangerously-skip-permissions`, async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'cps-agy-test-'));
+    try {
+      const result = await dispatch('sys', 'user', {
+        command: FAKE_AGY, execMode, cwd: tmp, model: 'gemini-3.8-flash-high', timeout_ms: 60_000,
+        env: { CODEX_PAIRED_AGY_PERMISSIONS: 'accept-edits' },
+      });
+      assert.equal(result.exit, 0);
+      const args = result.adapterMeta.args;
+      assert.ok(!args.includes('--dangerously-skip-permissions'));
+      assert.deepEqual(args.slice(6, 6 + expectedTail.length), expectedTail);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+test('agy adapter rejects an unknown CODEX_PAIRED_AGY_PERMISSIONS value before spawning', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'cps-agy-test-'));
+  const argsFile = join(tmp, 'args.txt');
+  try {
+    await assert.rejects(
+      () => dispatch('sys', 'user', {
+        command: FAKE_AGY, cwd: tmp, model: 'gemini-3.8-flash-high',
+        env: { CODEX_PAIRED_AGY_PERMISSIONS: 'yolo', FAKE_AGY_ARGS_FILE: argsFile },
+      }),
+      /CODEX_PAIRED_AGY_PERMISSIONS/,
+    );
+    assert.throws(() => readFileSync(argsFile), { code: 'ENOENT' });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// A headless refusal ends agy's whole turn: it reports status SUCCESS with an empty response.
+// That must be a named failure, not an empty "successful" answer.
+test('agy adapter: a denied action with an empty response is a failed turn with agy-permission-denied', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'cps-agy-test-'));
+  try {
+    const result = await dispatch('sys', 'user', {
+      command: FAKE_AGY, cwd: tmp, model: 'gemini-3.8-flash-high',
+      env: { FAKE_AGY_DENIED: 'RunCommand', FAKE_AGY_RESPONSE: '' },
+    });
+    assert.equal(result.exit, 1);
+    assert.ok(result.warnings.includes('agy-permission-denied'));
+    assert.match(result.adapterMeta.error, /refused.*RunCommand/);
+    assert.match(result.adapterMeta.error, /CODEX_PAIRED_AGY_PERMISSIONS|allow/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

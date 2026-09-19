@@ -320,6 +320,19 @@ because tool results accumulate in a conversation that is re-sent on later turns
 plan review of this repository was observed at roughly 250k fresh input tokens and 1.2–1.8M cached
 re-reads; your workloads will differ.
 
+**How Gemini is allowed to act.** `agy` runs headless, so nobody is there to approve a command. The
+plugin therefore runs it with `--sandbox --dangerously-skip-permissions`: no approval prompts, and
+the sandbox confines writes to the folder it runs in (the slice worktree, or the throwaway review
+checkout). Reviewers also run with `--mode plan`. This is the same posture as Codex's
+`workspace-write`, with one difference: observed on 2026-09-18, the `agy` sandbox blocked writes
+outside the folder but **allowed network access**. The wrapper refuses to launch `agy` without
+`--sandbox`. If you would rather approve commands yourself, set
+`CODEX_PAIRED_AGY_PERMISSIONS=accept-edits`: the skip flag is dropped, code writers get
+`--mode accept-edits`, and every command must match your own `agy` allow-list (`permissions.allow`
+in `~/.gemini/antigravity-cli/settings.json`, e.g. `"command(npm test)"`). A refused command ends
+Gemini's turn with no answer; the plugin reports that as `agy-permission-denied` (a failed turn,
+which falls back to the next model), never as an empty success.
+
 Overrides, later wins: defaults ← `.codex-paired/project.json` `models` ← env.
 
 ```json
@@ -360,9 +373,10 @@ several review independently and require all of them to agree, list them per pha
 - Check what will run: `node lib/codex-bridge/cli.js review-panel --phase planning --repoRoot . --format status`.
 - Every member must have its CLI installed and signed in; the review stops before round 1 otherwise.
 - **Cost:** each extra member adds about one reviewer's usage per round, and a round lasts as long as
-  its slowest member. Planning is where that is usually worth it. Gemini starts a fresh conversation
-  every round with a short capped summary of earlier rounds (12,000 characters), so its cost per
-  round stays flat instead of growing.
+  its slowest member. Planning is where that is usually worth it. Each Gemini member keeps one
+  conversation for the phase, as each Codex member keeps one thread; every round also carries a
+  short capped summary of the panel's findings (12,000 characters). If a Gemini conversation is lost,
+  the member starts a new one seeded with that summary, once, and the sidecar records the switch.
 - Multi-member **review** panels are not supported on the `two-disjoint` and `hybrid-ui-backend`
   splits yet; those work items stop with `panel-unsupported-route` before creating anything.
 - `doctor` warns when a reviewer is the same model as the one writing the code.
@@ -504,6 +518,14 @@ Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook archit
 
 ### Changelog
 
+- **Unreleased** — Gemini permissions and panel continuity.
+  - **Permissions:** the wrapper refuses `agy` without `--sandbox` (`agy-sandbox-required`);
+    opt-in `CODEX_PAIRED_AGY_PERMISSIONS=accept-edits` drops `--dangerously-skip-permissions` in the
+    adapter and the wrapper (`agy-permissions-invalid` for unknown values); a refused action with no
+    answer is a failed turn (`agy-permission-denied`), not an empty success.
+  - **Panels:** Gemini members continue one conversation per phase (`<sidecarKey>:<member_id>` in
+    `role_sessions`, owned by `review-panel-member`) instead of a fresh one each round, and recover a
+    lost conversation once. Amends v0.19.0 spec Goal 5.
 - **v0.19.0** — review panels and crash cleanup.
   - **Review panels:** `review_panel.{planning,review}` in `project.json` (or
     `CODEX_PAIRED_REVIEW_PANEL_*`); resolver and `review-panel` verb (`--format status` adds

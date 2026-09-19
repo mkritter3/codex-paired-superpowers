@@ -384,6 +384,57 @@ if [ "$RC" -eq 0 ] && [ -e "$ARGS" ] && grep -qx -- '--' "$ARGS"; then
 else fail "agy conflict scan did not stop at -- (rc=$RC)"; fi
 rm -rf "$TMP"
 
+AGY_PROJECT='{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"implement":{"cli":"agy","model":"gemini-3.8-flash-high"}}}'
+
+echo "[26] agy without --sandbox is refused before launch"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"; ERR="$TMP/stderr"
+mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+  agy -p prompt --dangerously-skip-permissions --output-format json >/dev/null 2>"$ERR"
+RC=$?
+if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && \
+   assert_fields "$STATUS" exit_code 78 error agy-sandbox-required && grep -q -- "--sandbox" "$ERR"; then
+  pass "agy without --sandbox refused with agy-sandbox-required"
+else fail "agy without --sandbox was not refused (rc=$RC)"; fi
+rm -rf "$TMP"
+
+echo "[27] --sandbox only inside the -p prompt, or after --, does not count"
+for TAIL in "-p --sandbox --output-format json" "-p prompt -- --sandbox"; do
+  TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+  mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+  # shellcheck disable=SC2086
+  PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+    agy $TAIL >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ]; then pass "non-flag --sandbox ignored ($TAIL)"
+  else fail "non-flag --sandbox was accepted ($TAIL, rc=$RC)"; fi
+  rm -rf "$TMP"
+done
+
+echo "[28] CODEX_PAIRED_AGY_PERMISSIONS=accept-edits swaps the skip flag for --mode accept-edits"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" CODEX_PAIRED_AGY_PERMISSIONS=accept-edits "$WRAPPER" "$STATUS" \
+  --model-role implement --repo-root "$TMP" -- \
+  agy -p "keep --dangerously-skip-permissions in prompt text" --sandbox --dangerously-skip-permissions --output-format json
+RC=$?
+EXPECTED=$(printf '%s\n' --model gemini-3.8-flash-high --mode accept-edits -p "keep --dangerously-skip-permissions in prompt text" --sandbox --output-format json)
+if [ "$RC" -eq 0 ] && [ "$(cat "$ARGS")" = "$EXPECTED" ]; then
+  pass "accept-edits drops the skip flag (not prompt text) and adds --mode accept-edits"
+else fail "accept-edits rewrite wrong (rc=$RC): $(tr '\n' ' ' < "$ARGS" 2>/dev/null)"; fi
+rm -rf "$TMP"
+
+echo "[29] an unknown CODEX_PAIRED_AGY_PERMISSIONS value is a config error"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" CODEX_PAIRED_AGY_PERMISSIONS=yolo "$WRAPPER" "$STATUS" \
+  --model-role implement --repo-root "$TMP" -- agy -p prompt --sandbox >/dev/null 2>&1
+RC=$?
+if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && assert_fields "$STATUS" error agy-permissions-invalid; then
+  pass "unknown permissions value refused"
+else fail "unknown permissions value not refused (rc=$RC)"; fi
+rm -rf "$TMP"
+
 echo
 echo "================================================================="
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

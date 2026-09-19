@@ -251,6 +251,50 @@ if [ -n "$MODEL_ROLE" ]; then
           ;;
       esac
     done
+
+    # agy always runs sandboxed: --sandbox is what confines its writes to the working folder.
+    # CODEX_PAIRED_AGY_PERMISSIONS=accept-edits (opt-in) also drops --dangerously-skip-permissions
+    # and adds --mode accept-edits, so commands need the user's own agy allow-list. Only real
+    # flags count: the -p prompt value and anything after a bare -- are never inspected or changed.
+    AGY_PERMISSIONS="${CODEX_PAIRED_AGY_PERMISSIONS:-auto}"
+    case "$AGY_PERMISSIONS" in
+      auto|accept-edits) ;;
+      *) config_error "agy-permissions-invalid" "CODEX_PAIRED_AGY_PERMISSIONS must be \"auto\" or \"accept-edits\"; got \"$AGY_PERMISSIONS\"" ;;
+    esac
+    HAS_SANDBOX=0
+    HAS_MODE=0
+    PREV_WAS_PROMPT=0
+    PAST_TERMINATOR=0
+    FILTERED=()
+    for ((i = 0; i < ${#CMD[@]}; i++)); do
+      arg="${CMD[$i]}"
+      if [ "$i" -le "$CMD_INDEX" ] || [ "$PAST_TERMINATOR" -eq 1 ]; then
+        FILTERED+=("$arg")
+        continue
+      fi
+      if [ "$PREV_WAS_PROMPT" -eq 1 ]; then
+        PREV_WAS_PROMPT=0
+        FILTERED+=("$arg")
+        continue
+      fi
+      case "$arg" in
+        --) PAST_TERMINATOR=1 ;;
+        -p|--prompt) PREV_WAS_PROMPT=1 ;;
+        --sandbox) HAS_SANDBOX=1 ;;
+        --mode|--mode=*) HAS_MODE=1 ;;
+        --dangerously-skip-permissions)
+          if [ "$AGY_PERMISSIONS" = "accept-edits" ]; then continue; fi
+          ;;
+      esac
+      FILTERED+=("$arg")
+    done
+    if [ "$HAS_SANDBOX" -eq 0 ]; then
+      config_error "agy-sandbox-required" "wrapped agy must run with --sandbox, which confines its writes to the working folder"
+    fi
+    CMD=("${FILTERED[@]}")
+    if [ "$AGY_PERMISSIONS" = "accept-edits" ] && [ "$HAS_MODE" -eq 0 ]; then
+      EXTRA_ARGS+=(--mode accept-edits)
+    fi
   fi
 
   # Insertion per insertAfter

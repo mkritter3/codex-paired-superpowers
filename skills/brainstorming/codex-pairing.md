@@ -129,7 +129,7 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js <subcommand> --<flag> <value>
 | `panel-preflight --phase <p> --repoRoot <r>` | check every panel member is installed and signed in (v0.19.0) |
 | `sidecar-set-panel-roster --specPath <p> --phase <p> --roster <json>` | persist a phase's panel roster once (v0.19.0) |
 | `panel-replay` (stdin JSON) | build a Gemini member's bounded replay; exit 1 = overflow (v0.19.0) |
-| `review-panel-member ... --prompt-file <f>` (replay on stdin) | run one Gemini member in a fresh conversation (v0.19.0) |
+| `review-panel-member ... --prompt-file <f>` (replay on stdin) | run one Gemini member's turn, continuing its stored conversation for the phase |
 | `panel-reduce` (stdin JSON) | strict-unanimity reduction of one panel round (v0.19.0) |
 
 The CLI does NOT spawn codex anymore (v0.2.0+). All codex traffic goes through the MCP tools above.
@@ -256,8 +256,13 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel --phase <plann
      - **The thread is lost** (`Session not found`): the legacy role-wide recovery does not apply
        to member threads yet. Treat it as a failed member turn: halt with
        `panel-member-unavailable` naming the member, and tell the user. The panel never shrinks.
-   - **Gemini member (`cli: agy`)**: a fresh conversation every round. Build the bounded replay,
-     then run the member in the background:
+   - **Gemini member (`cli: agy`)**: one conversation for the phase, like a Codex member's thread.
+     `review-panel-member` owns it: it continues the conversation stored under
+     `<sidecarKey>:<member_id>`, stores a new one after the member's first successful turn, and if
+     the conversation is lost it opens a new one seeded with the same prompt and replay, once
+     (recorded in `thread_rotations`). Never pass or store the id yourself. Every round still gets the
+     bounded replay, because it carries the other members' findings. Build it, then run the member
+     in the background:
      ```bash
      printf '%s' '{"goals":[...],"round":N,"unresolved":[...],"previousRound":{"findings":[...],"resolved_count":K}}' \
        | node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" panel-replay > <scratch>/replay-<N>.txt

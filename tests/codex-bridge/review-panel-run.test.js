@@ -11,6 +11,7 @@ import {
   runPanelRound,
 } from '../../lib/codex-bridge/review-panel-run.js';
 import { openPanelMemberThread } from '../../lib/codex-bridge/reviewer-thread.js';
+import { initSidecar } from '../../lib/codex-bridge/sidecar.js';
 
 const VERSION = `sha256:${'a'.repeat(64)}`;
 const ROSTER = [
@@ -120,10 +121,11 @@ test('runPanelRound dispatches independently so no prompt contains a current-rou
   }
 });
 
-test('mixed roster across three rounds keeps distinct Codex session keys and opens fresh agy conversations', async () => {
+test('mixed roster across three rounds keeps distinct Codex session keys and continues one agy conversation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'cps-panel-rounds-'));
   const specPath = join(dir, 'spec.md');
   writeFileSync(specPath, '# spec\n');
+  initSidecar(specPath, { feature: 'panel-rounds', codexSession: 't', model: 'gpt-6-astra', reasoningEffort: 'high' });
   const roster = [
     { member_id: 'codex:gpt-a', cli: 'codex', model: 'gpt-a', effort: 'high' },
     { member_id: 'codex:gpt-b', cli: 'codex', model: 'gpt-b', effort: 'high' },
@@ -154,9 +156,10 @@ test('mixed roster across three rounds keeps distinct Codex session keys and ope
               dispatch: async (_target, _system, _prompt, options) => {
                 agyGivenConversationIds.push(options.conversationId);
                 agyRound += 1;
+                const id = options.conversationId ?? `agy-conv-${agyRound}`;
                 return {
-                  responseText: '', sessionId: `agy-fresh-${agyRound}`,
-                  adapterMeta: { status: 'SUCCESS', conversation_id: `agy-fresh-${agyRound}`, usage: null },
+                  responseText: '', sessionId: id,
+                  adapterMeta: { status: 'SUCCESS', conversation_id: id, usage: null },
                 };
               },
             });
@@ -171,8 +174,8 @@ test('mixed roster across three rounds keeps distinct Codex session keys and ope
       'execution-reviewer:codex:gpt-a',
       'execution-reviewer:codex:gpt-b',
     ]);
-    assert.deepEqual(agyGivenConversationIds, [undefined, undefined, undefined]);
-    assert.deepEqual(agyOpenedConversationIds, ['agy-fresh-1', 'agy-fresh-2', 'agy-fresh-3']);
+    assert.deepEqual(agyGivenConversationIds, [undefined, 'agy-conv-1', 'agy-conv-1']);
+    assert.deepEqual(agyOpenedConversationIds, ['agy-conv-1', 'agy-conv-1', 'agy-conv-1']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
