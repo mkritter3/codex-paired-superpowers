@@ -259,8 +259,8 @@ node "${CLAUDE_PLUGIN_ROOT}/lib/codex-bridge/cli.js" review-panel --phase <plann
    - **Gemini member (`cli: agy`)**: one conversation for the phase, like a Codex member's thread.
      `review-panel-member` owns it: it continues the conversation stored under
      `<sidecarKey>:<member_id>`, stores a new one after the member's first successful turn, and if
-     the conversation is lost it opens a new one seeded with the same prompt and replay, once
-     (recorded in `thread_rotations`). Never pass or store the id yourself. Every round still gets the
+     the conversation is lost it continues in the new conversation `agy` opens (seeded with the same
+     prompt and replay) and records the switch in `thread_rotations`. Never pass or store the id yourself. Every round still gets the
      bounded replay, because it carries the other members' findings. Build it, then run the member
      in the background:
      ```bash

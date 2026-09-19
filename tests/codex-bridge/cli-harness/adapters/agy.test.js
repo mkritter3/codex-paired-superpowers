@@ -366,12 +366,27 @@ test('agy adapter: a denied action with an empty response is a failed turn with 
   try {
     const result = await dispatch('sys', 'user', {
       command: FAKE_AGY, cwd: tmp, model: 'gemini-3.8-flash-high',
-      env: { FAKE_AGY_DENIED: 'RunCommand', FAKE_AGY_RESPONSE: '' },
+      env: { FAKE_AGY_DENIED: 'RunCommand', FAKE_AGY_RESPONSE: '', CODEX_PAIRED_AGY_PERMISSIONS: 'accept-edits' },
     });
     assert.equal(result.exit, 1);
     assert.ok(result.warnings.includes('agy-permission-denied'));
     assert.match(result.adapterMeta.error, /refused.*RunCommand/);
-    assert.match(result.adapterMeta.error, /CODEX_PAIRED_AGY_PERMISSIONS|allow/);
+    assert.match(result.adapterMeta.error, /CODEX_PAIRED_AGY_PERMISSIONS=accept-edits.*allow-list/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('agy adapter: in the default mode the denial message does not point at the accept-edits allow-list', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'cps-agy-test-'));
+  try {
+    const result = await dispatch('sys', 'user', {
+      command: FAKE_AGY, cwd: tmp, model: 'gemini-3.8-flash-high',
+      env: { FAKE_AGY_DENIED: 'WriteFile', FAKE_AGY_RESPONSE: '' },
+    });
+    assert.equal(result.exit, 1);
+    assert.doesNotMatch(result.adapterMeta.error, /CODEX_PAIRED_AGY_PERMISSIONS/);
+    assert.match(result.adapterMeta.error, /refused WriteFile.*--mode plan/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

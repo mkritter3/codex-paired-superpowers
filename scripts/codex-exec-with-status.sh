@@ -281,6 +281,10 @@ if [ -n "$MODEL_ROLE" ]; then
         --) PAST_TERMINATOR=1 ;;
         -p|--prompt) PREV_WAS_PROMPT=1 ;;
         --sandbox) HAS_SANDBOX=1 ;;
+        --sandbox=*|--dangerously-skip-permissions=*)
+          # agy is a Go binary: --sandbox=false is accepted and would switch the sandbox off.
+          config_error "agy-sandbox-required" "pass ${arg%%=*} as a bare flag; the =value form is refused"
+          ;;
         --mode|--mode=*) HAS_MODE=1 ;;
         --dangerously-skip-permissions)
           if [ "$AGY_PERMISSIONS" = "accept-edits" ]; then continue; fi

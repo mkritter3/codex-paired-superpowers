@@ -326,9 +326,9 @@ the sandbox confines writes to the folder it runs in (the slice worktree, or the
 checkout). Reviewers also run with `--mode plan`. This is the same posture as Codex's
 `workspace-write`, with one difference: observed on 2026-09-18, the `agy` sandbox blocked writes
 outside the folder but **allowed network access**. The wrapper refuses to launch `agy` without
-`--sandbox`. If you would rather approve commands yourself, set
-`CODEX_PAIRED_AGY_PERMISSIONS=accept-edits`: the skip flag is dropped, code writers get
-`--mode accept-edits`, and every command must match your own `agy` allow-list (`permissions.allow`
+`--sandbox` (when launched with `--model-role`, as every recipe does). If you would rather approve
+commands yourself, set `CODEX_PAIRED_AGY_PERMISSIONS=accept-edits`: the skip flag is dropped for
+code writers and reviewers alike, code writers get `--mode accept-edits`, and every command must match your own `agy` allow-list (`permissions.allow`
 in `~/.gemini/antigravity-cli/settings.json`, e.g. `"command(npm test)"`). A refused command ends
 Gemini's turn with no answer; the plugin reports that as `agy-permission-denied` (a failed turn,
 which falls back to the next model), never as an empty success.
@@ -376,7 +376,8 @@ several review independently and require all of them to agree, list them per pha
   its slowest member. Planning is where that is usually worth it. Each Gemini member keeps one
   conversation for the phase, as each Codex member keeps one thread; every round also carries a
   short capped summary of the panel's findings (12,000 characters). If a Gemini conversation is lost,
-  the member starts a new one seeded with that summary, once, and the sidecar records the switch.
+  `agy` starts a new one (it warns but does not fail); it is seeded with that round's summary and
+  the sidecar records the switch.
 - Multi-member **review** panels are not supported on the `two-disjoint` and `hybrid-ui-backend`
   splits yet; those work items stop with `panel-unsupported-route` before creating anything.
 - `doctor` warns when a reviewer is the same model as the one writing the code.

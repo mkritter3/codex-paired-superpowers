@@ -435,6 +435,20 @@ if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && assert_fields "$STATUS" error agy-per
 else fail "unknown permissions value not refused (rc=$RC)"; fi
 rm -rf "$TMP"
 
+echo "[30] =value forms of --sandbox / --dangerously-skip-permissions are refused"
+for FLAGS in "--sandbox --sandbox=false" "--sandbox --dangerously-skip-permissions=true"; do
+  TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+  mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+  # shellcheck disable=SC2086
+  PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+    agy -p prompt $FLAGS >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ] && assert_fields "$STATUS" error agy-sandbox-required; then
+    pass "=value form refused ($FLAGS)"
+  else fail "=value form accepted ($FLAGS, rc=$RC)"; fi
+  rm -rf "$TMP"
+done
+
 echo
 echo "================================================================="
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

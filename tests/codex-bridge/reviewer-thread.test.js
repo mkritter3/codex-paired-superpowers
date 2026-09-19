@@ -812,3 +812,26 @@ test('openPanelMemberThread rejects a missing round prompt and an over-budget re
   // The 12,000-character budget applies to the replay only, never to the round prompt.
   await assert.rejects(() => openPanelMemberThread({ ...base, prompt: 'p', replay: 'x'.repeat(12_001) }, deps), /replay/);
 });
+
+// Real agy on a lost id (observed 2026-09-18): SUCCESS, a NEW conversation_id, and a stderr
+// warning — no failure to classify. The switch must still be stored and reported as a recovery.
+test('openPanelMemberThread treats a silently replaced agy conversation as a recovery', async () => {
+  const dir = setupRepo();
+  try {
+    const { specRel, specAbs } = panelSpec(dir, 'panel-silent');
+    const ok = (id) => ({ responseText: PANEL_VERDICT, sessionId: id, adapterMeta: { status: 'SUCCESS', conversation_id: id } });
+    const withDir = { withReviewCheckout: async (_root, _opts, fn) => fn(dir) };
+    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 1), { ...withDir, dispatch: async () => ok('conv-old') });
+    let calls = 0;
+    const result = await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 2), {
+      ...withDir, dispatch: async () => { calls += 1; return ok('conv-new'); },
+    });
+    assert.equal(calls, 1, 'no retry: agy already answered in the new conversation');
+    assert.deepEqual([result.threadId, result.resumed, result.recovered], ['conv-new', false, true]);
+    const sc = loadSidecar(specAbs);
+    assert.equal(sc.role_sessions['execution-reviewer:agy:gemini-panel-high'], 'conv-new');
+    assert.equal(sc.thread_rotations.at(-1).reason, 'panel-member-recovered');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -62,8 +62,10 @@ or preceded by `env`/`VAR=value`; the wrapper compares the basename.
 **`agy` permissions.** Headless `agy` cannot ask for approval, so the form above uses
 `--sandbox --dangerously-skip-permissions`: no prompts, and the sandbox confines writes to the
 worktree (plus the `--add-dir`). Observed 2026-09-18: writes outside the folder were blocked,
-network access was allowed. The wrapper exits 78 with `agy-sandbox-required` when `--sandbox` is
-missing (only real flags count, never the `-p` prompt text or anything after a bare `--`). With
+network access was allowed. With `--model-role` (always used by the recipes) the wrapper exits 78
+with `agy-sandbox-required` when `--sandbox` is missing (only real flags count, never the `-p` prompt
+text or anything after a bare `--`) or when `--sandbox=…` / `--dangerously-skip-permissions=…` is
+used (a Go flag, so `--sandbox=false` would switch the sandbox off). With
 `CODEX_PAIRED_AGY_PERMISSIONS=accept-edits` the wrapper removes `--dangerously-skip-permissions`
 and inserts `--mode accept-edits`; commands must then match the user's own `agy` allow-list, and a
 refused command ends the turn without a commit, so the attempt fails over to the next rung. Any
