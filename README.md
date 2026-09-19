@@ -2,9 +2,17 @@
 
 [![ci](https://github.com/mkritter3/codex-paired-superpowers/actions/workflows/ci.yml/badge.svg)](https://github.com/mkritter3/codex-paired-superpowers/actions/workflows/ci.yml)
 
-Fork of six [superpowers](https://github.com/obra/superpowers) skills paired with Codex as an L11 engineering partner. **Codex writes the code (GPT-5.6 Sol, high), Claude reviews it, planning runs on GPT-6 Astra at extra-high effort, and both must agree before anything ships.**
+A Claude Code plugin for multi-agent, cross-model software engineering, inspired by [superpowers](https://github.com/obra/superpowers). Claude pairs with Codex, and optionally Gemini through the `agy` CLI, to brainstorm, plan, implement and review. **Codex writes the code (GPT-5.6 Sol, high), Claude reviews it, planning runs on GPT-6 Astra at extra-high effort, and nothing ships until every reviewer approves the same version.**
 
-## v0.19.0 — Review panels and crash cleanup (latest)
+## v0.19.1 — Gemini permissions and panel continuity (latest)
+
+- **Gemini runs are always sandboxed:** the wrapper refuses to launch `agy` without `--sandbox`.
+  Opt-in `CODEX_PAIRED_AGY_PERMISSIONS=accept-edits` drops the skip-permissions flag for users who
+  keep their own `agy` allow-list. A refused command is reported as a failure, never an empty success.
+- **Panel Gemini members keep one conversation per phase**, like Codex members, and recover a lost one.
+- **Rollback fix:** a failed fix pass no longer leaves behind a dangling symlink it created.
+
+## v0.19.0 — Review panels and crash cleanup
 
 - **Review panels (opt-in):** put more than one external reviewer on planning, on code review, or on
   both. Every member reviews independently and **all must agree** — Claude and each member say SHIP
@@ -61,7 +69,7 @@ Every Codex invocation now runs on a **model role** resolved from one place (`li
 - **Doctor** warns about missing/retiring catalog models, unsupported efforts, a stale catalog, an older-than-validated Codex CLI (`0.153.4`), and a Codex build without `mcp-server`.
 - Legacy plans and sidecars that name `gpt-5.5` in member ids keep working: the model segment is a label; the effective model is the role.
 
-## v0.9.0 — Model-routed dev team (latest)
+## v0.9.0 — Model-routed dev team
 
 v0.9.0 replaces the single-CLI assumption with a routing-aware dispatch layer that picks the best-suited CLI per expert role from a preference ladder.
 
@@ -1100,3 +1108,9 @@ Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook archit
 ## v0.10.0 ecosystem notes
 
 See [docs/integration/v0.10.0-ecosystem-notes.md](docs/integration/v0.10.0-ecosystem-notes.md) for namespace, sidecar reader, ralph-loop coupling, feature-dev coexistence, and PR attribution details.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The idea of packaging opinionated workflows as skills, and the names of
+six of them, come from [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT).
+The code and the skill text in this repository are original.
