@@ -449,6 +449,40 @@ for FLAGS in "--sandbox --sandbox=false" "--sandbox --dangerously-skip-permissio
   rm -rf "$TMP"
 done
 
+echo "[31] accept-edits under a non-implement role adds --mode plan, never accept-edits"
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"
+printf '%s' '{"version":1,"app":{"type":"library"},"live_verification":{"default":"skip","skip_reason":"test"},"models":{"review":{"cli":"agy","model":"gemini-3.8-flash-high"}}}' > "$TMP/.codex-paired/project.json"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" CODEX_PAIRED_AGY_PERMISSIONS=accept-edits "$WRAPPER" "$STATUS" \
+  --model-role review --repo-root "$TMP" -- agy -p prompt --sandbox --dangerously-skip-permissions >/dev/null 2>&1
+RC=$?
+EXPECTED=$(printf '%s\n' --model gemini-3.8-flash-high --mode plan -p prompt --sandbox)
+if [ "$RC" -eq 0 ] && [ "$(cat "$ARGS")" = "$EXPECTED" ]; then pass "review role gets --mode plan"
+else fail "review role mode wrong (rc=$RC): $(tr '\n' ' ' < "$ARGS" 2>/dev/null)"; fi
+rm -rf "$TMP"
+
+echo "[32] an explicit --mode must be accept-edits or plan"
+for MODEFLAGS in "--mode yolo" "--mode=yolo" "--mode"; do
+  TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+  mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+  # shellcheck disable=SC2086
+  PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" "$WRAPPER" "$STATUS" --model-role implement --repo-root "$TMP" -- \
+    agy -p prompt --sandbox $MODEFLAGS >/dev/null 2>&1
+  RC=$?
+  if [ "$RC" -eq 78 ] && [ ! -e "$ARGS" ]; then pass "invalid mode refused ($MODEFLAGS)"
+  else fail "invalid mode accepted ($MODEFLAGS, rc=$RC)"; fi
+  rm -rf "$TMP"
+done
+TMP=$(mktmp); make_fake_agy "$TMP"; STATUS="$TMP/status.json"; ARGS="$TMP/args"
+mkdir -p "$TMP/.codex-paired"; printf '%s' "$AGY_PROJECT" > "$TMP/.codex-paired/project.json"
+PATH="$TMP/bin:$PATH" FAKE_ARGS_FILE="$ARGS" CODEX_PAIRED_AGY_PERMISSIONS=accept-edits "$WRAPPER" "$STATUS" \
+  --model-role implement --repo-root "$TMP" -- agy -p prompt --sandbox --mode plan >/dev/null 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && [ "$(grep -c -- '^--mode$' "$ARGS")" -eq 1 ] && grep -qx plan "$ARGS"; then
+  pass "a valid explicit --mode is kept and not duplicated"
+else fail "valid explicit --mode mishandled (rc=$RC)"; fi
+rm -rf "$TMP"
+
 echo
 echo "================================================================="
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

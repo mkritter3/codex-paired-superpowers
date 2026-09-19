@@ -67,7 +67,8 @@ with `agy-sandbox-required` when `--sandbox` is missing (only real flags count, 
 text or anything after a bare `--`) or when `--sandbox=…` / `--dangerously-skip-permissions=…` is
 used (a Go flag, so `--sandbox=false` would switch the sandbox off). With
 `CODEX_PAIRED_AGY_PERMISSIONS=accept-edits` the wrapper removes `--dangerously-skip-permissions`
-and inserts `--mode accept-edits`; commands must then match the user's own `agy` allow-list, and a
+and inserts `--mode accept-edits` for the implement roles (`--mode plan` for any other role) unless
+a `--mode` is already given; an explicit `--mode` must be `accept-edits` or `plan`; commands must then match the user's own `agy` allow-list, and a
 refused command ends the turn without a commit, so the attempt fails over to the next rung. Any
 other value exits 78 with `agy-permissions-invalid`.
 

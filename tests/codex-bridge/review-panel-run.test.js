@@ -8,10 +8,11 @@ import {
   assertPanelMembersAvailable,
   composeMemberReplay,
   reducePanelRound,
+  reviewPanelMember,
   runPanelRound,
 } from '../../lib/codex-bridge/review-panel-run.js';
-import { openPanelMemberThread } from '../../lib/codex-bridge/reviewer-thread.js';
-import { initSidecar } from '../../lib/codex-bridge/sidecar.js';
+import { openPanelMemberThread, storePanelMemberConversation } from '../../lib/codex-bridge/reviewer-thread.js';
+import { initSidecar, loadSidecar } from '../../lib/codex-bridge/sidecar.js';
 
 const VERSION = `sha256:${'a'.repeat(64)}`;
 const ROSTER = [
@@ -163,6 +164,7 @@ test('mixed roster across three rounds keeps distinct Codex session keys and con
                 };
               },
             });
+            await storePanelMemberConversation(request, opened);
             agyOpenedConversationIds.push(opened.threadId);
             return { member_id: request.member_id, verdict: verdict(), conversation_id: opened.threadId, usage: null };
           },
@@ -284,5 +286,35 @@ test('the route guard ignores unrelated config errors when no review panel is ac
     if (saved === undefined) delete process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW;
     else process.env.CODEX_PAIRED_REVIEW_PANEL_REVIEW = saved;
     rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// Codex review (BLOCK 1): a turn whose verdict is rejected must not store its conversation, or the
+// retry would resume the conversation that produced the bad verdict.
+test('reviewPanelMember stores a Gemini conversation only after the verdict is accepted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cps-panel-store-'));
+  const specPath = join(dir, 'spec.md');
+  writeFileSync(specPath, '# spec\n');
+  initSidecar(specPath, { feature: 'panel-store', codexSession: 't', model: 'gpt-6-astra', reasoningEffort: 'high' });
+  const key = 'execution-reviewer:agy:gemini-b-high';
+  const options = {
+    role: 'review', specPath, repoRoot: dir, member_id: 'agy:gemini-b-high', model: 'gemini-b-high',
+    version: VERSION, prompt: 'round prompt', replay: 'replay',
+  };
+  const answer = (id, text) => ({
+    withReviewCheckout: async (_root, _opts, fn) => fn(dir),
+    dispatch: async () => ({ responseText: text, sessionId: id, adapterMeta: { status: 'SUCCESS', conversation_id: id } }),
+  });
+  const block = (version) => `<<<VERDICT>>>\nstatus: SHIP\nversion: ${version}\ncritique: []\ndeferred: []\nrationale: ok\n<<<END>>>`;
+  try {
+    await assert.rejects(() => reviewPanelMember(options, answer('conv-bad', 'no verdict here')), /panel-member-unavailable|agy:gemini-b-high/);
+    assert.equal(loadSidecar(specPath).role_sessions?.[key], undefined, 'malformed verdict: nothing stored');
+    await assert.rejects(() => reviewPanelMember(options, answer('conv-stale', block('sha256:other'))), /version/);
+    assert.equal(loadSidecar(specPath).role_sessions?.[key], undefined, 'wrong version: nothing stored');
+    const ok = await reviewPanelMember(options, answer('conv-good', block(VERSION)));
+    assert.equal(ok.conversation_id, 'conv-good');
+    assert.equal(loadSidecar(specPath).role_sessions[key], 'conv-good');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

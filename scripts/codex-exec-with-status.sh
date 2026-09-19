@@ -254,15 +254,22 @@ if [ -n "$MODEL_ROLE" ]; then
 
     # agy always runs sandboxed: --sandbox is what confines its writes to the working folder.
     # CODEX_PAIRED_AGY_PERMISSIONS=accept-edits (opt-in) also drops --dangerously-skip-permissions
-    # and adds --mode accept-edits, so commands need the user's own agy allow-list. Only real
+    # and adds --mode accept-edits (implement roles) or --mode plan (any other role) unless a valid
+    # --mode is already given, so commands need the user's own agy allow-list. Only real
     # flags count: the -p prompt value and anything after a bare -- are never inspected or changed.
     AGY_PERMISSIONS="${CODEX_PAIRED_AGY_PERMISSIONS:-auto}"
     case "$AGY_PERMISSIONS" in
       auto|accept-edits) ;;
       *) config_error "agy-permissions-invalid" "CODEX_PAIRED_AGY_PERMISSIONS must be \"auto\" or \"accept-edits\"; got \"$AGY_PERMISSIONS\"" ;;
     esac
+    # Code writers (implement roles) get --mode accept-edits; any other role stays in --mode plan.
+    case "$MODEL_ROLE" in
+      implement|implement_fallback) AGY_ROLE_MODE="accept-edits" ;;
+      *) AGY_ROLE_MODE="plan" ;;
+    esac
     HAS_SANDBOX=0
     HAS_MODE=0
+    PREV_WAS_MODE=0
     PREV_WAS_PROMPT=0
     PAST_TERMINATOR=0
     FILTERED=()
@@ -277,6 +284,15 @@ if [ -n "$MODEL_ROLE" ]; then
         FILTERED+=("$arg")
         continue
       fi
+      if [ "$PREV_WAS_MODE" -eq 1 ]; then
+        PREV_WAS_MODE=0
+        case "$arg" in
+          accept-edits|plan) ;;
+          *) config_error "model-role-conflicting-args" "wrapped agy --mode must be accept-edits or plan; got \"$arg\"" ;;
+        esac
+        FILTERED+=("$arg")
+        continue
+      fi
       case "$arg" in
         --) PAST_TERMINATOR=1 ;;
         -p|--prompt) PREV_WAS_PROMPT=1 ;;
@@ -285,7 +301,14 @@ if [ -n "$MODEL_ROLE" ]; then
           # agy is a Go binary: --sandbox=false is accepted and would switch the sandbox off.
           config_error "agy-sandbox-required" "pass ${arg%%=*} as a bare flag; the =value form is refused"
           ;;
-        --mode|--mode=*) HAS_MODE=1 ;;
+        --mode) HAS_MODE=1; PREV_WAS_MODE=1 ;;
+        --mode=*)
+          HAS_MODE=1
+          case "${arg#--mode=}" in
+            accept-edits|plan) ;;
+            *) config_error "model-role-conflicting-args" "wrapped agy --mode must be accept-edits or plan; got \"${arg#--mode=}\"" ;;
+          esac
+          ;;
         --dangerously-skip-permissions)
           if [ "$AGY_PERMISSIONS" = "accept-edits" ]; then continue; fi
           ;;
@@ -296,8 +319,11 @@ if [ -n "$MODEL_ROLE" ]; then
       config_error "agy-sandbox-required" "wrapped agy must run with --sandbox, which confines its writes to the working folder"
     fi
     CMD=("${FILTERED[@]}")
+    if [ "$PREV_WAS_MODE" -eq 1 ]; then
+      config_error "model-role-conflicting-args" "wrapped agy --mode is missing its value"
+    fi
     if [ "$AGY_PERMISSIONS" = "accept-edits" ] && [ "$HAS_MODE" -eq 0 ]; then
-      EXTRA_ARGS+=(--mode accept-edits)
+      EXTRA_ARGS+=(--mode "$AGY_ROLE_MODE")
     fi
   fi
 

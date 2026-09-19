@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import {
   openReviewerThread,
   openPanelMemberThread,
+  storePanelMemberConversation,
   continueReviewerThread,
 } from '../../lib/codex-bridge/reviewer-thread.js';
 import {
@@ -261,6 +262,13 @@ function panelSpec(dir, feature) {
   return { specRel, specAbs };
 }
 
+// Mirrors reviewPanelMember: run the turn, then store its conversation only if it was accepted.
+async function memberTurn(options, deps) {
+  const result = await openPanelMemberThread(options, deps);
+  if (result.ok) await storePanelMemberConversation(options, result);
+  return result;
+}
+
 function panelMember(dir, specRel, model, round) {
   return {
     role: 'review', specPath: specRel, repoRoot: dir,
@@ -287,7 +295,7 @@ test('openPanelMemberThread continues one agy conversation per member across rou
     };
     const results = [];
     for (let round = 1; round <= 3; round += 1) {
-      results.push(await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', round), deps));
+      results.push(await memberTurn(panelMember(dir, specRel, 'gemini-panel-high', round), deps));
     }
     assert.deepEqual(given, [undefined, 'conv-1', 'conv-1']);
     assert.deepEqual(results.map((r) => [r.threadId, r.resumed, r.recovered]), [
@@ -322,9 +330,9 @@ test('openPanelMemberThread keeps separate conversations for two Gemini members 
         return { responseText: PANEL_VERDICT, sessionId: id, adapterMeta: { status: 'SUCCESS', conversation_id: id, usage: null } };
       },
     };
-    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-a-high', 1), deps);
-    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-b-high', 1), deps);
-    await openPanelMemberThread({ ...panelMember(dir, specRel, 'gemini-a-high', 1), role: 'planning' }, deps);
+    await memberTurn(panelMember(dir, specRel, 'gemini-a-high', 1), deps);
+    await memberTurn(panelMember(dir, specRel, 'gemini-b-high', 1), deps);
+    await memberTurn({ ...panelMember(dir, specRel, 'gemini-a-high', 1), role: 'planning' }, deps);
     const sessions = loadSidecar(specAbs).role_sessions;
     assert.equal(sessions['execution-reviewer:agy:gemini-a-high'], 'conv-1');
     assert.equal(sessions['execution-reviewer:agy:gemini-b-high'], 'conv-2');
@@ -342,7 +350,7 @@ test('openPanelMemberThread recovers a lost conversation once by opening a new o
       withReviewCheckout: async (_root, _opts, fn) => fn(dir),
       dispatch: async () => ({ responseText: PANEL_VERDICT, sessionId: 'conv-old', adapterMeta: { status: 'SUCCESS', conversation_id: 'conv-old' } }),
     };
-    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 1), deps1);
+    await memberTurn(panelMember(dir, specRel, 'gemini-panel-high', 1), deps1);
     const given = [];
     const prompts = [];
     const deps2 = {
@@ -356,7 +364,7 @@ test('openPanelMemberThread recovers a lost conversation once by opening a new o
         return { responseText: PANEL_VERDICT, sessionId: 'conv-new', adapterMeta: { status: 'SUCCESS', conversation_id: 'conv-new' } };
       },
     };
-    const result = await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 2), deps2);
+    const result = await memberTurn(panelMember(dir, specRel, 'gemini-panel-high', 2), deps2);
     assert.deepEqual(given, ['conv-old', undefined]);
     assert.equal(prompts[0], prompts[1], 'the new conversation gets the same prompt, including the replay');
     assert.equal(result.ok, true);
@@ -371,12 +379,12 @@ test('openPanelMemberThread recovers a lost conversation once by opening a new o
   }
 });
 
-test('openPanelMemberThread never stores a conversation from a failed turn and does not retry a non-stale failure', async () => {
+test('a failed member turn is not stored and a non-stale failure is not retried', async () => {
   const dir = setupRepo();
   try {
     const { specRel, specAbs } = panelSpec(dir, 'panel-fail');
     let calls = 0;
-    const result = await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 1), {
+    const result = await memberTurn(panelMember(dir, specRel, 'gemini-panel-high', 1), {
       withReviewCheckout: async (_root, _opts, fn) => fn(dir),
       dispatch: async () => {
         calls += 1;
@@ -821,9 +829,9 @@ test('openPanelMemberThread treats a silently replaced agy conversation as a rec
     const { specRel, specAbs } = panelSpec(dir, 'panel-silent');
     const ok = (id) => ({ responseText: PANEL_VERDICT, sessionId: id, adapterMeta: { status: 'SUCCESS', conversation_id: id } });
     const withDir = { withReviewCheckout: async (_root, _opts, fn) => fn(dir) };
-    await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 1), { ...withDir, dispatch: async () => ok('conv-old') });
+    await memberTurn(panelMember(dir, specRel, 'gemini-panel-high', 1), { ...withDir, dispatch: async () => ok('conv-old') });
     let calls = 0;
-    const result = await openPanelMemberThread(panelMember(dir, specRel, 'gemini-panel-high', 2), {
+    const result = await memberTurn(panelMember(dir, specRel, 'gemini-panel-high', 2), {
       ...withDir, dispatch: async () => { calls += 1; return ok('conv-new'); },
     });
     assert.equal(calls, 1, 'no retry: agy already answered in the new conversation');
