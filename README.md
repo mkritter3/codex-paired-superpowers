@@ -507,7 +507,9 @@ Fixture proof-point: [`tests/smoke/live-verification-fixture/`](tests/smoke/live
 
 ## Status
 
-v0.19.0 — opt-in review panels with strict unanimity (independent members, no vote, no tiebreaker), safe cleanup of checkouts left by crashed runs (ownership and preservation markers, fail-closed `worktree-reap`, `doctor` checks), and the repository-wide prune removed from review teardown. Built through the pipeline itself: the spec and plan were approved unanimously by a three-voice panel (Claude, Codex, Gemini), slices 1–5 were implemented by Codex, slice 6 (skills and docs) was written by Claude, and every slice was approved by Claude and Codex on the same commit.
+v0.19.1 — Gemini runs are refused without `--sandbox`, an opt-in stricter `accept-edits` mode, refused commands reported as failures, panel Gemini members that keep one conversation per phase, and a fix-pass rollback fix for dangling symlinks.
+
+Prior: v0.19.0 — opt-in review panels with strict unanimity (independent members, no vote, no tiebreaker), safe cleanup of checkouts left by crashed runs (ownership and preservation markers, fail-closed `worktree-reap`, `doctor` checks), and the repository-wide prune removed from review teardown. Built through the pipeline itself: the spec and plan were approved unanimously by a three-voice panel (Claude, Codex, Gemini), slices 1–5 were implemented by Codex, slice 6 (skills and docs) was written by Claude, and every slice was approved by Claude and Codex on the same commit.
 
 Prior: v0.18.0 — robust on other people's machines: gradual strict JSDoc type checking with an explicit allowlist, a pinned public API contract with an AST-extracted CLI surface and import-closure digests, CI on macOS + Linux across Node 20–26, a bounded fresh-clone smoke, vendored-dependency and bash-3.2 guards. Built through the pipeline itself (spec: 7 rounds, plan: 3 rounds, slices implemented by Codex on GPT-5.6 Sol, reviewed by Claude then Codex on GPT-6 Astra).
 
@@ -519,7 +521,9 @@ Prior: v0.7.3.2 — model-invariant hardening (skill docs); v0.7.3.1 hook archit
 
 ### Changelog
 
-- **Unreleased** — Gemini permissions and panel continuity.
+- **v0.19.1** — Gemini permissions, panel continuity, and a rollback fix.
+  - **Rollback:** a failed reviewer fix pass that created a dangling symlink no longer leaves it
+    behind (`lstat` + `unlink`, since `existsSync`/`rmSync` follow the link).
   - **Permissions:** the wrapper refuses `agy` without `--sandbox` (`agy-sandbox-required`);
     opt-in `CODEX_PAIRED_AGY_PERMISSIONS=accept-edits` drops `--dangerously-skip-permissions` in the
     adapter and the wrapper (`agy-permissions-invalid` for unknown values); a refused action with no

@@ -1679,12 +1679,12 @@ test('v0.19.0: execution notes the route check; doctor lists the new checks; REA
   assert.match(readme.replace(/\s+/g, ' '), /never runs `git worktree prune`/);
 });
 
-test('v0.19.0: version fields agree', () => {
+test('v0.19.1: version fields agree', () => {
   const pkg = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'package.json'), 'utf8')).version;
   const plugin = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin/plugin.json'), 'utf8')).version;
   const market = JSON.parse(readFileSync(join(PLUGIN_ROOT, '.claude-plugin/marketplace.json'), 'utf8')).plugins
     .map((entry) => entry.version);
-  assert.equal(pkg, '0.19.0');
+  assert.equal(pkg, '0.19.1');
   assert.equal(plugin, pkg);
   assert.ok(market.every((version) => version === pkg), JSON.stringify(market));
 });
